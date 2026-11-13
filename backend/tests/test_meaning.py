@@ -432,6 +432,32 @@ class CrossChatFileTests(MeaningOn):
         self.assertIn("A cat sleeping on a sofa.", line)
         self.assertIn("cannot see it now", line)
 
+    def test_unclear_message_read_with_the_ones_before(self):
+        import cross_files
+        steps = {**self.CAT, "id": 42, "chat_no": 2, "caption": "A bar chart of steps."}
+        MEANS["what did it look like in the photo i sent?"] = "picture"
+        self.addCleanup(MEANS.pop, "what did it look like in the photo i sent?")
+        # alone: the cat and the chart tie (both pictures)
+        joined = "do you remember my cat? what did it look like in the photo i sent?"
+        MEANS[joined] = "picture"
+        self.addCleanup(MEANS.pop, joined)
+
+        def fits(text, descs):
+            cat_bias = 0.3 if "cat" in text else 0.0
+            return [0.6 + (cat_bias if "cat" in d.lower() else 0.0) for d in descs]
+        with patch.object(cross_files.store, "attachments_where",
+                          lambda w, p: [dict(self.CAT), dict(steps)]), \
+                patch.object(cross_files.store, "list_conversations",
+                             lambda: [{"id": 7, "title": "Cats"}]), \
+                patch.object(cross_files.cross_tab, "search_on", lambda: True), \
+                patch.object(cross_files.meaning, "fits", fits), \
+                patch.object(attachments, "_log_recall", lambda r, w: None):
+            alone = cross_files.pick("what did it look like in the photo i sent?", 1, now=NOW)
+            with_before = cross_files.pick("what did it look like in the photo i sent?", 1, now=NOW,
+                                           context=["do you remember my cat?"])
+        self.assertEqual(alone, (None, None))
+        self.assertEqual(with_before[0]["id"], 41)
+
     def test_off_with_cross_chat_search(self):
         self.assertEqual(self.pick("मेरी भेजी फोटो देखी?", search_on=False), (None, None))
 

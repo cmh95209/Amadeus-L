@@ -2173,7 +2173,10 @@ def with_pictures(messages, conversation_id=None, see=None):
     elif not (own or d_own or v_own):
         try:
             import cross_files
-            x_row, x_mode = cross_files.pick(text_of_newest, conv)
+            # The user's own words just before (labels in brackets are not theirs).
+            context = [re.sub(r"\[[^\]]*\]", " ", _text(messages[i].get("content"))).strip()
+                       for i in users[:-1][-cross_files.CONTEXT_MESSAGES:]]
+            x_row, x_mode = cross_files.pick(text_of_newest, conv, context=context)
             fresh_pick = x_row
             if x_row is None:
                 # A follow-up that does not name the file again ("what did she

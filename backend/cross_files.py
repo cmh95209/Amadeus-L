@@ -35,6 +35,7 @@ MAX_FILES = 60            # newest files looked at, at most (described once, the
 PICK_MIN = 0.50           # stricter than in-chat recall (meaning.PICK_MIN 0.45)
 PICK_MARGIN = 0.12
 FILE_DOC_MAX_TOKENS = 3000   # a longer document comes back as its note only
+CONTEXT_MESSAGES = 2      # the user's messages before, read along when the message alone is unclear
 
 NOTE_LINE = (
     "[RECALLED FROM ANOTHER CHAT: {item} from your chat \"{title}\", sent {day}. The user did "
@@ -70,9 +71,27 @@ def _candidates(conv, now=None) -> list:
     return rows[-MAX_FILES:]
 
 
-def pick(text, conv, now=None):
+def _winner(text, rows, descs):
+    """(index of the file the text fits clearly best, its fit) or (None, best)."""
+    scores = meaning.fits(text, descs)
+    if not scores:
+        return None, 0.0
+    ranked = sorted(zip(scores, range(len(rows))), reverse=True)
+    best, i = ranked[0]
+    second = ranked[1][0] if len(ranked) > 1 else 0.0
+    if best < PICK_MIN or best - second < PICK_MARGIN:
+        return None, best
+    return i, best
+
+
+def pick(text, conv, now=None, context=()):
     """(row, "note" | "file") for the file of another chat the message is
-    about, or (None, None)."""
+    about, or (None, None). A message about a file that does not point to
+    one by itself ("what did it look like in the photo I sent?") is read
+    together with the user's messages just before it (`context`, newest
+    last; CONTEXT_MESSAGES of them) - "do you remember my cat's name?"
+    then points to the cat (MH 2026-11-13, option A). The bar stays as
+    strict."""
     if not ENABLED or not cross_tab.search_on() or not (text or "").strip():
         return None, None
     if meaning.other_media(text) is True:        # about some other video / photo
@@ -81,13 +100,15 @@ def pick(text, conv, now=None):
     rows = _candidates(conv, now)
     if not rows:
         return None, None
-    scores = meaning.fits(text, [attachments.describe(r) for r in rows])
-    if not scores:
-        return None, None
-    ranked = sorted(zip(scores, range(len(rows))), reverse=True)
-    best, i = ranked[0]
-    second = ranked[1][0] if len(ranked) > 1 else 0.0
-    if best < PICK_MIN or best - second < PICK_MARGIN:
+    descs = [attachments.describe(r) for r in rows]
+    i, best = _winner(text, rows, descs)
+    how = ""
+    before = [c for c in list(context or [])[-CONTEXT_MESSAGES:] if (c or "").strip()]
+    if i is None and before and (meaning.shared_file_kind(text)
+                                 or meaning.asks_to_look_again(text) is True):
+        i, best = _winner(" ".join(before + [text]), rows, descs)
+        how = ", with the messages before"
+    if i is None:
         return None, None
     row = dict(rows[i])
     title, day = _title(row.get("conversation_id")), _day(row)
@@ -97,7 +118,7 @@ def pick(text, conv, now=None):
     if meaning.asks_to_look_again(text) is True and row.get("kind") in ("picture", "document"):
         if row.get("kind") == "picture" or int(row.get("tokens") or 0) <= FILE_DOC_MAX_TOKENS:
             mode = "file"
-    attachments._log_recall(row, f"from another chat \"{title}\" ({mode}, fit {best:.2f})")
+    attachments._log_recall(row, f"from another chat \"{title}\" ({mode}, fit {best:.2f}{how})")
     return row, mode
 
 

@@ -31,6 +31,8 @@ import weather
 import cm_bridge
 import cross_tab
 import attachments
+import source_tags
+import live_lookup
 
 default_LLM_Model = store.DEFAULT_LLM_MODEL
 API_KEY = store.load_api_key()
@@ -167,7 +169,8 @@ WEB_SEARCH_TOOL = {
         "name": "web_search",
         "description": (
             "Search the web for up-to-date information from live sources. Use it for today's "
-            "date, current events, news, sports results, weather, prices - and for ANY specific "
+            "date, current events, news, sports results, prices (weather: use get_weather) - "
+            "and for ANY specific "
             "thing the user mentions that may postdate your knowledge: recent movie, TV, anime "
             "or game releases, gacha banners or characters, product versions, software updates, "
             "and similar. When the user says they recently saw, played, bought or experienced "
@@ -203,8 +206,7 @@ PROACTIVE_SEARCH_BLOCK = {
         "not vague generalities. "
         "- If NO (timeless facts, small talk, or something you already know well): just answer. "
         "Do not search. "
-        "Weather and air-quality questions are answered automatically from live data - "
-        "never use web_search for them. "
+        + live_lookup.WEATHER_RULE +
         "Treat search results as hints, not gospel: if a result seems wrong or you are more "
         "confident in your own knowledge, say so honestly. "
         # 2026-10-25: with ddgs she often presented a years-old article as
@@ -3546,9 +3548,12 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
     Phase 3 (last resort): salvage whatever plain text she produced.
     """
     pack_tool = convert_to_openai_tool(AmadeusPack)
-    convo = list(messages)
+    # Up front: nothing has been looked up yet this turn (live-lookup plan
+    # stage 1; in the changing part of the prompt, so the cache holds).
+    convo = live_lookup.add_turn_note(list(messages), _RIGHT_NOW_LABEL)
     # reread_lookup only when this chat has earlier lookups to reopen.
-    tools = [pack_tool, WEB_SEARCH_TOOL] + ([REREAD_LOOKUP_TOOL] if _recent_lookups() else [])
+    tools = ([pack_tool, WEB_SEARCH_TOOL, live_lookup.GET_WEATHER_TOOL]
+             + ([REREAD_LOOKUP_TOOL] if _recent_lookups() else []))
     tool_llm = llm.bind_tools(tools, tool_choice="required")
 
     # The search-judgement calls use her replies' client, which already
@@ -3608,7 +3613,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
     if links_text:
         links_read = True
         convo.append({"role": "assistant", "content": "I opened the link(s) you sent."})
-        convo.append({"role": "user", "content": links_text + (
+        convo.append({"role": "user", "content": source_tags.tagged(source_tags.LINKS, links_text) + (
             "\n\nNow answer the user's message using the AmadeusPack tool, based on these notes.")})
     route = None
     triaged = None
@@ -3661,6 +3666,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
             convo.append({
                 "role": "user",
                 "content": (
+                    source_tags.WEATHER + "\n"
                     "(Fetched from the Open-Meteo service just now, times in "
                     "each place's local time.)\n" + "\n\n".join(reports) + "\n\n"
                     "Now answer the user's original request using the "
@@ -3695,6 +3701,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
         convo.append({"role": "assistant",
                       "content": "I ran a test web search for: " + WEB_CHECK_QUERY})
         convo.append({"role": "user", "content": (
+            source_tags.WEB_CHECK + "\n"
             f"Test search results for '{WEB_CHECK_QUERY}':\n{found}\n\n"
             + ("The user asked you to check your web access, and this test search "
                "WORKED. Tell them it works, and mention one or two real things you "
@@ -3736,6 +3743,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
             convo.append({
                 "role": "user",
                 "content": (
+                    source_tags.WEB_AUTO + "\n"
                     f"Web search results for '{query}':\n{_web_search_with_content(query)}\n\n"
                     "Now answer the user's original request using the AmadeusPack tool, "
                     "based on these results."
@@ -3796,18 +3804,38 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
         # keep the whole search exchange in plain language and just ask her to finish
         # with AmadeusPack. This keeps web search working across model families.
         searches = []
+        checked = []     # get_weather: (places, text) - live-lookup plan stage 1
         for call in calls:
             args = call.get("args") or {}
             query = args.get("query", "")
             if call.get("name") == "web_search":
                 search_ran = True
-                searches.append((query, _web_search_with_content(query)))
+                searches.append((query, source_tags.tagged(
+                    source_tags.WEB_OWN, _web_search_with_content(query))))
             elif call.get("name") == "reread_lookup":
                 search_ran = True
                 lid = args.get("lookup", args.get("id"))
-                searches.append((f"your lookup #{lid}", _reread_lookup(lid)))
+                searches.append((f"your lookup #{lid}", source_tags.tagged(
+                    source_tags.REREAD, _reread_lookup(lid))))
+            elif call.get("name") == "get_weather":
+                places, text = live_lookup.run_get_weather(
+                    args, weather.fetch_weather_report, _record_source)
+                if places:
+                    search_ran = True
+                    weather_handled = True
+                checked.append((places, text))
             else:
                 searches.append((query, "Unknown tool."))
+
+        for places, text in checked:
+            if places:
+                convo.append({"role": "assistant",
+                              "content": "I checked the live weather service for: "
+                                         + ", ".join(places)})
+            convo.append({"role": "user", "content": (
+                source_tags.tagged(source_tags.WEATHER_OWN, text) + "\n\n"
+                "Now answer the user's original request using the AmadeusPack tool. Use ONLY "
+                "these live numbers for any weather fact - do not invent figures.")})
 
         if searches:
             convo.append({
@@ -3845,6 +3873,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
             convo.append({
                 "role": "user",
                 "content": (
+                    source_tags.WEB_AUTO + "\n"
                     f"Web search results for '{query}':\n{_web_search_with_content(query)}\n\n"
                     "Now answer the user's original request using the AmadeusPack tool, "
                     "based on these results."

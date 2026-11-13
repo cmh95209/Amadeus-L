@@ -1504,6 +1504,57 @@ def _meaning_pick(text, conv, newest_id, now=None):
     return pick
 
 
+_recalled_last = {}   # chat -> {"row", "msg", "left", "used_for"}: the file recalled last
+
+
+def _remember_recall(conv, newest_id, row) -> None:
+    """A file was just recalled for this message: it stays for the
+    follow-ups (_follow_up) until the talk moves on."""
+    old = _recalled_last.get(conv)
+    if old and old.get("msg") == newest_id:
+        return                       # the same turn asks again (room checks)
+    _recalled_last[conv] = {"row": dict(row), "msg": newest_id, "off_topic": 0,
+                            "seen": newest_id, "used_for": None}
+
+
+def _follow_up(conv, newest_id, text):
+    """(row, "note" | "file") when this message follows up on the file
+    recalled before without naming it again - "what did she look like in
+    the pic?", "can you see it right now? look at it again" (2026-11-13 test
+    round: 0/18) - or (None, None). MH 2026-11-13: the file stays as long as
+    the talk keeps coming back to it; after meaning.RECALL_OFF_TOPIC_LIMIT
+    messages in a row about something else it is let go. A message refers
+    to it when it asks her to look again, is about a file they sent, or fits
+    the file's own description - and is never about some other video /
+    photo. By meaning, any language."""
+    last = _recalled_last.get(conv)
+    if not last or last.get("msg") == newest_id:
+        return None, None
+    if last.get("used_for") == newest_id:          # this turn already decided
+        return dict(last["row"]), last.get("mode", "note")
+    if last.get("seen") == newest_id:              # this turn: not about it
+        return None, None
+    last["seen"] = newest_id
+    row = dict(last["row"])
+    look = meaning.asks_to_look_again(text)
+    refers = (look is True or bool(meaning.shared_file_kind(text))
+              or ((meaning.fits(text, [describe(row)]) or [0.0])[0] >= meaning.PICK_MIN))
+    if not refers or meaning.other_media(text) is True:
+        last["off_topic"] += 1
+        if last["off_topic"] >= meaning.RECALL_OFF_TOPIC_LIMIT:
+            _recalled_last.pop(conv, None)         # the talk has moved on
+        return None, None
+    mode = "note"
+    if look is True and row.get("kind") in ("picture", "document"):
+        import cross_files
+        if row.get("kind") == "picture" or int(row.get("tokens") or 0) <= cross_files.FILE_DOC_MAX_TOKENS:
+            mode = "file"
+    last["off_topic"] = 0                          # still about it: it stays
+    last["used_for"], last["mode"] = newest_id, mode
+    _log_recall(row, f"follow-up on the file recalled before ({mode})")
+    return row, mode
+
+
 def _by_meaning(text, picked, earlier, kind, now=None, dropped=(), conv=None,
                 newest_id=None) -> list:
     """Recall by meaning (meaning.py, any language), after the word rules:
@@ -2116,20 +2167,41 @@ def with_pictures(messages, conversation_id=None, see=None):
     # (cross_files.py) - what she noted about it, or the file itself when
     # they ask her to look at it again.
     x_text = []
-    if not (own or again or d_own or d_again or v_own or v_again):
+    x_row, x_mode, fresh_pick = None, None, None
+    if again or d_again or v_again:
+        fresh_pick = (again + d_again + v_again)[0]
+    elif not (own or d_own or v_own):
         try:
             import cross_files
             x_row, x_mode = cross_files.pick(text_of_newest, conv)
+            fresh_pick = x_row
+            if x_row is None:
+                # A follow-up that does not name the file again ("what did she
+                # look like?", "can you see it now?"): the file recalled just
+                # before stays (_follow_up).
+                x_row, x_mode = _follow_up(conv, newest, text_of_newest)
         except Exception as exc:
             print("[Amadeus] Cross-chat file recall skipped:", repr(exc))
             x_row, x_mode = None, None
-        if x_row is not None and x_mode == "file" and x_row.get("kind") == "picture":
+        if x_row is not None and not x_row.get("_other_chat"):
+            # The follow-up of a file of THIS chat: brought back like any recall.
+            if x_row.get("on_desk"):
+                pass                                   # already in front of her
+            elif x_row.get("kind") == "document":
+                d_again = d_again + [x_row]
+            elif x_row.get("kind") == "video":
+                v_again = v_again + [x_row]
+            else:
+                again = again + [x_row]
+        elif x_row is not None and x_mode == "file" and x_row.get("kind") == "picture":
             again = again + [x_row]
         elif x_row is not None and x_mode == "file":
             d_again = d_again + [x_row]
         elif x_row is not None:
             x_text = [cross_files.note_line(x_row)]
             _turn.cross_recalled = source_tags.item_name(x_row)
+    if fresh_pick is not None:
+        _remember_recall(conv, newest, fresh_pick)
     out = [dict(m) for m in messages]
     # Documents are plain text and every model reads them: planned first
     # (their messages are put in at the end, so the indexes below hold).

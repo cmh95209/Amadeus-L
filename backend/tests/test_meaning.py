@@ -353,6 +353,60 @@ class FollowUpTests(MeaningOn):
         self.assertFalse(chat._weather_follow_up(msgs))
 
 
+class FollowUpRecallTests(MeaningOn):
+    """2026-11-13 round: "what did she look like in the pic?" right after the
+    cat picture was recalled found nothing (two pictures, no clear winner)."""
+    ROW = {"id": 41, "conversation_id": 7, "chat_no": 1, "kind": "picture",
+           "caption": "A cat sleeping on a sofa.", "_other_chat": True}
+
+    def setUp(self):
+        super().setUp()
+        attachments._recalled_last.clear()
+        MEANS["what did she look like in the pic i sent you?"] = "picture"
+        MEANS["can you see it right now? look at it again"] = "look"
+        self.addCleanup(MEANS.pop, "what did she look like in the pic i sent you?")
+        self.addCleanup(MEANS.pop, "can you see it right now? look at it again")
+
+    def follow(self, msg_id, text):
+        with patch.object(attachments, "_log_recall", lambda r, w: None):
+            return attachments._follow_up(1, msg_id, text)
+
+    def test_the_file_stays_for_follow_ups(self):
+        attachments._remember_recall(1, 10, self.ROW)
+        row, mode = self.follow(11, "what did she look like in the pic i sent you?")
+        self.assertEqual((row["id"], mode), (41, "note"))
+        # the same turn asks again (several room checks): the same answer
+        self.assertEqual(self.follow(11, "what did she look like in the pic i sent you?")[0]["id"], 41)
+        row, mode = self.follow(12, "can you see it right now? look at it again")
+        self.assertEqual((row["id"], mode), (41, "file"))
+        # MH: it keeps going as long as the talk comes back to it
+        for msg in range(13, 20):
+            self.assertEqual(self.follow(msg, "what did she look like in the pic i sent you?")[0]["id"], 41)
+
+    def test_not_for_other_talk(self):
+        attachments._remember_recall(1, 10, self.ROW)
+        self.assertEqual(self.follow(11, "lol nice"), (None, None))
+        self.assertEqual(self.follow(12, "my first video game was pokemon red"), (None, None))
+
+    def test_let_go_after_the_talk_moves_on(self):
+        attachments._remember_recall(1, 10, self.ROW)
+        self.follow(11, "lol nice")
+        self.follow(12, "lol nice")
+        # back to it before the limit: it stays, and the count starts again
+        self.assertEqual(self.follow(13, "what did she look like in the pic i sent you?")[0]["id"], 41)
+        for msg in range(14, 14 + meaning.RECALL_OFF_TOPIC_LIMIT):
+            self.follow(msg, "lol nice")
+        self.assertNotIn(1, attachments._recalled_last)
+        self.assertEqual(self.follow(30, "what did she look like in the pic i sent you?"), (None, None))
+
+    def test_not_in_the_turn_that_recalled_it(self):
+        attachments._remember_recall(1, 10, self.ROW)
+        self.assertEqual(self.follow(10, "what did she look like in the pic i sent you?"), (None, None))
+
+    def test_nothing_recalled_before(self):
+        self.assertEqual(self.follow(11, "what did she look like in the pic i sent you?"), (None, None))
+
+
 class CrossChatFileTests(MeaningOn):
     CAT = {"id": 41, "conversation_id": 7, "chat_no": 1, "message_id": 3, "kind": "picture",
            "created_at": "2026-11-12 10:00", "caption": "A cat sleeping on a sofa.",

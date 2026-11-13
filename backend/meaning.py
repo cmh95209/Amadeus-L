@@ -39,6 +39,8 @@ WARM_RETRY_SECONDS = 60    # sidecar not ready yet -> try again after this
 RECALL_ADD = True
 RECALL_BLOCK = True
 RECALL_ADD_RECENT_HOURS = 48   # ADD only picks a file sent this recently
+RECALL_OFF_TOPIC_LIMIT = 10    # a recalled file stays while the talk comes back to it; let go after
+                               # this many messages in a row about something else
 
 # A text "is" a group when its best match there is at least MIN and beats
 # its best match in the opposite group by at least MARGIN. Measured

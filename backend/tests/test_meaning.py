@@ -21,7 +21,8 @@ import meaning  # noqa: E402
 from chat import AmadeusPack  # noqa: E402
 
 # One axis per group; a test message gets the axis of what it means.
-AXES = ["weather", "chat", "forecast", "not_forecast", "picture", "video", "document", "other"]
+AXES = ["weather", "chat", "forecast", "not_forecast", "picture", "video", "document", "other",
+        "claim", "talk"]
 
 
 def axis(name, strength=1.0):
@@ -41,6 +42,8 @@ MEANS = {   # test messages in other languages / casual texting
     "my first video game was pokemon red": "other",
     "the last movie i saw was dune 2": "other",
     "that mall video tho, the bbq place looked good": "video",
+    "Saya dah cari, kedai tu tutup pukul 8.": "claim",
+    "A disaster? Some things just don't go according to the data.": "talk",
 }
 
 
@@ -59,6 +62,10 @@ def fake_embed(texts):
             out.append(axis("not_forecast"))
         elif t in meaning.OTHER_MEDIA:
             out.append(axis("other"))
+        elif t in meaning.LOOKUP_CLAIM:
+            out.append(axis("claim"))
+        elif t in meaning.NOT_LOOKUP_CLAIM:
+            out.append(axis("talk"))
         else:
             kind = next((k for k, g in meaning.SHARED_FILE.items() if t in g), None)
             # a file description: shares the video axis with "mall" talk only
@@ -172,6 +179,46 @@ class MadeUpWeatherTests(MeaningOn):
         plain = self.pack("Rain always makes me sleepy too.")
         with patch.object(chat, "_web_search_loop", side_effect=AssertionError):
             self.assertIs(chat._weather_retry(plain, None, self.ask("esok hujan tak?")), plain)
+
+
+class LookupClaimTests(MeaningOn):
+    def pack(self, text):
+        return AmadeusPack(assistant_reply_JPS=text, assistant_reply_ENG=text)
+
+    def test_data_talk_is_not_a_claim(self):
+        # 2026-11-13 live test: this line got the "wasn't an actual search" reply.
+        self.assertFalse(chat._claims_lookup(
+            self.pack("A disaster? Some things just don't go according to the data.")))
+
+    def test_claim_in_any_language(self):
+        self.assertTrue(chat._claims_lookup(self.pack("Saya dah cari, kedai tu tutup pukul 8.")))
+
+    def test_phrases_when_unknown(self):
+        meaning.reset()
+        self.assertFalse(chat._claims_lookup(
+            self.pack("Some things just don't go according to the data.")))
+        self.assertFalse(chat._claims_lookup(self.pack("I looked up at the sky.")))
+        self.assertTrue(chat._claims_lookup(self.pack("I looked it up: it closes at 8.")))
+        self.assertTrue(chat._claims_lookup(self.pack("According to the latest reports, yes.")))
+
+
+class NotFoundTests(unittest.TestCase):
+    def test_her_own_call_gets_the_full_name_note(self):
+        import weather
+        places, text = live_lookup.run_get_weather(
+            {"place": "KL"}, lambda p: weather.NOT_FOUND_LINE, lambda e: None)
+        self.assertIn(live_lookup.NOT_FOUND_NOTE, text)
+        _p, text = live_lookup.run_get_weather(
+            {"place": "Osaka"}, lambda p: "Now: 20 C", lambda e: None)
+        self.assertNotIn(live_lookup.NOT_FOUND_NOTE, text)
+
+    def test_mark_matches_the_weather_line(self):
+        import weather
+        self.assertIn(live_lookup.NOT_FOUND_MARK, weather.NOT_FOUND_LINE)
+
+    def test_router_writes_full_names(self):
+        desc = chat.WebTriagePack.model_fields["weather_place"].description
+        self.assertIn("KL -> Kuala Lumpur", desc)
 
 
 NOW = datetime(2026, 11, 13, 20, 0)

@@ -3092,9 +3092,9 @@ def _web_on_false_refusal_net(pack: "AmadeusPack", llm, messages) -> "AmadeusPac
 # was searched or fetched for this reply, and the reply still says it looked
 # something up ("according to the latest data..."). ONE corrective rewrite;
 # if that still claims a lookup, a short honest line replaces it.
-_LOOKUP_CLAIM_EN = (
-    "search result", "i searched", "i've searched", "i looked it up", "i looked up",
-    "i've looked", "the latest data", "latest information", "according to the data",
+_LOOKUP_CLAIM_EN = (    # the fallback when the meaning check is unknown (sidecar off)
+    "search result", "i searched", "i've searched", "i looked it up", "i looked up the",
+    "i've looked it up", "the latest data", "latest information", "according to the latest",
     "checked online", "i found online", "based on my search", "my search show",
     "i just pulled", "i just ran a search", "i just performed a search",
 )
@@ -3105,8 +3105,15 @@ _LOOKUP_CLAIM_JA = (
 
 
 def _claims_lookup(pack: "AmadeusPack") -> bool:
+    """Her reply says she searched or looked something up. By meaning in any
+    language (meaning.claims_lookup - "things don't go according to the
+    data" is NOT a claim, 2026-11-13); the phrase lists only when that is
+    unknown (sidecar off)."""
     eng = (pack.assistant_reply_ENG or "").lower()
     jps = pack.assistant_reply_JPS or ""
+    by_meaning = meaning.claims_lookup(pack.assistant_reply_JPS or "", pack.assistant_reply_ENG or "")
+    if by_meaning is not None:
+        return by_meaning
     return (any(p in eng for p in _LOOKUP_CLAIM_EN)
             or any(p in jps for p in _LOOKUP_CLAIM_JA))
 
@@ -3351,7 +3358,9 @@ class WebTriagePack(BaseModel):
         "a weather question, not a search."))
     weather_place: str = Field(..., description=(
         "The place the weather question is about, as one short proper name "
-        "(town, city, region or country). Use the place named in the latest "
+        "(town, city, region or country), written out in full the way a map "
+        "would list it: expand abbreviations and nicknames (KL -> Kuala Lumpur, "
+        "NYC -> New York, SG -> Singapore). Use the place named in the latest "
         "message; if none is named, use the one the recent conversation makes "
         "unambiguous (e.g. 'my hometown' or 'here' when exactly one place has "
         "clearly been the subject). When the user wants several places (\"both\", "
@@ -3702,8 +3711,10 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
             places = _weather_places(place)
             reports = []
             for one in places:
-                reports.append("Live weather data for '" + one + "':\n"
-                               + weather.fetch_weather_report(one))
+                report = weather.fetch_weather_report(one)
+                if weather.NOT_FOUND_LINE in report:
+                    report += "\n" + live_lookup.NOT_FOUND_NOTE
+                reports.append("Live weather data for '" + one + "':\n" + report)
                 _record_source({"kind": "weather", "place": one,
                                 "url": "https://open-meteo.com/"})
             convo.append({

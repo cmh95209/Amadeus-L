@@ -55,6 +55,7 @@ RECALL_ADD_RECENT_HOURS = 48   # ADD only picks a file sent this recently
 WEATHER_MIN, WEATHER_MARGIN = 0.35, 0.03
 FORECAST_MIN, FORECAST_MARGIN = 0.45, 0.02
 FILE_MIN, FILE_MARGIN = 0.50, 0.05
+CLAIM_MIN, CLAIM_MARGIN = 0.40, 0.04   # lookup claims: 32/32 caught, 0/32 data talk
 BLOCK_BELOW = -0.06        # file-talk margin at or under this = "other media"
 FIT_MIN = 0.30             # message vs a file's description, below = blocked
                            # (only clear mismatches: talk that merely shares a
@@ -98,6 +99,30 @@ NOT_FORECAST = [
     "I don't have live weather data right now.", "Tell me where you are and I'll look it up.",
     "I love the sound of rain.", "Good morning! Did you sleep well?",
 ]
+# Her reply CLAIMS a lookup (chat._pretend_lookup_net) vs her in-character
+# talk about data, memory and reasoning (2026-11-13: "things don't go
+# according to the data" was taken for a search claim).
+LOOKUP_CLAIM = [
+    "I searched it up and found that the store opens at nine.",
+    "According to my search, the movie comes out next month.",
+    "I just looked it up online.", "Based on the latest data I found online, prices went up.",
+    "The search results say it was cancelled.", "I checked the news and it says the game was delayed.",
+    "I looked it up: the museum is closed on Mondays.",
+    "According to the latest reports online, the event is sold out.",
+    "I found on the internet that it's a common problem.", "My search shows three results.",
+    "I just checked the website and the price is 20 dollars.",
+]
+NOT_LOOKUP_CLAIM = [
+    "Things don't always go according to the data.", "The data doesn't lie.",
+    "Statistically speaking, that's unlikely.", "From what I remember, you told me that last week.",
+    "I looked up at the sky and thought about it.", "Based on our earlier conversations, you prefer tea.",
+    "In my experience, that rarely works.", "Let me think about it logically.",
+    "As a scientist, I'd want more data before concluding anything.",
+    "I read about that in a paper years ago.", "You should look it up yourself sometime.",
+    "I don't have that information - I'd need to search for it.",
+    "Was it the lighting, the framing, or something else entirely?",
+]
+
 SHARED_FILE = {
     "picture": ["What do you think of the picture I sent you?",
                 "Did you see the photo I showed you?", "Look at that pic I sent again.",
@@ -133,7 +158,8 @@ _embed_fn = None        # tests / measuring inject a local embedder here
 
 
 def _all_examples() -> list:
-    out = WEATHER_ASK + CHAT + FORECAST + NOT_FORECAST + OTHER_MEDIA
+    out = (WEATHER_ASK + CHAT + FORECAST + NOT_FORECAST + OTHER_MEDIA
+           + LOOKUP_CLAIM + NOT_LOOKUP_CLAIM)
     for group in SHARED_FILE.values():
         out += group
     return list(dict.fromkeys(out))
@@ -260,6 +286,18 @@ def states_forecast(*texts):
     for t in texts:
         if (t or "").strip():
             answer = _decide(t, FORECAST, NOT_FORECAST, FORECAST_MIN, FORECAST_MARGIN)
+            if answer is not None:
+                return answer
+    return None
+
+
+def claims_lookup(*texts):
+    """Does her reply say she searched / looked something up / checked
+    online? The first text that can be judged decides (her own words first),
+    like states_forecast. None when unknown."""
+    for t in texts:
+        if (t or "").strip():
+            answer = _decide(t, LOOKUP_CLAIM, NOT_LOOKUP_CLAIM, CLAIM_MIN, CLAIM_MARGIN)
             if answer is not None:
                 return answer
     return None

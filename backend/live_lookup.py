@@ -68,7 +68,14 @@ RETRY_NOTE = (
     "conversation; if the town is not clear, ask which town instead. Do not state any "
     "weather you did not look up.]")
 
-NO_PLACE_RESULT =("No place was given, so nothing was looked up. Ask the user which town "
+# A place the weather service did not find ("KL"): her second chance.
+NOT_FOUND_MARK = "could not find that place"   # in weather.NOT_FOUND_LINE
+NOT_FOUND_NOTE = (
+    "(If you know the full name of this place - an abbreviation or nickname written out, "
+    "e.g. KL -> Kuala Lumpur - run get_weather again with that name now. If you do not, "
+    "ask the user which town they mean. Do not describe its weather from memory.)")
+
+NO_PLACE_RESULT = ("No place was given, so nothing was looked up. Ask the user which town "
                    "they mean - do not guess.")
 
 # =============================================================================
@@ -94,6 +101,8 @@ def run_get_weather(args, fetch, record) -> tuple:
         except Exception as exc:
             print(f"[Amadeus] get_weather failed for '{place}': {exc!r}")
             report = "The live weather service could not be reached just now."
+        if NOT_FOUND_MARK in report:
+            report += "\n" + NOT_FOUND_NOTE
         reports.append(f"Live weather data for '{place}':\n{report}")
         record({"kind": "weather", "place": place, "url": "https://open-meteo.com/"})
     print("[Amadeus] get_weather (her own call): " + "; ".join(places))

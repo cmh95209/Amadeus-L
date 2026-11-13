@@ -145,6 +145,42 @@ FIT = [
  ("gambar ramen tu sedap kan", "A bowl of ramen noodles with an egg on a wooden table.", True),
 ]
 
+# Her reply: real lookup claims (K) vs in-character data / memory talk (D).
+CLAIMS = {
+ "en": (["i looked it up, the shop closes at 8.", "According to my search, the sequel got delayed."],
+        ["Some things just don't go according to the data.", "Statistically, you'll forget it by Friday."]),
+ "ja": (["調べてみたら、お店は8時に閉まるみたい。", "検索結果によると、続編は延期されたそうよ。"],
+        ["データ通りにいかないこともあるわ。", "統計的に言えば、あなたは金曜には忘れてるわね。"]),
+ "zh": (["我查了一下，那家店八点关门。", "根据我的搜索，续集延期了。"],
+        ["有些事情就是不按数据走。", "从统计上说，你周五就会忘了。"]),
+ "ms": (["Saya dah cari, kedai tu tutup pukul 8.", "Menurut carian saya, sekuelnya ditangguhkan."],
+        ["Ada benda yang tak ikut data.", "Secara statistik, awak akan lupa menjelang Jumaat."]),
+ "ta": (["நான் தேடிப் பார்த்தேன், கடை 8 மணிக்கு மூடும்.", "என் தேடலின்படி, அடுத்த பாகம் தள்ளிப்போனது."],
+        ["சில விஷயங்கள் தரவுப்படி நடக்காது.", "புள்ளிவிவரப்படி, நீ வெள்ளிக்கிழமைக்குள் மறந்துவிடுவாய்."]),
+ "hi": (["मैंने देखा, दुकान 8 बजे बंद होती है।", "मेरी सर्च के मुताबिक, सीक्वल टल गया है।"],
+        ["कुछ चीज़ें डेटा के हिसाब से नहीं चलतीं।", "आंकड़ों के हिसाब से, तुम शुक्रवार तक भूल जाओगे।"]),
+ "ko": (["찾아봤는데, 그 가게 8시에 닫아.", "검색해 보니까 속편이 연기됐대."],
+        ["어떤 일들은 데이터대로 안 돼.", "통계적으로 보면 넌 금요일쯤 잊어버릴 거야."]),
+ "es": (["Lo busqué, la tienda cierra a las 8.", "Según mi búsqueda, la secuela se retrasó."],
+        ["Hay cosas que no salen según los datos.", "Estadísticamente, lo olvidarás para el viernes."]),
+ "fr": (["J'ai cherché, le magasin ferme à 20 h.", "D'après ma recherche, la suite a été repoussée."],
+        ["Certaines choses ne suivent pas les données.", "Statistiquement, tu l'auras oublié d'ici vendredi."]),
+ "de": (["Ich hab's nachgeschaut, der Laden schließt um 20 Uhr.", "Laut meiner Suche wurde die Fortsetzung verschoben."],
+        ["Manche Dinge laufen eben nicht nach den Daten.", "Statistisch gesehen hast du es bis Freitag vergessen."]),
+ "pt": (["Pesquisei, a loja fecha às 20h.", "Segundo minha pesquisa, a sequência foi adiada."],
+        ["Algumas coisas não seguem os dados.", "Estatisticamente, você vai esquecer até sexta."]),
+ "id": (["Aku udah cari, tokonya tutup jam 8.", "Menurut pencarianku, sekuelnya ditunda."],
+        ["Ada hal yang nggak sesuai data.", "Secara statistik, kamu bakal lupa sebelum Jumat."]),
+ "vi": (["Mình tra rồi, cửa hàng đóng lúc 8 giờ.", "Theo kết quả tìm kiếm, phần tiếp bị hoãn."],
+        ["Có những chuyện không theo dữ liệu.", "Theo thống kê, đến thứ Sáu là bạn quên rồi."]),
+ "th": (["ฉันค้นดูแล้ว ร้านปิดสองทุ่ม", "จากที่ค้นหา ภาคต่อถูกเลื่อนออกไป"],
+        ["บางเรื่องก็ไม่เป็นไปตามข้อมูล", "ตามสถิติ เธอจะลืมก่อนวันศุกร์"]),
+ "ru": (["Я посмотрела в интернете, магазин закрывается в 8.", "По результатам поиска, сиквел перенесли."],
+        ["Некоторые вещи не идут по данным.", "Статистически ты забудешь к пятнице."]),
+ "ar": (["بحثت عنه، المحل يغلق الساعة 8.", "حسب بحثي، تم تأجيل الجزء الثاني."],
+        ["بعض الأشياء لا تسير حسب البيانات.", "إحصائيا، ستنسى ذلك بحلول الجمعة."]),
+}
+
 
 def main():
     if len(sys.argv) > 1:
@@ -178,6 +214,13 @@ def main():
             show("no-add", lang, t, got == "", f"got {got}")
             y, n = meaning.scores(t, files, meaning.OTHER_MEDIA)
             show("block", lang, t, y - n <= meaning.BLOCK_BELOW, f"margin {y - n:+.2f}")
+    for lang, (claims, talk) in CLAIMS.items():
+        for t in claims:
+            y, n = meaning.scores(t, meaning.LOOKUP_CLAIM, meaning.NOT_LOOKUP_CLAIM)
+            show("claim", lang, t, meaning.claims_lookup(t) is True, f"margin {y - n:+.2f} yes {y:.2f}")
+        for t in talk:
+            y, n = meaning.scores(t, meaning.LOOKUP_CLAIM, meaning.NOT_LOOKUP_CLAIM)
+            show("no-claim", lang, t, meaning.claims_lookup(t) is False, f"margin {y - n:+.2f}")
     for text, desc, want in FIT:
         f = meaning.fit(text, desc)
         show("fit", "-", text[:60], (f >= meaning.FIT_MIN) == want, f"fit {f:.2f}")

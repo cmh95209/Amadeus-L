@@ -774,6 +774,34 @@ def extract_now(chat_id: Optional[str] = None, min_new: int = 0):
     return {"ok": True, "targets": targets, "started": started}
 
 
+EMBED_MAX_TEXTS = 64       # one /embed call
+EMBED_MAX_CHARS = 2000     # per text (a chat message, an example sentence)
+
+
+class EmbedIn(BaseModel):
+    texts: list
+
+
+@app.post("/embed")
+def embed_endpoint(req: EmbedIn):
+    """Meaning vectors for short texts (2026-11-13, the app's "compare
+    meaning" checks: weather questions, file recall, the made-up weather
+    net). Reuses the memory engine's own embedder - never a second copy.
+    Normalized, so a dot product is the cosine similarity. While the engine
+    is still loading: ok False (the app then uses its word rules)."""
+    if not _engine_state["ready"] or _emb is None:
+        return {"ok": False, "note": "memory engine still loading"}
+    texts = [str(t or "")[:EMBED_MAX_CHARS] for t in (req.texts or [])][:EMBED_MAX_TEXTS]
+    if not texts:
+        return {"ok": True, "vectors": []}
+    try:
+        vecs = _emb.embed(texts)
+    except Exception as e:
+        log(f"embed failed: {e!r}")
+        return {"ok": False, "note": "embed failed"}
+    return {"ok": True, "vectors": [[round(float(x), 5) for x in v] for v in vecs]}
+
+
 @app.get("/memories")
 def memories_endpoint():
     if not _engine_state["ready"]:

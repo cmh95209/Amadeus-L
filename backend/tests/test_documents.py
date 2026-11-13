@@ -288,7 +288,7 @@ class PromptTests(DocStore):
                      "さっきの資料をもう一度見て"):
             self.user_msg(text)
             out = attachments.with_pictures(prompt(*self.history()), 1, see=True)
-            self.assertIn("(shown to you again now)", out[-3]["content"], text)
+            self.assertIn(attachments.source_tags.RECALLED_NOTE, out[-3]["content"], text)
             self.assertIn("milk", out[-3]["content"], text)
             self.assertEqual(out[-2]["content"], text)
             self.her_msg()

@@ -206,5 +206,8 @@ assert.ok(PRIVACY_NOTE.includes("videos (with their sound)"));
 assert.equal(readsLine("Read: Document 2: pages 4-5"), "📄 Read: Document 2: pages 4-5");
 assert.equal(readsLine("Watched: Video 1 (16 stills + what is said) · Read: Document 2: page 3"),
   "🎬 Watched: Video 1 (16 stills + what is said) · 📄 Read: Document 2: page 3");
+// Source tags: a file the app brought back (not sent again) has its own mark.
+assert.equal(readsLine("Recalled: Video 1 (9 stills + what is said)"),
+  "🔁 Recalled: Video 1 (9 stills + what is said)");
 
 console.log("attachments.test.ts ok");

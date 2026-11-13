@@ -142,7 +142,7 @@ class PromptTests(VideoStore):
                      "can you look at the sunset boat video again?", "さっきの動画をもう一度見て"):
             self.user_msg(text)
             out = attachments.with_pictures(prompt(*self.history()), 1, see=True)
-            self.assertIn("(shown to you again now)", self.texts(out[-3])[0], text)
+            self.assertIn(attachments.source_tags.RECALLED_NOTE, self.texts(out[-3])[0], text)
             self.assertEqual(len(images(out[-3])), 3, text)
             self.assertEqual(out[-2]["content"], text)
             self.assertTrue(out[-1]["content"].endswith(attachments.VIDEO_RULE), text)

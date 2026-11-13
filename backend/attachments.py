@@ -35,6 +35,7 @@ from datetime import datetime, timedelta
 import requests
 
 import memory as store
+import source_tags
 
 try:  # Pillow: installed with the app (both installers); tests need it too
     from PIL import Image, ImageOps, UnidentifiedImageError
@@ -1274,7 +1275,8 @@ DOCUMENT_RULE = (
 
 LONG_DOC_RULE = (
     "[Document rule: for a long document you have your reading notes on the whole document, "
-    "and below them the pages found for this message (with their page numbers). Answer "
+    "and below them the pages your page search found for this message (with their page "
+    "numbers). Answer "
     "details from those pages; for an overview or a summary use your notes. If neither "
     "covers what is asked, say so plainly - the user can name a page (\"page 54\") for you "
     "to look at. Quote only words that are really on the pages shown; never invent or "
@@ -1322,8 +1324,9 @@ VIDEO_DESK_RULE = (
 
 CLOSE_LOOK_RULE = (
     "[Video rule: for this message you also got a closer look at the part of the video it asks "
-    "about - more stills (or a short clip) from that stretch and what is said then; times are "
-    "from the start of the video. Answer from it. If what they ask about is not in it, say you "
+    "about - more stills (or a short clip) from that stretch and what is said then, picked by "
+    "the app from the user's words; times are from the start of the video. Answer from it. If "
+    "what they ask about is not in it, say you "
     "may have missed it instead of saying it is not there.]")
 
 _DATA_URLS = {}       # id -> (mtime, data url); a few, so desk pictures are not re-read
@@ -1392,27 +1395,39 @@ def _words(text: str) -> set:
     return {w for w in re.findall(r"[a-z]{3,}", (text or "").lower()) if w not in _STOP}
 
 
-PICTURE_AGAIN_NOTE = (" (sent earlier; put back here because this message seems to be about it"
-                      " - the user did not send it again)")
+PICTURE_AGAIN_NOTE = source_tags.RECALLED_NOTE   # one wording for every recalled file
 _PIC_TOKENS = {"picture", "pictures", "pic", "pics", "photo", "photos", "photograph",
                "photographs", "image", "images", "screenshot", "screenshots", "snapshot",
                "snapshots", "selfie", "selfies", "drawing", "drawings"}
 _NEAR = 4   # words either side of "photo" that can name what is in it
 
 
-def _words_near_pictures(text: str) -> set:
-    """The words close to a picture word, in the same sentence ("the photo
-    of the noodles", "that cake picture"). Only these can match a caption:
-    "it sent an image to process ... the glasses" named no photo of glasses
-    (2026-11-06: it brought back an old photo of drinking glasses and cake)."""
+def _words_near(text: str, cue_words, stop=None) -> set:
+    """The words close to a cue word ("photo", "video", "file"), in the same
+    sentence ("the photo of the noodles", "that mall video"). Only these can
+    match a caption or a file name: "it sent an image to process ... the
+    glasses" named no photo of glasses (2026-11-06: it brought back an old
+    photo of drinking glasses and cake); "the video was really relaxing ...
+    I pushed through an update" named no video "walking through a mall"
+    (2026-11-13)."""
+    stop = _STOP if stop is None else stop
     near = set()
     for sentence in re.split(r"[.!?\n。！？]+", (text or "").lower()):
         tokens = re.findall(r"[a-z]+", sentence)
         for i, w in enumerate(tokens):
-            if w in _PIC_TOKENS:
+            if w in cue_words:
                 near |= {t for t in tokens[max(0, i - _NEAR):i + _NEAR + 1]
-                         if len(t) >= 3 and t not in _STOP and t not in _PIC_TOKENS}
+                         if len(t) >= 3 and t not in stop and t not in cue_words}
     return near
+
+
+def _words_near_pictures(text: str) -> set:
+    return _words_near(text, _PIC_TOKENS)
+
+
+def _log_recall(row, why: str) -> None:
+    """Why a file came back (the app's log only - never her prompt)."""
+    print(f"[Amadeus] Recall: {source_tags.item_name(row)} - {why}")
 
 
 def _sent_pictures(conv: int) -> list:
@@ -1471,6 +1486,8 @@ def referenced(text: str, conv: int, newest_id: int, now=None) -> list:
                             key=lambda x: -x[0])
             if scored and scored[0][0] >= 1 and (len(scored) == 1 or scored[1][0] < scored[0][0]):
                 picked.append(scored[0][1])
+                _log_recall(scored[0][1], "matched words: " + ", ".join(
+                    sorted(asked & _words(scored[0][1].get("caption")))))
     return sorted(picked[:SHOW_AGAIN_MAX], key=lambda r: r["id"])
 
 
@@ -1511,6 +1528,8 @@ _DOC_LAST_RE = re.compile(r"\b(?:last|previous|latest|earlier|other)\s+(?:\w+\s+
                           + r"|(?:さっき|前|最後|この前|先ほど)の" + _DOC_WORD, re.IGNORECASE)
 _DOC_STOP = _STOP | {"document", "documents", "doc", "docs", "file", "files", "pdf", "pdfs",
                      "report", "paper", "text", "docx", "txt", "final", "copy", "draft"}
+_DOC_TOKENS = {"document", "documents", "doc", "docs", "file", "files", "pdf", "pdfs",
+               "report", "reports", "paper", "papers", "essay", "essays", "article", "articles"}
 
 
 def _sent_documents(conv: int) -> list:
@@ -1540,10 +1559,14 @@ def referenced_documents(text: str, conv: int, newest_id: int) -> list:
     if len(named) == 1:
         return named
     if _DOC_WORD_RE.search(text):
-        asked = {w for w in _words(text) if w not in _DOC_STOP}
-        scored = sorted(((len(asked & (_words(re.sub(r"[_\-.]", " ", r.get("name") or ""))
-                                       - _DOC_STOP)), r) for r in earlier), key=lambda x: -x[0])
+        # Only words next to "file" / "document" in the same sentence (see _words_near).
+        asked = _words_near(text, _DOC_TOKENS, _DOC_STOP)
+
+        def hits(r):
+            return asked & (_words(re.sub(r"[_\-.]", " ", r.get("name") or "")) - _DOC_STOP)
+        scored = sorted(((len(hits(r)), r) for r in earlier), key=lambda x: -x[0])
         if scored and scored[0][0] >= 1 and (len(scored) == 1 or scored[1][0] < scored[0][0]):
+            _log_recall(scored[0][1], "matched words: " + ", ".join(sorted(hits(scored[0][1]))))
             return [scored[0][1]]
     return []
 
@@ -1619,7 +1642,7 @@ def _place_documents(out, users, own, desk, again) -> dict:
         if home is not None:
             plan.setdefault(home, []).append(document_block(a))
         else:
-            plan.setdefault(users[0], []).append(document_block(a, " (on your desk, shown earlier)"))
+            plan.setdefault(users[0], []).append(document_block(a, source_tags.DESK_NOTE))
     if own:
         labels = [store.document_label({**a, "caption": None}) for a in own]
         out[last]["content"] = " ".join(
@@ -1627,7 +1650,7 @@ def _place_documents(out, users, own, desk, again) -> dict:
         plan.setdefault(last, []).extend(document_block(a) for a in own)
     if again:
         plan.setdefault(last, []).extend(
-            document_block(a, " (shown to you again now)") for a in again)
+            document_block(a, source_tags.RECALLED_NOTE) for a in again)
     return plan
 
 
@@ -1664,6 +1687,8 @@ _VID_ORDINAL_RE = re.compile(r"\b(first|1st|second|2nd|third|3rd|fourth|4th|fift
 _VID_LAST_RE = re.compile(r"\b(?:last|previous|latest|earlier|other)\s+(?:\w+\s+)?" + _VID_WORD
                           + r"|(?:さっき|前|最後|この前|先ほど)の" + _VID_WORD, re.IGNORECASE)
 _VID_STOP = _STOP | {"video", "videos", "clip", "clips", "movie", "mp4", "mov", "vid"}
+_VID_TOKENS = {"video", "videos", "clip", "clips", "movie", "movies", "recording",
+               "recordings", "footage", "vid", "vids"}
 
 
 def _sent_videos(conv: int) -> list:
@@ -1693,11 +1718,15 @@ def referenced_videos(text: str, conv: int, newest_id: int) -> list:
     if len(named) == 1:
         return named
     if _VID_WORD_RE.search(text):
-        asked = {w for w in _words(text) if w not in _VID_STOP}
-        scored = sorted(((len(asked & ((_words(re.sub(r"[_\-.]", " ", r.get("name") or ""))
-                                        | _words(r.get("caption"))) - _VID_STOP)), r)
-                         for r in earlier), key=lambda x: -x[0])
+        # Only words next to "video" / "clip" in the same sentence (see _words_near).
+        asked = _words_near(text, _VID_TOKENS, _VID_STOP)
+
+        def hits(r):
+            return asked & ((_words(re.sub(r"[_\-.]", " ", r.get("name") or ""))
+                             | _words(r.get("caption"))) - _VID_STOP)
+        scored = sorted(((len(hits(r)), r) for r in earlier), key=lambda x: -x[0])
         if scored and scored[0][0] >= 1 and (len(scored) == 1 or scored[1][0] < scored[0][0]):
+            _log_recall(scored[0][1], "matched words: " + ", ".join(sorted(hits(scored[0][1]))))
             return [scored[0][1]]
     return []
 
@@ -1745,7 +1774,7 @@ def _place_videos(out, users, plan, own, desk, again, see) -> list:
             plan.setdefault(home, []).append(video.video_block(a, mode))
         else:
             plan.setdefault(users[0], []).append(
-                video.video_block(a, mode, " (on your desk, shown earlier)"))
+                video.video_block(a, mode, source_tags.DESK_NOTE))
     fresh = []
     if own:
         labels = [store.video_label({**a, "caption": None}) for a in own]
@@ -1757,7 +1786,7 @@ def _place_videos(out, users, plan, own, desk, again, see) -> list:
             fresh.append((a, mode))
     for a in again:
         mode = video.mode_for(a, True, see, watch)
-        plan.setdefault(last, []).append(video.video_block(a, mode, " (shown to you again now)"))
+        plan.setdefault(last, []).append(video.video_block(a, mode, source_tags.RECALLED_NOTE))
         fresh.append((a, mode))
     return fresh
 
@@ -1995,23 +2024,45 @@ def with_pictures(messages, conversation_id=None, see=None):
             print("[Amadeus] Videos skipped (could not read them):", repr(exc))
             return messages
         doc_text = doc_text + _video_rules(fresh, v_desk) + ([CLOSE_LOOK_RULE] if looks else [])
-        watched = [video.watched_words(a, m) for a, m in fresh] + looks
+        again_ids = {a["id"] for a in v_again}
+        watched = [video.watched_words(a, m) for a, m in fresh if a["id"] not in again_ids] + looks
+        recalled = [video.watched_words(a, m) for a, m in fresh if a["id"] in again_ids]
         _turn.video = _turn.video or any(m == video.WATCH for _a, m in fresh)
+    else:
+        recalled = []
     # Long documents with their notes done: the pages THIS message needs, in
     # the changing part (Phase 4b), and the line shown under her reply.
     reads, found = [], []
     for a, note in ([(a, "") for a in d_own + d_desk]
-                    + [(a, " (shown to you again now)") for a in d_again]):
+                    + [(a, source_tags.RECALLED_NOTE) for a in d_again]):
+        line = None
         if a.get("notes") == store.NOTES_DONE:
             block, line = found_pages(a, text_of_newest, note, before)
             if block:
                 found.append(block)
-            reads.append(line)
         elif a.get("notes") == store.NOTES_WRITING:
-            reads.append(f"Document {a.get('chat_no') or a['id']}: the start (still making notes)")
-    # Shown under her reply: "Watched: Video 1 (16 stills + what is said) · Read: ..."
+            line = f"Document {a.get('chat_no') or a['id']}: the start (still making notes)"
+        if a in d_again:
+            recalled.append(line or source_tags.item_name(a))
+        elif line:
+            reads.append(line)
+    # Pictures brought back by the recall.
+    recalled = [source_tags.item_name(a) for a in again] + recalled
+    # Her prompt: which files are NEW (the user attached them now) and which
+    # were RECALLED (the app's guess - not sent again). This turn only.
+    src = source_tags.turn_line(
+        [source_tags.item_name(a) for a in own + d_own + v_own],
+        [source_tags.item_name(a) for a in again + d_again + v_again])
+
+    def add_turn_text(texts):
+        # The sources line first, then the rules (they keep the end spot).
+        _add_turn_text(out, last, ([src] if src else []) + list(texts))
+    # Shown under her reply: "Watched: Video 1 (16 stills + what is said) · Read: ...
+    # · Recalled: Video 2 (9 stills + what is said)"
     _turn.reads = " · ".join((["Watched: " + "; ".join(watched)] if watched else [])
-                             + (["Read: " + "; ".join(reads)] if reads else []))
+                             + (["Read: " + "; ".join(reads)] if reads else [])
+                             + ([source_tags.RECALLED_READS + "; ".join(recalled)]
+                                if recalled else []))
     if found or any(a.get("notes") == store.NOTES_DONE for a in d_own + d_desk + d_again):
         doc_text = doc_text + [LONG_DOC_RULE] + found
     if not (own or desk or again):
@@ -2021,7 +2072,7 @@ def with_pictures(messages, conversation_id=None, see=None):
                 else missing_picture_note(text_of_newest, conv, False))
         if not (note or docs):
             return messages
-        _add_turn_text(out, last, doc_text + ([note] if note else []))
+        add_turn_text(doc_text + ([note] if note else []))
         return _insert_documents(out, docs)
     see = can_see_pictures() if see is None else see
     if see is False:
@@ -2030,8 +2081,8 @@ def with_pictures(messages, conversation_id=None, see=None):
         bits += [store.picture_label(a) for a in own + again]
         bits.append(CANT_SEE_NOTE.format(n=max(1, len(own) or len(own + desk + again))))
         out[last]["content"] = "\n".join(bits)
-        if doc_text:
-            _add_turn_text(out, last, doc_text)
+        if doc_text or src:
+            add_turn_text(doc_text)
         return _insert_documents(out, docs)
     # One shape for a picture message, the turn it is sent AND every later
     # turn while the picture is on her desk: [the words] [label] [picture]...
@@ -2050,7 +2101,7 @@ def with_pictures(messages, conversation_id=None, see=None):
                 .replace(label, "")
         else:
             placed.setdefault(users[0], []).append(
-                (a, store.picture_label(a, " (on your desk, shown earlier)")))
+                (a, store.picture_label(a, source_tags.DESK_NOTE)))
     for a in again:
         # Not "shown again": a picture brought back by a wrong guess made her
         # say "why did you send this?" (2026-11-06).
@@ -2071,7 +2122,7 @@ def with_pictures(messages, conversation_id=None, see=None):
             out[i]["content"] = parts
     if not shown:
         if docs:
-            _add_turn_text(out, last, doc_text)
+            add_turn_text(doc_text)
             return _insert_documents(out, docs)
         return messages
     # The rule comes whenever she sees any picture - desk-only turns too (F3:
@@ -2082,7 +2133,7 @@ def with_pictures(messages, conversation_id=None, see=None):
             else missing_picture_note(text_of_newest, conv, False))
     if note:
         turn_text.append(note)
-    _add_turn_text(out, last, turn_text)
+    add_turn_text(turn_text)
     return _insert_documents(out, docs)
 
 

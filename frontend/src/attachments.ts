@@ -358,9 +358,11 @@ export function speechNote(view: { speech_state?: string; has_audio?: boolean })
 }
 
 /** The line under her reply: "🎬 Watched: Video 1 (16 stills + what is said)
- *  · 📄 Read: Document 2: pages 4-5" (the backend joins the parts with " · "). */
+ *  · 📄 Read: Document 2: pages 4-5 · 🔁 Recalled: Picture 3" (the backend joins
+ *  the parts with " · "; "Recalled" = brought back by the app, not sent again). */
 export function readsLine(text: string): string {
-  return text.split(" · ").map((part) => (part.startsWith("Watched:") ? "🎬 " : "📄 ") + part)
+  return text.split(" · ").map((part) => (part.startsWith("Watched:") ? "🎬 "
+    : part.startsWith("Recalled:") ? "🔁 " : "📄 ") + part)
     .join(" · ");
 }
 

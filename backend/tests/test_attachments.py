@@ -26,6 +26,7 @@ from PIL import Image
 
 import api
 import attachments
+import source_tags
 import chat
 import cm_bridge
 import memory as store
@@ -421,7 +422,9 @@ class WithPicturesTests(TempStore):
         self.assertTrue(parts[4]["image_url"]["url"].startswith("data:image/png;base64,"))
         self.assertEqual(len(parts), 5)                       # the rule is not in her message...
         self.assertEqual(out[-1]["content"],                  # ...but in the RIGHT NOW note (last)
-                         chat._RIGHT_NOW_LABEL + "NOW\n\n" + attachments.PICTURE_RULE)
+                         chat._RIGHT_NOW_LABEL + "NOW\n\n"
+                         + source_tags.turn_line(["Picture 1", "Picture 2"]) + "\n"
+                         + attachments.PICTURE_RULE)
         self.assertEqual(msgs[1]["content"], "which is better?")              # original untouched
         self.assertEqual(msgs[-1]["content"], chat._RIGHT_NOW_LABEL + "NOW")
 
@@ -503,7 +506,7 @@ class WithPicturesTests(TempStore):
         first = out[1]["content"]
         self.assertEqual(first[0]["text"], "later")
         self.assertEqual(first[1]["text"],
-                         "[Picture 1 (turn 1) from the user (on your desk, shown earlier): a cat]")
+                         "[Picture 1 (turn 1) from the user" + source_tags.DESK_NOTE + ": a cat]")
         self.assertEqual(len(images(out[1])), 1)
 
     def test_off_desk_old_picture_not_shown(self):

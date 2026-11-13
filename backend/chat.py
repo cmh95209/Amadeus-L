@@ -33,6 +33,7 @@ import cross_tab
 import attachments
 import source_tags
 import live_lookup
+import meaning
 
 default_LLM_Model = store.DEFAULT_LLM_MODEL
 API_KEY = store.load_api_key()
@@ -3238,6 +3239,7 @@ def _getResponsePackedWithWebSearch(llm, messages) -> "AmadeusPack":
             print("[Amadeus] Web loop: search turn could not be completed - honest fallback:", repr(exc))
             return _honest_search_failure_pack()
     pack = _web_on_false_refusal_net(pack, llm, messages)
+    pack = _weather_retry(pack, llm, messages)
     pack = _made_up_weather_net(pack, messages)
     return _tense_net(_pretend_lookup_net(pack, llm, messages), llm, messages)
 
@@ -3250,20 +3252,61 @@ def _getResponsePackedWithWebSearch(llm, messages) -> "AmadeusPack":
 _WEATHER_FIGURE_RE = re.compile(r"([0-9０-９]+)\s*(?:度|℃|°|degrees?\b)", re.IGNORECASE)
 
 
-def _made_up_weather_net(pack: "AmadeusPack", messages) -> "AmadeusPack":
-    # Only inside a real reply (its lookups are counted) and when none ran.
+def _made_up_weather(pack: "AmadeusPack", messages) -> bool:
+    """Her reply states live weather although nothing was looked up this
+    turn. By meaning in any language (meaning.states_forecast: "80% chance
+    of rain", "thunderstorms tonight", whatever language she or the
+    translation uses); when that is unknown (sidecar off), the old rule:
+    a weather word plus degrees the user did not say."""
     if getattr(_turn, "sources", None) is None or _lookup_ran():
-        return pack
+        return False
     eng, jps = pack.assistant_reply_ENG or "", pack.assistant_reply_JPS or ""
-    if not (_weather_intent(eng) or _weather_intent(jps)):
-        return pack
     last_user = next((_content_text(m.get("content")) for m in reversed(messages)
                       if m.get("role") == "user"), "")
+    # By meaning only while the talk is about the weather ("80% of people
+    # say that" reads like a forecast on its own - 2026-11-13 measuring).
+    if _weather_talk(last_user, messages) and meaning.states_forecast(jps, eng) is True:
+        return True
+    if not (_weather_intent(eng) or _weather_intent(jps)):
+        return False
     said = {unicodedata.normalize("NFKC", n)
             for n in re.findall(r"[0-9０-９]+", last_user if isinstance(last_user, str) else "")}
     figures = {unicodedata.normalize("NFKC", m.group(1))
                for m in _WEATHER_FIGURE_RE.finditer(eng + "\n" + jps)}
-    if not (figures - said):
+    return bool(figures - said)
+
+
+def _weather_talk(last_user, messages) -> bool:
+    """The user's message (or the turn before it) is about the weather."""
+    if not isinstance(last_user, str):
+        return False
+    return bool(_weather_intent(last_user) or _WEB_TRIAGE_HINT_RE.search(last_user)
+                or _weather_follow_up(messages)
+                or meaning.is_weather_question(last_user) is True)
+
+
+def _weather_retry(pack: "AmadeusPack", llm, messages) -> "AmadeusPack":
+    """She stated live weather without a lookup: ONE more go with a note to
+    run get_weather (live_lookup.RETRY_NOTE). Her retry is kept when it
+    looked something up or no longer states made-up weather; otherwise the
+    first reply goes on to the net below (honest line)."""
+    if not _made_up_weather(pack, messages):
+        return pack
+    print("[Amadeus] Web ON: weather stated with no lookup - one retry with get_weather.")
+    try:
+        again = _web_search_loop(llm, live_lookup.add_turn_note(
+            list(messages), _RIGHT_NOW_LABEL, live_lookup.RETRY_NOTE))
+    except Exception as exc:
+        print("[Amadeus] Weather retry failed:", repr(exc))
+        return pack
+    if _lookup_ran() or not _made_up_weather(again, messages):
+        return again
+    return pack
+
+
+def _made_up_weather_net(pack: "AmadeusPack", messages) -> "AmadeusPack":
+    # Only inside a real reply (its lookups are counted) and when none ran.
+    if not _made_up_weather(pack, messages):
         return pack
     print("[Amadeus] Web ON: weather figures with no lookup this turn - honest line.")
     return AmadeusPack(
@@ -3398,7 +3441,11 @@ def _web_triage_candidate(last_user, messages) -> bool:
         return True
     if _weather_follow_up(messages):
         return True
-    return bool(_WEB_TRIAGE_HINT_RE.search(last_user))
+    if _WEB_TRIAGE_HINT_RE.search(last_user):
+        return True
+    # By meaning, any language ("gonna rain tmrw?", "要带伞吗", "esok hujan
+    # tak?"): a wrong yes only costs the triage call, which decides.
+    return meaning.is_weather_question(last_user) is True
 
 
 def _weather_follow_up(messages) -> bool:

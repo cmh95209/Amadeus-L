@@ -61,7 +61,14 @@ TURN_NOTE = (
     "web_search) before you state it. Never say you checked, looked up or have live data "
     "unless you ran the lookup in this reply.]")
 
-NO_PLACE_RESULT = ("No place was given, so nothing was looked up. Ask the user which town "
+# Her one retry after she stated weather without looking it up (chat._weather_retry).
+RETRY_NOTE = (
+    "[Check: your draft reply stated live weather (a forecast, a chance of rain or a "
+    "temperature) but nothing was looked up. Run get_weather now for the town from the "
+    "conversation; if the town is not clear, ask which town instead. Do not state any "
+    "weather you did not look up.]")
+
+NO_PLACE_RESULT =("No place was given, so nothing was looked up. Ask the user which town "
                    "they mean - do not guess.")
 
 # =============================================================================
@@ -94,10 +101,11 @@ def run_get_weather(args, fetch, record) -> tuple:
                     "local time.)\n" + "\n\n".join(reports))
 
 
-def add_turn_note(convo, right_now_label: str) -> list:
-    """The prompt with TURN_NOTE added for this turn: into the RIGHT NOW note
-    when the prompt ends with one, else at the end of the newest user
-    message (both are the part that changes every turn)."""
+def add_turn_note(convo, right_now_label: str, note: str = None) -> list:
+    """The prompt with a note (TURN_NOTE by default) added for this turn:
+    into the RIGHT NOW note when the prompt ends with one, else at the end
+    of the newest user message (both are the part that changes every turn)."""
+    note = note or TURN_NOTE
     out = list(convo)
     if not out:
         return out
@@ -105,15 +113,15 @@ def add_turn_note(convo, right_now_label: str) -> list:
     content = last.get("content")
     if last.get("role") == "system" and isinstance(content, str) \
             and content.startswith(right_now_label):
-        out[-1] = {**last, "content": content + "\n\n" + TURN_NOTE}
+        out[-1] = {**last, "content": content + "\n\n" + note}
         return out
     for i in range(len(out) - 1, -1, -1):
         if out[i].get("role") != "user":
             continue
         c = out[i].get("content")
         if isinstance(c, list):
-            out[i] = {**out[i], "content": list(c) + [{"type": "text", "text": TURN_NOTE}]}
+            out[i] = {**out[i], "content": list(c) + [{"type": "text", "text": note}]}
         else:
-            out[i] = {**out[i], "content": (str(c or "") + "\n\n" + TURN_NOTE).strip()}
+            out[i] = {**out[i], "content": (str(c or "") + "\n\n" + note).strip()}
         return out
     return out

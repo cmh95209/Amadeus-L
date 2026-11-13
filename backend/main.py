@@ -64,6 +64,11 @@ def _clean_unsent_attachments():
 
 _threading.Thread(target=_clean_unsent_attachments, daemon=True, name="attachments-cleanup").start()
 
+# Meaning checks (weather questions, file recall, the made-up weather net):
+# fetch their example vectors from the memory sidecar in the background.
+import meaning as _meaning
+_meaning.start()
+
 # Her built-in model (option A): loads in the background, unless the
 # launcher said "start without it". Settings can unload / load / switch it.
 import builtin_server as _builtin_server

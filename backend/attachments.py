@@ -34,6 +34,7 @@ from datetime import datetime, timedelta
 
 import requests
 
+import meaning
 import memory as store
 import source_tags
 
@@ -1430,6 +1431,42 @@ def _log_recall(row, why: str) -> None:
     print(f"[Amadeus] Recall: {source_tags.item_name(row)} - {why}")
 
 
+RECENT_FMT = "%Y-%m-%d %H:%M"
+
+
+def _recent(row, now=None) -> bool:
+    try:
+        sent = datetime.strptime(str(row.get("created_at") or "")[:16], RECENT_FMT)
+    except ValueError:
+        return False
+    return (now or datetime.now()) - sent <= timedelta(hours=meaning.RECALL_ADD_RECENT_HOURS)
+
+
+def _by_meaning(text, picked, earlier, kind, now=None, dropped=()) -> list:
+    """Recall by meaning (meaning.py, any language), after the word rules:
+    BLOCK - their picks are dropped when the message is clearly about some
+    other video / photo / file ("my first video game", "the last movie I
+    saw", "photos on my phone"); ADD - nothing picked, but the message is
+    about a file of this kind they sent here ("what did u think of the vid
+    i sent", "你看了我发的视频吗"): the newest one, if sent recently.
+    No ADD after a word match was dropped for not fitting (it would only
+    bring the same doubtful file back). The sidecar off / slow / switched
+    off: the word rules' answer stands."""
+    if picked:
+        if meaning.other_media(text) is True:
+            for r in picked:
+                _log_recall(r, "dropped - the message is about something else (meaning)")
+            return []
+        return picked
+    if not earlier or dropped or meaning.shared_file_kind(text) != kind:
+        return []
+    newest = max(earlier, key=lambda r: r["id"])
+    if not _recent(newest, now):
+        return []
+    _log_recall(newest, "the message is about a " + kind + " they sent (meaning)")
+    return [newest]
+
+
 def _sent_pictures(conv: int) -> list:
     return store.attachments_where("conversation_id = ? AND message_id IS NOT NULL AND "
                                    "kind = 'picture'", (int(conv),))
@@ -1456,7 +1493,7 @@ def referenced(text: str, conv: int, newest_id: int, now=None) -> list:
     if not earlier or not text.strip():
         return []
     by_no = {r.get("chat_no"): r for r in earlier if r.get("chat_no")}
-    picked = []
+    picked, dropped = [], []
     for rx in _NUMBER_RES:
         for m in rx.finditer(text):
             raw = m.group(1)
@@ -1485,9 +1522,15 @@ def referenced(text: str, conv: int, newest_id: int, now=None) -> list:
             scored = sorted(((len(asked & _words(r.get("caption"))), r) for r in earlier),
                             key=lambda x: -x[0])
             if scored and scored[0][0] >= 1 and (len(scored) == 1 or scored[1][0] < scored[0][0]):
-                picked.append(scored[0][1])
-                _log_recall(scored[0][1], "matched words: " + ", ".join(
-                    sorted(asked & _words(scored[0][1].get("caption")))))
+                best = scored[0][1]
+                why = "matched words: " + ", ".join(sorted(asked & _words(best.get("caption"))))
+                if meaning.misfit(text, best.get("caption")):
+                    _log_recall(best, why + " - dropped, does not fit the message (meaning)")
+                    dropped.append(best)
+                else:
+                    picked.append(best)
+                    _log_recall(best, why)
+    picked = _by_meaning(text, picked, earlier, "picture", now, dropped)
     return sorted(picked[:SHOW_AGAIN_MAX], key=lambda r: r["id"])
 
 
@@ -1537,11 +1580,17 @@ def _sent_documents(conv: int) -> list:
                                    "kind = 'document'", (int(conv),))
 
 
-def referenced_documents(text: str, conv: int, newest_id: int) -> list:
-    """The one earlier document of this chat the message clearly asks about
-    ([] when none or not clear)."""
+def referenced_documents(text: str, conv: int, newest_id: int, now=None) -> list:
+    """The one earlier document of this chat the message asks about ([] when
+    none or not clear): the word rules, then meaning (_by_meaning)."""
     text = text or ""
     earlier = [r for r in _sent_documents(conv) if r["message_id"] != newest_id]
+    return _by_meaning(text, _referenced_documents_rules(text, earlier), earlier, "document", now)
+
+
+def _referenced_documents_rules(text: str, earlier: list) -> list:
+    """The one earlier document of this chat the message clearly asks about
+    ([] when none or not clear)."""
     if not earlier or not text.strip():
         return []
     by_no = {r.get("chat_no"): r for r in earlier if r.get("chat_no")}
@@ -1696,11 +1745,19 @@ def _sent_videos(conv: int) -> list:
                                    "kind = 'video'", (int(conv),))
 
 
-def referenced_videos(text: str, conv: int, newest_id: int) -> list:
-    """The one earlier video of this chat the message clearly asks about
-    ([] when none or not clear)."""
+def referenced_videos(text: str, conv: int, newest_id: int, now=None) -> list:
+    """The one earlier video of this chat the message asks about ([] when
+    none or not clear): the word rules, then meaning (_by_meaning)."""
     text = text or ""
     earlier = [r for r in _sent_videos(conv) if r["message_id"] != newest_id]
+    dropped = []
+    picked = _referenced_videos_rules(text, earlier, dropped)
+    return _by_meaning(text, picked, earlier, "video", now, dropped)
+
+
+def _referenced_videos_rules(text: str, earlier: list, dropped: list) -> list:
+    """The one earlier video of this chat the message clearly asks about
+    ([] when none or not clear)."""
     if not earlier or not text.strip():
         return []
     by_no = {r.get("chat_no"): r for r in earlier if r.get("chat_no")}
@@ -1726,8 +1783,14 @@ def referenced_videos(text: str, conv: int, newest_id: int) -> list:
                              | _words(r.get("caption"))) - _VID_STOP)
         scored = sorted(((len(hits(r)), r) for r in earlier), key=lambda x: -x[0])
         if scored and scored[0][0] >= 1 and (len(scored) == 1 or scored[1][0] < scored[0][0]):
-            _log_recall(scored[0][1], "matched words: " + ", ".join(sorted(hits(scored[0][1]))))
-            return [scored[0][1]]
+            best = scored[0][1]
+            why = "matched words: " + ", ".join(sorted(hits(best)))
+            if meaning.misfit(text, best.get("caption")):
+                _log_recall(best, why + " - dropped, does not fit the message (meaning)")
+                dropped.append(best)
+                return []
+            _log_recall(best, why)
+            return [best]
     return []
 
 

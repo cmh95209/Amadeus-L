@@ -32,7 +32,12 @@ import memory as store
 ENABLED = True
 DAYS = 30                 # files sent in other chats this recently
 MAX_FILES = 60            # newest files looked at, at most (described once, then remembered)
-PICK_MIN = 0.50           # stricter than in-chat recall (meaning.PICK_MIN 0.45)
+# A file of another chat must fit at least PICK_MIN and beat the next file by
+# PICK_MARGIN. Measured 2026-11-13 (858 lines, 18 chats, the files treated as
+# another chat's): MIN 0.50 -> 95/174 references, 0.40 -> 122/174; 0 wrong
+# files and ~19/684 stray recalls (mostly on-topic) at both. The lead does
+# the guarding; the minimum only shut out languages the embedder scores low.
+PICK_MIN = 0.40
 PICK_MARGIN = 0.12
 FILE_DOC_MAX_TOKENS = 3000   # a longer document comes back as its note only
 CONTEXT_MESSAGES = 2      # the user's messages before, read along when the message alone is unclear

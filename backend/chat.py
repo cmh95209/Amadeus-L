@@ -3465,7 +3465,13 @@ def _weather_follow_up(messages) -> bool:
     texts = [_content_text(m.get("content")) for m in messages
              if m.get("role") in ("user", "assistant")]
     before = texts[:-1][-2:]   # her last reply + the user's message before it
-    return any(isinstance(t, str) and _weather_intent(t) for t in before)
+    if any(isinstance(t, str) and _weather_intent(t) for t in before):
+        return True
+    # By meaning, any language: "gonna be warm enough for shorts at my
+    # cousin's?" -> "she lives in lisbon" (2026-11-13 test round).
+    prev_user = next((_content_text(m.get("content")) for m in reversed(messages[:-1])
+                      if m.get("role") == "user"), "")
+    return isinstance(prev_user, str) and meaning.is_weather_question(prev_user) is True
 
 
 _TRIAGE_TIMEOUT = 25  # seconds - hard client-side deadline for the triage call
@@ -3876,8 +3882,15 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
                 searches.append((f"your lookup #{lid}", source_tags.tagged(
                     source_tags.REREAD, _reread_lookup(lid))))
             elif call.get("name") == "get_weather":
-                places, text = live_lookup.run_get_weather(
-                    args, weather.fetch_weather_report, _record_source)
+                # The router already found no town in the chat: she asks, she
+                # does not pick one (2026-11-13: the built-in model fetched
+                # "Malaysia", "Tokyo", "Alex's location" for "rain later?").
+                no_town = bool(route and route.get("weather") and not route.get("place"))
+                places, text = (([], live_lookup.NO_TOWN_RESULT) if no_town else
+                                live_lookup.run_get_weather(
+                                    args, weather.fetch_weather_report, _record_source))
+                if no_town:
+                    print("[Amadeus] get_weather refused: the router found no town - she asks.")
                 if places:
                     search_ran = True
                     weather_handled = True

@@ -78,7 +78,8 @@ def turn_line(new_items=(), recalled_items=()) -> str:
 def item_name(row) -> str:
     """ "Picture 3" / "Document 2" / "Video 1" for an attachment row."""
     kind = {"document": "Document", "video": "Video"}.get(row.get("kind"), "Picture")
-    return f"{kind} {row.get('chat_no') or row.get('id')}"
+    other = " from another chat" if row.get("_other_chat") else ""
+    return f"{kind} {row.get('chat_no') or row.get('id')}{other}"
 
 
 def tagged(tag: str, text: str) -> str:

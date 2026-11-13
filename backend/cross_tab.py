@@ -81,11 +81,13 @@ UNSPACED_SCRIPTS = ("CJK", "HIRAGANA", "KATAKANA", "HANGUL", "THAI", "LAO",
 CATCH_UP_LABEL = (
     "YOUR OTHER CHATS (what you and the user talked about in your OTHER chat "
     "tabs, newest first - you remember these yourself; bring them up only when "
-    "it fits, and never mix them up with this chat):\n")
+    "it fits, and never mix them up with this chat; their files are not in front "
+    "of you - describe only what is written here):\n")
 SEARCH_LABEL = (
     "FROM YOUR OTHER CHATS (found by searching your other chat tabs for what "
     "the user just wrote - it may or may not be what they mean; use it only if "
-    "it fits, and say which chat it was if you mention it):\n")
+    "it fits, and say which chat it was if you mention it; their files are not in "
+    "front of you - describe only what is written here):\n")
 # =============================================================================
 
 SETTINGS_FILE = "cross_tab.json"

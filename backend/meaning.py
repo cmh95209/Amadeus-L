@@ -57,6 +57,13 @@ FORECAST_MIN, FORECAST_MARGIN = 0.45, 0.02
 FILE_MIN, FILE_MARGIN = 0.50, 0.05
 CLAIM_MIN, CLAIM_MARGIN = 0.40, 0.04   # lookup claims: 32/32 caught, 0/32 data talk
 BLOCK_BELOW = -0.06        # file-talk margin at or under this = "other media"
+LOOK_MIN, LOOK_MARGIN = 0.45, 0.06     # 7/7 look-again lines, 0/6 remember-lines (2026-11-13)
+# Which file a message means (attachments._meaning_pick): its fit to each
+# file's description must be at least PICK_MIN and beat the next file by
+# PICK_MARGIN (PICK_MARGIN_TALK when the message is clearly about a file they
+# sent). Measured 2026-11-13 on 102 references + 603 other lines, 18 chats:
+# 70/102 right, 0 wrong files, 9/603 other lines (mostly real references).
+PICK_MIN, PICK_MARGIN, PICK_MARGIN_TALK = 0.45, 0.12, 0.05
 FIT_MIN = 0.30             # message vs a file's description, below = blocked
                            # (only clear mismatches: talk that merely shares a
                            # topic scores 0.6 - other_media() handles that)
@@ -121,6 +128,25 @@ NOT_LOOKUP_CLAIM = [
     "I read about that in a paper years ago.", "You should look it up yourself sometime.",
     "I don't have that information - I'd need to search for it.",
     "Was it the lighting, the framing, or something else entirely?",
+    "Looking at the chart you sent, your steps went up every month.",
+    "I checked the file you sent earlier: the rent is 1,800.",
+    "I read your document, and the plan looks tight.",
+    "From the picture you showed me, it's an orange cat.",
+    "In the recipe you gave me, the eggs boil for six and a half minutes.",
+    "I already looked at your budget when you sent it.",
+]
+
+# The user asks her to really LOOK at / read a file again (cross_files.py
+# brings the actual file only then; otherwise just what she noted about it).
+LOOK_AGAIN = [
+    "Can you see the picture right now?", "Look at it again.", "Open the file again and check.",
+    "What's in the bottom corner of that photo?", "Read the document again for me.",
+    "Zoom in on the chart, what's the number for May?", "Can you look at the pic one more time?",
+]
+NOT_LOOK_AGAIN = [
+    "Do you remember my cat's name?", "What did you think of the picture?",
+    "Did you like the recipe I sent?", "Remember that budget I showed you?",
+    "What was it about again?", "Was the photo cute?",
 ]
 
 SHARED_FILE = {
@@ -153,13 +179,14 @@ _examples = {}          # text -> vector (filled once by _warm)
 _ready = False
 _started = False
 _last_try = 0.0
-_last_text = (None, None)   # (text, vector): one message is checked several times
+_recent_vecs = {}       # text -> vector: one reply checks the same texts several times
+RECENT_KEEP = 32
 _embed_fn = None        # tests / measuring inject a local embedder here
 
 
 def _all_examples() -> list:
     out = (WEATHER_ASK + CHAT + FORECAST + NOT_FORECAST + OTHER_MEDIA
-           + LOOKUP_CLAIM + NOT_LOOKUP_CLAIM)
+           + LOOKUP_CLAIM + NOT_LOOKUP_CLAIM + LOOK_AGAIN + NOT_LOOK_AGAIN)
     for group in SHARED_FILE.values():
         out += group
     return list(dict.fromkeys(out))
@@ -221,15 +248,19 @@ def start() -> None:
 
 def use_embedder(fn) -> None:
     """Tests / measuring: embed with fn(list of texts) -> vectors, now."""
-    global _embed_fn, _started, _last_text
-    _embed_fn, _started, _last_text = fn, True, (None, None)
+    global _embed_fn, _started
+    _embed_fn, _started = fn, True
+    _recent_vecs.clear()
+    _desc_cache.clear()
     _warm()
 
 
 def reset() -> None:
-    global _embed_fn, _started, _ready, _last_text
-    _embed_fn, _started, _ready, _last_text = None, False, False, (None, None)
+    global _embed_fn, _started, _ready
+    _embed_fn, _started, _ready = None, False, False
     _examples.clear()
+    _recent_vecs.clear()
+    _desc_cache.clear()
 
 
 def available() -> bool:
@@ -237,16 +268,18 @@ def available() -> bool:
 
 
 def _vec(text: str):
-    global _last_text
     text = (text or "").strip()
     if not text or not available():
         return None
-    if _last_text[0] == text:
-        return _last_text[1]
+    v = _recent_vecs.get(text)
+    if v is not None:
+        return v
     vecs = _embed([text], TIMEOUT)
     if not vecs:
         return None
-    _last_text = (text, vecs[0])
+    _recent_vecs[text] = vecs[0]
+    while len(_recent_vecs) > RECENT_KEEP:
+        _recent_vecs.pop(next(iter(_recent_vecs)))
     return vecs[0]
 
 
@@ -332,6 +365,33 @@ def other_media(text: str):
 
 
 _desc_cache = {}
+DESC_KEEP = 400            # file descriptions remembered (they never change)
+BATCH_TIMEOUT = 4.0        # describing many files at once (the first time only)
+
+
+def fits(text: str, descriptions):
+    """[how close the message is to each description (0..1)], or None.
+    New descriptions go to the sidecar in one batch; known ones are kept."""
+    v = _vec(text)
+    if v is None:
+        return None
+    descs = [(d or "").strip() for d in descriptions]
+    missing = list(dict.fromkeys(d for d in descs if d and d not in _desc_cache))
+    for i in range(0, len(missing), 64):
+        chunk = missing[i:i + 64]
+        got = _embed(chunk, BATCH_TIMEOUT)
+        if not got or len(got) != len(chunk):
+            return None
+        _desc_cache.update(zip(chunk, got))
+    while len(_desc_cache) > DESC_KEEP:
+        _desc_cache.pop(next(iter(_desc_cache)))
+    return [(_dot(v, _desc_cache[d]) if d in _desc_cache else 0.0) for d in descs]
+
+
+def asks_to_look_again(text: str):
+    """The user wants her to really look at / read a file again (not just
+    remember it). None when unknown."""
+    return _decide(text, LOOK_AGAIN, NOT_LOOK_AGAIN, LOOK_MIN, LOOK_MARGIN)
 
 
 def fit(text: str, description: str):

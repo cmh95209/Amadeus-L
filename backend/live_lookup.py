@@ -75,6 +75,9 @@ NOT_FOUND_NOTE = (
     "e.g. KL -> Kuala Lumpur - run get_weather again with that name now. If you do not, "
     "ask the user which town they mean. Do not describe its weather from memory.)")
 
+NO_TOWN_RESULT = ("Nothing was looked up: no town is known from this conversation yet. "
+                  "Ask the user which town or city they mean - do not pick one yourself.")
+
 NO_PLACE_RESULT = ("No place was given, so nothing was looked up. Ask the user which town "
                    "they mean - do not guess.")
 

@@ -1,0 +1,116 @@
+"""Cross-chat file recall (MH 2026-11-13, option C).
+
+"Did you like the cat pic I sent?" in a NEW chat: file recall used to look
+only inside the current chat, and cross-chat memory only carries the words -
+so the built-in model made up "a white cat with black markings" for a simple
+orange drawing. Every file already records its chat, turn, number, date and
+description; this module finds the one the message means in the user's OTHER
+chats (by meaning, the memory sidecar's embedder) and brings back:
+- by default only what she noted about it then (one line of text, cheap), with
+  an honest label: from which chat and day, the user did NOT send it here and
+  she cannot see it now;
+- the real file (a picture, a short document) only when the user asks her to
+  really look at it / read it again (meaning.asks_to_look_again).
+
+Only when nothing in THIS chat was recalled, only while cross-chat search is
+on (Settings -> Preferences, cross_tab.search_on()), and with a stricter bar
+than in-chat recall: a wrong file from another chat confuses more. The
+sidecar off / slow: nothing (her cross-chat memory and its label stay).
+Every wording and limit lives in TUNABLES.
+"""
+
+from datetime import datetime, timedelta
+
+import cross_tab
+import meaning
+import memory as store
+
+# =============================================================================
+# TUNABLES
+# =============================================================================
+
+ENABLED = True
+DAYS = 30                 # files sent in other chats this recently
+MAX_FILES = 60            # newest files looked at, at most (described once, then remembered)
+PICK_MIN = 0.50           # stricter than in-chat recall (meaning.PICK_MIN 0.45)
+PICK_MARGIN = 0.12
+FILE_DOC_MAX_TOKENS = 3000   # a longer document comes back as its note only
+
+NOTE_LINE = (
+    "[RECALLED FROM ANOTHER CHAT: {item} from your chat \"{title}\", sent {day}. The user did "
+    "NOT send it here and you cannot see it now. What you noted about it then: {desc}. Do not "
+    "describe more of it than this; if they want you to really look at it again, they can send "
+    "it here.]")
+NO_DESC = "(no description was kept)"
+FILE_NOTE = (" (RECALLED FROM ANOTHER CHAT \"{title}\", sent {day} - the user did NOT send it "
+             "here; brought back because they asked you to look at it again)")
+
+# =============================================================================
+
+
+def _title(conv_id) -> str:
+    try:
+        for c in store.list_conversations():
+            if int(c.get("id")) == int(conv_id):
+                return str(c.get("title") or "untitled")
+    except Exception:
+        pass
+    return "untitled"
+
+
+def _day(row) -> str:
+    return str(row.get("created_at") or "")[:10] or "earlier"
+
+
+def _candidates(conv, now=None) -> list:
+    since = ((now or datetime.now()) - timedelta(days=DAYS)).strftime("%Y-%m-%d")
+    rows = store.attachments_where(
+        "conversation_id IS NOT NULL AND conversation_id != ? AND message_id IS NOT NULL "
+        "AND created_at >= ?", (int(conv), since))
+    return rows[-MAX_FILES:]
+
+
+def pick(text, conv, now=None):
+    """(row, "note" | "file") for the file of another chat the message is
+    about, or (None, None)."""
+    if not ENABLED or not cross_tab.search_on() or not (text or "").strip():
+        return None, None
+    if meaning.other_media(text) is True:        # about some other video / photo
+        return None, None
+    import attachments   # late: attachments imports this module
+    rows = _candidates(conv, now)
+    if not rows:
+        return None, None
+    scores = meaning.fits(text, [attachments.describe(r) for r in rows])
+    if not scores:
+        return None, None
+    ranked = sorted(zip(scores, range(len(rows))), reverse=True)
+    best, i = ranked[0]
+    second = ranked[1][0] if len(ranked) > 1 else 0.0
+    if best < PICK_MIN or best - second < PICK_MARGIN:
+        return None, None
+    row = dict(rows[i])
+    title, day = _title(row.get("conversation_id")), _day(row)
+    row["_other_chat"] = True
+    row["_note"] = FILE_NOTE.format(title=title, day=day)
+    mode = "note"
+    if meaning.asks_to_look_again(text) is True and row.get("kind") in ("picture", "document"):
+        if row.get("kind") == "picture" or int(row.get("tokens") or 0) <= FILE_DOC_MAX_TOKENS:
+            mode = "file"
+    attachments._log_recall(row, f"from another chat \"{title}\" ({mode}, fit {best:.2f})")
+    return row, mode
+
+
+def note_line(row) -> str:
+    """Her line for a file of another chat she cannot see now."""
+    import source_tags
+    desc = str(row.get("caption") or "")
+    if not desc and row.get("kind") == "document":
+        import attachments
+        try:
+            desc = attachments.document_text(row)
+        except Exception:
+            desc = ""
+    desc = " ".join(desc.split())[:300] or NO_DESC
+    return NOTE_LINE.format(item=source_tags.item_name(row),
+                            title=_title(row.get("conversation_id")), day=_day(row), desc=desc)

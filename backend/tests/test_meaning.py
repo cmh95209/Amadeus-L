@@ -22,7 +22,7 @@ from chat import AmadeusPack  # noqa: E402
 
 # One axis per group; a test message gets the axis of what it means.
 AXES = ["weather", "chat", "forecast", "not_forecast", "picture", "video", "document", "other",
-        "claim", "talk"]
+        "claim", "talk", "look", "nolook"]
 
 
 def axis(name, strength=1.0):
@@ -66,17 +66,26 @@ def fake_embed(texts):
             out.append(axis("claim"))
         elif t in meaning.NOT_LOOKUP_CLAIM:
             out.append(axis("talk"))
+        elif t in meaning.LOOK_AGAIN:
+            out.append(axis("look"))
+        elif t in meaning.NOT_LOOK_AGAIN:
+            out.append(axis("nolook"))
         else:
             kind = next((k for k, g in meaning.SHARED_FILE.items() if t in g), None)
-            # a file description: shares the video axis with "mall" talk only
-            out.append(axis(kind) if kind else axis("video", 0.9) if "mall" in t
-                       else axis("chat", 0.5))
+            if kind:
+                out.append(axis(kind))
+            else:   # a file description: on the axis of what it shows
+                out.append(axis("video", 0.9) if "mall" in t else
+                           axis("picture", 0.9) if "cat" in t.lower() else
+                           axis("document", 0.9) if "resume" in t or "budget" in t else
+                           axis("chat", 0.5))
     return out
 
 
 class MeaningOn(unittest.TestCase):
     def setUp(self):
         meaning.use_embedder(fake_embed)
+        attachments._picks.clear()
 
     def tearDown(self):
         meaning.reset()
@@ -235,7 +244,10 @@ DOC = {"id": 31, "chat_no": 2, "message_id": 5, "kind": "document", "name": "res
 class RecallTests(MeaningOn):
     def run_recall(self, text, videos=(VIDEO,), pictures=(PICTURE,), docs=(DOC,)):
         logs = []
-        with patch.object(attachments, "_sent_videos", return_value=list(videos)), \
+        every = list(videos) + list(pictures) + list(docs)
+        with patch.object(attachments.store, "attachments_where", lambda where, params: every), \
+                patch.object(attachments, "document_text", lambda row: ""), \
+                patch.object(attachments, "_sent_videos", return_value=list(videos)), \
                 patch.object(attachments, "_sent_pictures", return_value=list(pictures)), \
                 patch.object(attachments, "_sent_documents", return_value=list(docs)), \
                 patch.object(attachments, "_log_recall", lambda r, w: logs.append(w)):
@@ -244,10 +256,10 @@ class RecallTests(MeaningOn):
                    attachments.referenced_documents(text, 1, 99, now=NOW))
         return got, logs
 
-    def test_adds_the_newest_file_of_that_kind(self):
+    def test_adds_the_file_it_fits(self):
         (pics, vids, docs), logs = self.run_recall("你看了我发的视频吗")
         self.assertEqual((pics, vids, docs), ([], [VIDEO], []))
-        self.assertIn("(meaning)", logs[0])
+        self.assertIn("(meaning", logs[0])
         (pics, vids, docs), _ = self.run_recall("मेरी भेजी फोटो देखी?")
         self.assertEqual((pics, vids, docs), ([PICTURE], [], []))
         (pics, vids, docs), _ = self.run_recall("நான் அனுப்பின ஃபைல் படிச்சியா?")
@@ -291,6 +303,91 @@ class RecallTests(MeaningOn):
         self.assertEqual(vids, [VIDEO])
         (_p, vids, _d), _ = self.run_recall("你看了我发的视频吗")
         self.assertEqual(vids, [])
+
+    def test_picks_the_file_it_fits_not_the_newest(self):
+        # 2026-11-13 round: "the budget file" brought back the newer recipe.
+        budget = {**DOC, "id": 32, "chat_no": 1, "name": "budget_2026.txt"}
+        recipe = {**DOC, "id": 33, "chat_no": 2, "name": "ramen_recipe.txt"}
+        MEANS["did u look at the budget file i sent?"] = "document"
+        try:
+            (_p, _v, docs), _ = self.run_recall("did u look at the budget file i sent?",
+                                                docs=(budget, recipe))
+        finally:
+            MEANS.pop("did u look at the budget file i sent?")
+        self.assertEqual(docs, [budget])
+
+    def test_no_clear_winner_brings_nothing(self):
+        twin = {**PICTURE, "id": 12, "chat_no": 2}
+        (pics, _v, _d), _ = self.run_recall("मेरी भेजी फोटो देखी?", pictures=(PICTURE, twin))
+        self.assertEqual(pics, [])
+
+
+class NoTownTests(unittest.TestCase):
+    def test_tool_refused_when_the_router_found_no_town(self):
+        import test_web_search_resilience as W
+        calls = []
+
+        def handler(convo):
+            if not any(live_lookup.NO_TOWN_RESULT in str(m.get("content")) for m in convo):
+                return W.FakeReply(tool_calls=[{"name": "get_weather",
+                                                "args": {"place": "Malaysia"}, "id": "1"}])
+            return W.FakeReply(tool_calls=W.pack_call(eng="Which town are you in?"))
+        route = {"weather": True, "place": None, "search": False, "topic": None, "check": False}
+        msgs = [{"role": "system", "content": "p"}, {"role": "user", "content": "rain later?"}]
+        with patch.object(chat.store, "load_deep_thinking", return_value=False), \
+                patch.object(chat, "_web_triage_candidate", return_value=True), \
+                patch.object(chat, "_web_triage", return_value=route), \
+                patch.object(chat.weather, "fetch_weather_report", side_effect=calls.append):
+            pack = chat._getResponsePackedWithWebSearch(W.FakeLLM(handler, []), msgs)
+        self.assertEqual(calls, [])
+        self.assertEqual(pack.assistant_reply_ENG, "Which town are you in?")
+
+
+class FollowUpTests(MeaningOn):
+    def test_answer_to_which_town_is_a_weather_follow_up(self):
+        msgs = [{"role": "user", "content": "esok hujan tak?"},
+                {"role": "assistant", "content": "Which town?"},
+                {"role": "user", "content": "lisbon"}]
+        self.assertTrue(chat._weather_follow_up(msgs))
+        msgs[0]["content"] = "penatnya hari ni"
+        self.assertFalse(chat._weather_follow_up(msgs))
+
+
+class CrossChatFileTests(MeaningOn):
+    CAT = {"id": 41, "conversation_id": 7, "chat_no": 1, "message_id": 3, "kind": "picture",
+           "created_at": "2026-11-12 10:00", "caption": "A cat sleeping on a sofa.",
+           "name": "mochi.png"}
+
+    def pick(self, text, search_on=True):
+        import cross_files
+        with patch.object(cross_files.store, "attachments_where", lambda w, p: [dict(self.CAT)]), \
+                patch.object(cross_files.store, "list_conversations",
+                             lambda: [{"id": 7, "title": "Cats"}]), \
+                patch.object(cross_files.cross_tab, "search_on", lambda: search_on), \
+                patch.object(attachments, "_log_recall", lambda r, w: None):
+            return cross_files.pick(text, 1, now=NOW)
+
+    def test_note_by_default(self):
+        import cross_files
+        row, mode = self.pick("मेरी भेजी फोटो देखी?")
+        self.assertEqual((row["id"], mode), (41, "note"))
+        with patch.object(cross_files.store, "list_conversations",
+                          lambda: [{"id": 7, "title": "Cats"}]):
+            line = cross_files.note_line(row)
+        self.assertIn('Picture 1 from another chat from your chat "Cats"', line)
+        self.assertIn("A cat sleeping on a sofa.", line)
+        self.assertIn("cannot see it now", line)
+
+    def test_off_with_cross_chat_search(self):
+        self.assertEqual(self.pick("मेरी भेजी फोटो देखी?", search_on=False), (None, None))
+
+    def test_other_media_brings_nothing(self):
+        self.assertEqual(self.pick("my first video game was pokemon red"), (None, None))
+
+    def test_tag_names_the_other_chat(self):
+        import source_tags
+        self.assertEqual(source_tags.item_name({**self.CAT, "_other_chat": True}),
+                         "Picture 1 from another chat")
 
 
 if __name__ == "__main__":

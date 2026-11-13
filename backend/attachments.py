@@ -1442,29 +1442,89 @@ def _recent(row, now=None) -> bool:
     return (now or datetime.now()) - sent <= timedelta(hours=meaning.RECALL_ADD_RECENT_HOURS)
 
 
-def _by_meaning(text, picked, earlier, kind, now=None, dropped=()) -> list:
+def describe(row) -> str:
+    """What a file is, for matching a message to it by meaning: its name,
+    its description and (a document) its opening lines."""
+    bits = [re.sub(r"[_\-.]+", " ", str(row.get("name") or "")).strip(),
+            str(row.get("caption") or "").strip()]
+    if row.get("kind") == "document":
+        try:
+            bits.append(document_text(row)[:300])
+        except Exception:
+            pass
+    return " - ".join(b for b in bits if b)
+
+
+def best_fit(text, rows, least=None, margin=None):
+    """(the row the message fits clearly best, its fit) or (None, best fit):
+    at least `least` (meaning.PICK_MIN) and `margin` (meaning.PICK_MARGIN)
+    over the next one."""
+    least = meaning.PICK_MIN if least is None else least
+    margin = meaning.PICK_MARGIN if margin is None else margin
+    if not rows:
+        return None, 0.0
+    scores = meaning.fits(text, [describe(r) for r in rows])
+    if not scores:
+        return None, 0.0
+    ranked = sorted(zip(scores, range(len(rows))), reverse=True)
+    best, i = ranked[0]
+    second = ranked[1][0] if len(ranked) > 1 else 0.0
+    if best >= least and best - second >= margin:
+        return rows[i], best
+    return None, best
+
+
+_picks = {}   # (text, chat, newest message) -> the in-chat pick (several kinds ask)
+
+
+def _meaning_pick(text, conv, newest_id, now=None):
+    """The recent file of THIS chat (any kind) the message is about, by
+    meaning: the one its words fit clearly best (best_fit) - never just the
+    newest ("my steps chart" brought back the recipe, 2026-11-13 test round)
+    - unless the message is about some other video / photo / file. Clearly
+    "about a file I sent" (shared_file_kind) needs a smaller lead."""
+    key = (text, conv, newest_id)
+    if key in _picks:
+        return _picks[key]
+    pick = None
+    talk = meaning.shared_file_kind(text)
+    if talk is not None:
+        rows = [r for r in store.attachments_where(
+                    "conversation_id = ? AND message_id IS NOT NULL AND message_id != ?",
+                    (int(conv), int(newest_id)))
+                if _recent(r, now)]
+        row, score = best_fit(text, rows, margin=(meaning.PICK_MARGIN_TALK if talk
+                                                  else meaning.PICK_MARGIN))
+        if row is not None and meaning.other_media(text) is not True:
+            pick = row
+            _log_recall(row, f"the message is about this file (meaning, fit {score:.2f})")
+    _picks[key] = pick
+    while len(_picks) > 16:
+        _picks.pop(next(iter(_picks)))
+    return pick
+
+
+def _by_meaning(text, picked, earlier, kind, now=None, dropped=(), conv=None,
+                newest_id=None) -> list:
     """Recall by meaning (meaning.py, any language), after the word rules:
     BLOCK - their picks are dropped when the message is clearly about some
     other video / photo / file ("my first video game", "the last movie I
     saw", "photos on my phone"); ADD - nothing picked, but the message is
-    about a file of this kind they sent here ("what did u think of the vid
-    i sent", "你看了我发的视频吗"): the newest one, if sent recently.
-    No ADD after a word match was dropped for not fitting (it would only
-    bring the same doubtful file back). The sidecar off / slow / switched
-    off: the word rules' answer stands."""
+    about a file they sent here ("what did u think of the vid i sent",
+    "你看了我发的视频吗"): the one it fits best (_meaning_pick), when it is
+    of this kind. No ADD after a word match was dropped for not fitting (it
+    would only bring the same doubtful file back). The sidecar off / slow /
+    switched off: the word rules' answer stands."""
     if picked:
         if meaning.other_media(text) is True:
             for r in picked:
                 _log_recall(r, "dropped - the message is about something else (meaning)")
             return []
         return picked
-    if not earlier or dropped or meaning.shared_file_kind(text) != kind:
+    if not earlier or dropped or not meaning.RECALL_ADD or conv is None:
         return []
-    newest = max(earlier, key=lambda r: r["id"])
-    if not _recent(newest, now):
-        return []
-    _log_recall(newest, "the message is about a " + kind + " they sent (meaning)")
-    return [newest]
+    pick = _meaning_pick(text, conv, newest_id, now)
+    return [pick] if pick is not None and pick.get("kind", "picture") == kind else []
 
 
 def _sent_pictures(conv: int) -> list:
@@ -1530,7 +1590,7 @@ def referenced(text: str, conv: int, newest_id: int, now=None) -> list:
                 else:
                     picked.append(best)
                     _log_recall(best, why)
-    picked = _by_meaning(text, picked, earlier, "picture", now, dropped)
+    picked = _by_meaning(text, picked, earlier, "picture", now, dropped, conv, newest_id)
     return sorted(picked[:SHOW_AGAIN_MAX], key=lambda r: r["id"])
 
 
@@ -1585,7 +1645,8 @@ def referenced_documents(text: str, conv: int, newest_id: int, now=None) -> list
     none or not clear): the word rules, then meaning (_by_meaning)."""
     text = text or ""
     earlier = [r for r in _sent_documents(conv) if r["message_id"] != newest_id]
-    return _by_meaning(text, _referenced_documents_rules(text, earlier), earlier, "document", now)
+    return _by_meaning(text, _referenced_documents_rules(text, earlier), earlier, "document", now,
+                       (), conv, newest_id)
 
 
 def _referenced_documents_rules(text: str, earlier: list) -> list:
@@ -1699,7 +1760,7 @@ def _place_documents(out, users, own, desk, again) -> dict:
         plan.setdefault(last, []).extend(document_block(a) for a in own)
     if again:
         plan.setdefault(last, []).extend(
-            document_block(a, source_tags.RECALLED_NOTE) for a in again)
+            document_block(a, a.get("_note", source_tags.RECALLED_NOTE)) for a in again)
     return plan
 
 
@@ -1752,7 +1813,7 @@ def referenced_videos(text: str, conv: int, newest_id: int, now=None) -> list:
     earlier = [r for r in _sent_videos(conv) if r["message_id"] != newest_id]
     dropped = []
     picked = _referenced_videos_rules(text, earlier, dropped)
-    return _by_meaning(text, picked, earlier, "video", now, dropped)
+    return _by_meaning(text, picked, earlier, "video", now, dropped, conv, newest_id)
 
 
 def _referenced_videos_rules(text: str, earlier: list, dropped: list) -> list:
@@ -2051,6 +2112,24 @@ def with_pictures(messages, conversation_id=None, see=None):
     except Exception as exc:
         print("[Amadeus] Pictures skipped (could not read them):", repr(exc))
         return messages
+    # Nothing new or recalled in THIS chat: a file of another chat it means
+    # (cross_files.py) - what she noted about it, or the file itself when
+    # they ask her to look at it again.
+    x_text = []
+    if not (own or again or d_own or d_again or v_own or v_again):
+        try:
+            import cross_files
+            x_row, x_mode = cross_files.pick(text_of_newest, conv)
+        except Exception as exc:
+            print("[Amadeus] Cross-chat file recall skipped:", repr(exc))
+            x_row, x_mode = None, None
+        if x_row is not None and x_mode == "file" and x_row.get("kind") == "picture":
+            again = again + [x_row]
+        elif x_row is not None and x_mode == "file":
+            d_again = d_again + [x_row]
+        elif x_row is not None:
+            x_text = [cross_files.note_line(x_row)]
+            _turn.cross_recalled = source_tags.item_name(x_row)
     out = [dict(m) for m in messages]
     # Documents are plain text and every model reads them: planned first
     # (their messages are put in at the end, so the indexes below hold).
@@ -2110,7 +2189,8 @@ def with_pictures(messages, conversation_id=None, see=None):
         elif line:
             reads.append(line)
     # Pictures brought back by the recall.
-    recalled = [source_tags.item_name(a) for a in again] + recalled
+    recalled = ([source_tags.item_name(a) for a in again] + recalled
+                + ([getattr(_turn, "cross_recalled", "")] if x_text else []))
     # Her prompt: which files are NEW (the user attached them now) and which
     # were RECALLED (the app's guess - not sent again). This turn only.
     src = source_tags.turn_line(
@@ -2119,7 +2199,7 @@ def with_pictures(messages, conversation_id=None, see=None):
 
     def add_turn_text(texts):
         # The sources line first, then the rules (they keep the end spot).
-        _add_turn_text(out, last, ([src] if src else []) + list(texts))
+        _add_turn_text(out, last, ([src] if src else []) + x_text + list(texts))
     # Shown under her reply: "Watched: Video 1 (16 stills + what is said) · Read: ...
     # · Recalled: Video 2 (9 stills + what is said)"
     _turn.reads = " · ".join((["Watched: " + "; ".join(watched)] if watched else [])
@@ -2133,7 +2213,7 @@ def with_pictures(messages, conversation_id=None, see=None):
         # missing picture ("look at this").
         note = (None if (d_own or d_again or v_own or v_again)
                 else missing_picture_note(text_of_newest, conv, False))
-        if not (note or docs):
+        if not (note or docs or x_text):
             return messages
         add_turn_text(doc_text + ([note] if note else []))
         return _insert_documents(out, docs)
@@ -2144,7 +2224,7 @@ def with_pictures(messages, conversation_id=None, see=None):
         bits += [store.picture_label(a) for a in own + again]
         bits.append(CANT_SEE_NOTE.format(n=max(1, len(own) or len(own + desk + again))))
         out[last]["content"] = "\n".join(bits)
-        if doc_text or src:
+        if doc_text or src or x_text:
             add_turn_text(doc_text)
         return _insert_documents(out, docs)
     # One shape for a picture message, the turn it is sent AND every later
@@ -2168,7 +2248,7 @@ def with_pictures(messages, conversation_id=None, see=None):
     for a in again:
         # Not "shown again": a picture brought back by a wrong guess made her
         # say "why did you send this?" (2026-11-06).
-        placed.setdefault(last, []).append((a, store.picture_label(a, PICTURE_AGAIN_NOTE)))
+        placed.setdefault(last, []).append((a, store.picture_label(a, a.get("_note", PICTURE_AGAIN_NOTE))))
     shown = 0
     for i, entries in placed.items():
         text = words.get(i, _text(out[i].get("content"))).strip()
@@ -2184,7 +2264,7 @@ def with_pictures(messages, conversation_id=None, see=None):
         if any(p["type"] == "image_url" for p in parts):
             out[i]["content"] = parts
     if not shown:
-        if docs:
+        if docs or x_text:
             add_turn_text(doc_text)
             return _insert_documents(out, docs)
         return messages

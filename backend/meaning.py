@@ -155,13 +155,25 @@ SHARED_FILE = {
     "picture": ["What do you think of the picture I sent you?",
                 "Did you see the photo I showed you?", "Look at that pic I sent again.",
                 "The photo I sent earlier, what's in it?",
-                "Can you check the screenshot I sent?"],
+                "Can you check the screenshot I sent?",
+                # asking about something IN a file (2026-11-15: "the ramen recipe,
+                # how long do i boil the eggs?" was not file talk; subjects kept
+                # unlike the test set's on purpose)
+                "Was the dog photo blurry?", "Is that selfie of mine still cute to you?",
+                "What was written on the sign in that pic?", "Does my sleep chart look okay?",
+                "What time did my schedule screenshot say for Friday?"],
     "video": ["What did you think of the video I sent?", "Did you watch the clip I shared?",
               "About that video I showed you earlier...", "Did you like the vid I sent?",
-              "Watch the video I sent you again."],
+              "Watch the video I sent you again.",
+              "In that clip, what song was playing?",
+              "The concert video, could you hear the singer?"],
     "document": ["Did you read the file I sent?", "What did you think of my document?",
                  "Look at the PDF I gave you again.", "Check the report I attached.",
-                 "The document I shared earlier, can you summarize it?"],
+                 "The document I shared earlier, can you summarize it?",
+                 "In the pasta recipe, how much salt do I add?",
+                 "What time is the flight in my itinerary again?",
+                 "What was the total in my expenses sheet?",
+                 "That essay of mine, is the ending too long?"],
 }
 OTHER_MEDIA = [
     "I watched a funny video on YouTube.", "My first video game was Pokemon.",

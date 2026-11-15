@@ -1537,7 +1537,12 @@ def _follow_up(conv, newest_id, text):
     last["seen"] = newest_id
     row = dict(last["row"])
     look = meaning.asks_to_look_again(text)
-    refers = (look is True or bool(meaning.shared_file_kind(text))
+    # A vague "look" / "did you peek?" alone counts only right after a
+    # message about the file (MH 2026-11-15: it brought the picture of
+    # another chat back into unrelated talk); otherwise the message must be
+    # about a file they sent or fit this file's description.
+    refers = ((look is True and last.get("off_topic", 0) == 0)
+              or bool(meaning.shared_file_kind(text))
               or ((meaning.fits(text, [describe(row)]) or [0.0])[0] >= meaning.PICK_MIN))
     if not refers or meaning.other_media(text) is True:
         last["off_topic"] += 1
@@ -2177,7 +2182,7 @@ def with_pictures(messages, conversation_id=None, see=None):
             context = [re.sub(r"\[[^\]]*\]", " ", _text(messages[i].get("content"))).strip()
                        for i in users[:-1][-cross_files.CONTEXT_MESSAGES:]]
             x_row, x_mode = cross_files.pick(text_of_newest, conv, context=context)
-            fresh_pick = x_row
+            fresh_pick = x_row if x_mode != "hint" else None   # a hint starts no follow-ups
             if x_row is None:
                 # A follow-up that does not name the file again ("what did she
                 # look like?", "can you see it now?"): the file recalled just
@@ -2200,6 +2205,10 @@ def with_pictures(messages, conversation_id=None, see=None):
             again = again + [x_row]
         elif x_row is not None and x_mode == "file":
             d_again = d_again + [x_row]
+        elif x_row is not None and x_mode == "hint":
+            # Level 2: only a memory hint (no "Recalled" chip - she saw nothing).
+            x_text = [cross_files.hint_line(x_row)]
+            _turn.cross_recalled = ""
         elif x_row is not None:
             x_text = [cross_files.note_line(x_row)]
             _turn.cross_recalled = source_tags.item_name(x_row)
@@ -2265,7 +2274,7 @@ def with_pictures(messages, conversation_id=None, see=None):
             reads.append(line)
     # Pictures brought back by the recall.
     recalled = ([source_tags.item_name(a) for a in again] + recalled
-                + ([getattr(_turn, "cross_recalled", "")] if x_text else []))
+                + ([_turn.cross_recalled] if x_text and getattr(_turn, "cross_recalled", "") else []))
     # Her prompt: which files are NEW (the user attached them now) and which
     # were RECALLED (the app's guess - not sent again). This turn only.
     src = source_tags.turn_line(

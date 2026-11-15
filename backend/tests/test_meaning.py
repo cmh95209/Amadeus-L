@@ -399,6 +399,17 @@ class FollowUpRecallTests(MeaningOn):
         self.assertNotIn(1, attachments._recalled_last)
         self.assertEqual(self.follow(30, "what did she look like in the pic i sent you?"), (None, None))
 
+    def test_vague_look_only_right_after_talk_about_it(self):
+        """MH 2026-11-15: "did you peek?" in unrelated talk brought the
+        picture of another chat back (file mode)."""
+        attachments._remember_recall(1, 10, self.ROW)
+        self.follow(11, "lol nice")
+        self.assertEqual(self.follow(12, "can you see it right now? look at it again"), (None, None))
+        # right after a message about it, the same words still count
+        self.follow(13, "what did she look like in the pic i sent you?")
+        row, mode = self.follow(14, "can you see it right now? look at it again")
+        self.assertEqual((row["id"], mode), (41, "file"))
+
     def test_not_in_the_turn_that_recalled_it(self):
         attachments._remember_recall(1, 10, self.ROW)
         self.assertEqual(self.follow(10, "what did she look like in the pic i sent you?"), (None, None))
@@ -463,6 +474,52 @@ class CrossChatFileTests(MeaningOn):
 
     def test_other_media_brings_nothing(self):
         self.assertEqual(self.pick("my first video game was pokemon red"), (None, None))
+
+    def pick_fit(self, text, fit, conv=1):
+        """pick() with the cat's fit to the message fixed at `fit`."""
+        import cross_files
+        with patch.object(cross_files.store, "attachments_where", lambda w, p: [dict(self.CAT)]), \
+                patch.object(cross_files.store, "list_conversations",
+                             lambda: [{"id": 7, "title": "Cats"}]), \
+                patch.object(cross_files.cross_tab, "search_on", lambda: True), \
+                patch.object(cross_files.meaning, "fits", lambda t, d: [fit] * len(d)), \
+                patch.object(attachments, "_log_recall", lambda r, w: None):
+            return cross_files.pick(text, conv, now=NOW)
+
+    def test_plain_topic_talk_recalls_nothing(self):
+        """MH 2026-11-15: food talk (air fryer, radish soup) fit a food
+        picture of another chat at 0.41-0.43 and recalled it each time."""
+        import cross_files
+        cross_files._hinted.clear()
+        MEANS["the air fryer made the potatoes so crispy"] = "chat"
+        self.addCleanup(MEANS.pop, "the air fryer made the potatoes so crispy")
+        for fit in (0.41, 0.43, cross_files.HINT_MIN - 0.01):
+            self.assertEqual(self.pick_fit("the air fryer made the potatoes so crispy", fit),
+                             (None, None))
+
+    def test_file_talk_still_recalls_at_the_low_bar(self):
+        import cross_files
+        row, mode = self.pick_fit("मेरी भेजी फोटो देखी?", cross_files.PICK_MIN + 0.01)
+        self.assertEqual((row["id"], mode), (41, "note"))
+
+    def test_strong_topic_fit_is_a_hint_once_per_chat(self):
+        import cross_files
+        cross_files._hinted.clear()
+        MEANS["mochi is getting so round lately"] = "chat"
+        self.addCleanup(MEANS.pop, "mochi is getting so round lately")
+        row, mode = self.pick_fit("mochi is getting so round lately", 0.7)
+        self.assertEqual((row["id"], mode), (41, "hint"))
+        self.assertEqual(self.pick_fit("mochi is getting so round lately", 0.7), (None, None))
+        self.assertEqual(self.pick_fit("mochi is getting so round lately", 0.7, conv=2)[1], "hint")
+        with patch.object(cross_files.store, "list_conversations",
+                          lambda: [{"id": 7, "title": "Cats"}]):
+            line = cross_files.hint_line(row)
+        self.assertIn('a picture the user showed you in your chat "Cats"', line)
+        self.assertIn("A cat sleeping on a sofa.", line)
+        self.assertIn("only if it fits naturally", line)
+        with patch.object(cross_files, "HINTS", False):
+            cross_files._hinted.clear()
+            self.assertEqual(self.pick_fit("mochi is getting so round lately", 0.7), (None, None))
 
     def test_tag_names_the_other_chat(self):
         import source_tags

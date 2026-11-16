@@ -33,8 +33,10 @@ GET_WEATHER_TOOL = {
             "Get LIVE weather and air quality (now, today and tomorrow, with the chance of "
             "rain) for a town or city, from a live weather service. Use it for ANY question "
             "about weather, rain, temperature, forecast, humidity or air quality - never "
-            "answer those from your own knowledge. Take the place from the conversation when "
-            "it is clear; when it is not clear, do not call this - ask the user which town."
+            "answer those from your own knowledge. You may also use it when the user just "
+            "mentions the weather where they are, to make your reply concrete. Take the place "
+            "from the user's saved home town or the conversation when it is clear; when it is "
+            "not clear, do not call this - ask the user which town."
         ),
         "parameters": {
             "type": "object",
@@ -51,8 +53,11 @@ GET_WEATHER_TOOL = {
 # The weather sentence of her web rules (fixed text: cache-safe).
 WEATHER_RULE = (
     "WEATHER and AIR QUALITY: use the get_weather tool (never web_search) - take the town from "
-    "the conversation when it is clear, ask which town when it is not, never guess one. Never "
-    "state a forecast, a chance of rain or a live figure you did not look up in this reply. ")
+    "the user's saved home town or the conversation when it is clear, ask which town when it "
+    "is not, never guess one. When the user just mentions the weather where they are (not a "
+    "question - \"it's so hot today\"), you may check it to make your reply concrete, if it "
+    "adds something; a passing remark does not need a lookup. Never state a forecast, a "
+    "chance of rain or a live figure you did not look up in this reply. ")
 
 # Her note at the start of the reply (this turn only).
 TURN_NOTE = (
@@ -91,6 +96,22 @@ def places_of(args) -> list:
     return list(dict.fromkeys(p for p in places if p))[:PLACES_MAX]
 
 
+def weather_source(place: str, report: str) -> dict:
+    """The source entry for one weather fetch (the "Live weather" chip).
+    A failed fetch is still recorded - the user sees the web was used - with
+    status "not_found" / "down", so the chip says what went wrong
+    (MH 2026-11-16: the chip helps troubleshooting)."""
+    text = report or ""
+    if NOT_FOUND_MARK in text:
+        status = "not_found"
+    elif "could not be reached" in text:
+        status = "down"
+    else:
+        status = "ok"
+    return {"kind": "weather", "place": place, "url": "https://open-meteo.com/",
+            "status": status}
+
+
 def run_get_weather(args, fetch, record) -> tuple:
     """(the places, the text she reads). fetch(place) -> report text;
     record(entry) notes the source (the "Live weather" chip). Never raises."""
@@ -104,10 +125,10 @@ def run_get_weather(args, fetch, record) -> tuple:
         except Exception as exc:
             print(f"[Amadeus] get_weather failed for '{place}': {exc!r}")
             report = "The live weather service could not be reached just now."
+        record(weather_source(place, report))
         if NOT_FOUND_MARK in report:
             report += "\n" + NOT_FOUND_NOTE
         reports.append(f"Live weather data for '{place}':\n{report}")
-        record({"kind": "weather", "place": place, "url": "https://open-meteo.com/"})
     print("[Amadeus] get_weather (her own call): " + "; ".join(places))
     return places, ("(Fetched from the Open-Meteo service just now, times in each place's "
                     "local time.)\n" + "\n\n".join(reports))

@@ -154,4 +154,28 @@ assert.match(sentPanel, /your link/);
 assert.match(sentPanel, /couldn&#x27;t open: it needs a login/);
 assert.doesNotMatch(sentPanel, /javascript:/);
 
+// --- A failed weather fetch keeps its chip, marked (2026-11-16): the web
+// was used, and the user sees what went wrong.
+const wx = normalizeSources([
+  { kind: "weather", place: "Stomach actually felt okay", url: "https://open-meteo.com/",
+    status: "not_found" },
+  { kind: "weather", place: "Springfield", url: "https://open-meteo.com/", status: "bogus" },
+]);
+assert.equal(wx[0].kind === "weather" && wx[0].status, "not_found");
+assert.ok(wx[1].kind === "weather" && wx[1].status === undefined);
+const wxLinks = sourceLinks(wx);
+assert.equal(wxLinks.length, 2);                       // one card per place
+assert.equal(wxLinks[0].failed, "place not found");
+assert.equal(wxLinks[0].read, false);
+assert.equal(wxLinks[1].read, true);
+assert.equal(chipLabel(wxLinks.slice(0, 1)), "Live weather · place not found");
+assert.equal(chipLabel(wxLinks), "Live weather · 1 failed");
+assert.equal(chipLabel(wxLinks.slice(1)), "Live weather");
+const down = sourceLinks(normalizeSources([
+  { kind: "weather", place: "Springfield", url: "https://open-meteo.com/", status: "down" }]));
+assert.equal(chipLabel(down), "Live weather · service unreachable");
+const wxPanel = renderToStaticMarkup(createElement(SourcesBar, { sources: wx, defaultOpen: true }));
+assert.match(wxPanel, /lookup failed: place not found/);
+assert.match(wxPanel, /Live weather · 1 failed/);
+
 console.log("sources.test.ts: ok");

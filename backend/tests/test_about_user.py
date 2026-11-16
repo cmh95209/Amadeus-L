@@ -64,8 +64,21 @@ class RouteTests(_FreshAppTests):
         self.client.post("/setUserProfile", json={"address": "auto"})
         self.assertEqual(self.memory.load_pronouns(), "he/him")
 
+    def test_town_round_trip(self):
+        """Home town (2026-11-16): where "here" is for the weather."""
+        self.assertEqual(self.client.get("/getUserProfile").json["town"], "")
+        self.assertEqual(self.memory.town_sentence(), "")
+        res = self.client.post("/setUserProfile", json={"town": "  Springfield  "})
+        self.assertEqual(res.json["town"], "Springfield")
+        self.assertIn("lives in Springfield", self.memory.town_sentence())
+        self.client.post("/setUserProfile", json={"pronouns": "he/him"})
+        self.assertEqual(self.memory.load_town(), "Springfield")   # untouched
+        self.assertEqual(len(self.memory.save_town("x" * 200)), 60)
+        self.client.post("/setUserProfile", json={"town": ""})
+        self.assertEqual(self.memory.load_town(), "")
+
     def test_bad_input_is_400(self):
-        for body in ({}, {"other": 1}, {"pronouns": 5}, {"address": None}):
+        for body in ({}, {"other": 1}, {"pronouns": 5}, {"address": None}, {"town": 3}):
             with self.subTest(body=body):
                 self.assertEqual(self.client.post("/setUserProfile", json=body).status_code, 400)
 

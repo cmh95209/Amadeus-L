@@ -519,6 +519,7 @@ class _ThoughtFreeChatOpenAI(ChatOpenAI):
         # cloud "usage") to the stopwatch. Never lets a failure through.
         timing.note_server_report(response)
         result = super()._create_chat_result(response, generation_info)
+        _keep_reasoning_text(response, result)
         for gen in result.generations:
             message = getattr(gen, "message", None)
             if message is not None and isinstance(message.content, str):
@@ -528,6 +529,34 @@ class _ThoughtFreeChatOpenAI(ChatOpenAI):
                     if hasattr(gen, "text"):
                         gen.text = cleaned
         return result
+
+
+def _keep_reasoning_text(response, result) -> None:
+    """langchain-openai drops the reasoning text some servers send next to
+    the reply (OpenRouter "reasoning" / "reasoning_details", llama.cpp and
+    DeepSeek "reasoning_content"). Keep it on the message
+    (additional_kwargs["reasoning"]) so the log can show WHY she chose to
+    look something up or not (chat._log_lookup_choice, 2026-11-16). Never
+    sent back to the server; never raises."""
+    try:
+        data = response if isinstance(response, dict) else response.model_dump(warnings=False)
+        choices = data.get("choices") or []
+        for gen, choice in zip(result.generations, choices):
+            msg = (choice or {}).get("message") or {}
+            text = msg.get("reasoning") or msg.get("reasoning_content")
+            if not (isinstance(text, str) and text.strip()):
+                parts = []
+                for item in msg.get("reasoning_details") or []:
+                    if isinstance(item, dict):
+                        piece = item.get("summary") or item.get("text")
+                        if isinstance(piece, str) and piece.strip():
+                            parts.append(piece.strip())
+                text = "\n".join(parts)
+            message = getattr(gen, "message", None)
+            if message is not None and isinstance(text, str) and text.strip():
+                message.additional_kwargs["reasoning"] = text.strip()
+    except Exception:
+        pass
 
 
 def reset_llm():

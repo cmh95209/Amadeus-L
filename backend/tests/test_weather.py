@@ -123,6 +123,10 @@ def triage_call(weather="no", place="none", search="no", topic="none"):
                       "wants_search": search, "search_topic": topic}}]
 
 
+# The router's answer for MESSAGES_WEATHER ("...weather in Springfield?").
+WEATHER_YES = triage_call(weather="yes", place="Springfield")
+
+
 # --- weather.py: parsing + formatting ----------------------------------------
 class GeocodeTests(unittest.TestCase):
     def test_picks_first_result(self):
@@ -324,7 +328,7 @@ class WeatherWiringTests(unittest.TestCase):
              patch.object(chat, "_run_web_search",
                           side_effect=AssertionError("search must not run")):
             pack = chat._getResponsePackedWithWebSearch(
-                FakeLLM(handler, log), MESSAGES_WEATHER)
+                FakeLLM(handler, log, triage=WEATHER_YES), MESSAGES_WEATHER)
 
         self.assertEqual(
             pack.assistant_reply_ENG, "25.5 degrees, overcast, rain likely.")
@@ -345,7 +349,9 @@ class WeatherWiringTests(unittest.TestCase):
                           return_value="FAKE") as fw, \
              patch.object(chat, "_run_web_search",
                           side_effect=AssertionError("search must not run")):
-            chat._getResponsePackedWithWebSearch(FakeLLM(handler, log), [
+            chat._getResponsePackedWithWebSearch(FakeLLM(
+                handler, log, triage=triage_call(weather="yes", place="Tokyo",
+                                                 search="yes", topic="Tokyo weather")), [
                 {"role": "system", "content": "persona"},
                 {"role": "user",
                  "content": "can you search the weather in Tokyo?"},
@@ -366,7 +372,7 @@ class WeatherWiringTests(unittest.TestCase):
                           side_effect=AssertionError("must not fetch")), \
              patch.object(chat, "_run_web_search", return_value="1. result."):
             pack = chat._getResponsePackedWithWebSearch(
-                FakeLLM(handler, log), [
+                FakeLLM(handler, log, triage=triage_call(weather="yes")), [
                     {"role": "system", "content": "persona"},
                     {"role": "user", "content": "how's the weather?"},
                 ])
@@ -386,7 +392,7 @@ class WeatherWiringTests(unittest.TestCase):
              patch.object(chat.weather, "fetch_weather_report",
                           return_value=weather.SERVICE_DOWN_LINE):
             chat._getResponsePackedWithWebSearch(
-                FakeLLM(handler, log), MESSAGES_WEATHER)
+                FakeLLM(handler, log, triage=WEATHER_YES), MESSAGES_WEATHER)
 
         self.assertIn(weather.SERVICE_DOWN_LINE, log[1][-1]["content"])
 
@@ -514,17 +520,34 @@ class TriageRoutingTests(unittest.TestCase):
         fw.assert_called_once_with("Denver")  # the place came from CONTEXT
         self.assertEqual(len(log), 2)  # triage + phase 2
 
-    def test_no_no_triage_defers_to_keywords(self):
-        log = []
-        llm = FakeLLM(
-            lambda convo: FakeReply(tool_calls=pack_call(eng="Cloudy.")),
+    def test_router_no_is_trusted_for_weather(self):
+        """2026-11-16: "the weather wasn't super hot" - the router said no,
+        the old keyword fallback forced a lookup for the "town" "Stomach
+        actually felt okay". A "no" is trusted now: no forced fetch."""
+        log, binds = [], []
+
+        class Spy(FakeLLM):
+            def bind_tools(self, tools, tool_choice=None):
+                binds.append([t.get("function", {}).get("name") for t in tools])
+                return super().bind_tools(tools, tool_choice)
+
+        llm = Spy(
+            lambda convo: FakeReply(tool_calls=pack_call(eng="Good call on the AC.")),
             log)  # default triage: "no/no"
-        with patch.object(chat.store, "load_deep_thinking", return_value=False), \
-             patch.object(chat.weather, "fetch_weather_report",
-                          return_value="FAKE") as fw:
-            chat._getResponsePackedWithWebSearch(llm, MESSAGES_WEATHER)
-        fw.assert_called_once_with("Springfield")  # the keyword route did it
-        self.assertEqual(len(log), 2)
+        with patch.object(chat.store, "load_deep_thinking", return_value=False),              patch.object(chat.weather, "fetch_weather_report",
+                          side_effect=AssertionError("no forced fetch")):
+            pack = chat._getResponsePackedWithWebSearch(llm, [
+                {"role": "system", "content": "persona"},
+                {"role": "user", "content": "Stomach actually felt okay! Today I didn't "
+                                            "turn on the AC since the weather wasn't super hot."},
+            ])
+        self.assertEqual(pack.assistant_reply_ENG, "Good call on the AC.")
+        self.assertTrue(any("get_weather" in b for b in binds))   # she may still look
+
+    def test_keyword_fallback_never_guesses_a_town(self):
+        self.assertIsNone(chat._deterministic_route(
+            "Stomach actually felt okay, the weather wasn't super hot", []))
+        self.assertIsNone(chat._deterministic_route("how's the weather in Springfield?", []))
 
     def test_debris_topic_reuses_prior_query(self):
         log = []
@@ -547,15 +570,24 @@ class TriageRoutingTests(unittest.TestCase):
         ms.assert_called_once_with("the metro ticket prices")
 
     def test_dead_triage_call_never_blocks_reply(self):
-        llm = FakeLLM(lambda convo: FakeReply(tool_calls=pack_call(eng="ok")),
-                      [])
-        with patch.object(chat.store, "load_deep_thinking", return_value=False), \
-             patch.object(chat, "_web_triage",
-                          side_effect=TimeoutError("wedged")), \
-             patch.object(chat.weather, "fetch_weather_report",
+        """Router call dead: no forced fetch with a guessed town - she has
+        get_weather and picks the town from the chat herself."""
+        calls = []
+
+        def handler(convo):
+            calls.append(1)
+            if len(calls) == 1:
+                return FakeReply(tool_calls=[{"name": "get_weather",
+                                              "args": {"place": "Springfield"}, "id": "1"}])
+            return FakeReply(tool_calls=pack_call(eng="ok"))
+
+        llm = FakeLLM(handler, [])
+        with patch.object(chat.store, "load_deep_thinking", return_value=False),              patch.object(chat, "_web_triage",
+                          side_effect=TimeoutError("wedged")),              patch.object(chat.weather, "fetch_weather_report",
                           return_value="FAKE") as fw:
-            chat._getResponsePackedWithWebSearch(llm, MESSAGES_WEATHER)
-        fw.assert_called_once_with("Springfield")  # the keyword fallback did it
+            pack = chat._getResponsePackedWithWebSearch(llm, MESSAGES_WEATHER)
+        fw.assert_called_once_with("Springfield")  # her own call did it
+        self.assertEqual(pack.assistant_reply_ENG, "ok")
 
     def test_timeout_guard(self):
         def slow():
@@ -575,6 +607,7 @@ class FinalCallRobustnessTests(unittest.TestCase):
         with patch.object(chat.store, "load_deep_thinking", return_value=False), \
              patch.object(chat.weather, "fetch_weather_report",
                           return_value="FAKE LIVE BLOCK"):
+            llm.triage = WEATHER_YES
             return chat._getResponsePackedWithWebSearch(llm, MESSAGES_WEATHER)
 
     def test_empty_final_call_gets_one_bounded_retry(self):

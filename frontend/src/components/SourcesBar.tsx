@@ -57,7 +57,13 @@ function SourceCard({ link, index }: { link: SourceLink; index: number }) {
           )}
         </span>
         <span className="source-title">{link.title}</span>
-        {link.failed && (
+        {link.failed && link.kind === "weather" && (
+          <span className="source-date stale"
+            title="The weather service was asked, but returned no weather for this">
+            lookup failed: {link.failed}
+          </span>
+        )}
+        {link.failed && link.kind !== "weather" && (
           <span className="source-date stale" title="The link you sent could not be opened">
             couldn't open: it {link.failed}
           </span>
@@ -129,7 +135,7 @@ export function SourcesBar({ sources, defaultOpen = false }: {
           {links.length > 0 ? (
             <ol className="sources-list">
               {links.map((link, i) => (
-                <SourceCard key={link.url} link={link} index={i + 1} />
+                <SourceCard key={`${link.url}|${link.title}`} link={link} index={i + 1} />
               ))}
             </ol>
           ) : (

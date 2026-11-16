@@ -1836,31 +1836,35 @@ def suggest_name_reading():
 @application.route("/getUserProfile", methods=["GET"])
 def get_user_profile():
     response = jsonify({"pronouns": memory.load_pronouns(),
-                        "address": memory.load_address()})
+                        "address": memory.load_address(),
+                        "town": memory.load_town()})
     response.headers["Cache-Control"] = "no-store"
     return response
 
 
-# pre: JSON body with "pronouns" and/or "address" (strings; '' clears the
-#      pronouns, anything unknown for address means 'auto')
+# pre: JSON body with "pronouns", "address" and/or "town" (strings; '' clears
+#      the pronouns / the town, anything unknown for address means 'auto')
 # post: the given fields are persisted (data/user_pronouns.txt,
-#       data/user_address.txt - personal, never in git); her prompt uses
-#       them from the next turn on. The CharacterMemory sidecar reads the
-#       pronouns when it starts.
+#       data/user_address.txt, data/user_town.txt - personal, never in git);
+#       her prompt uses them from the next turn on. The CharacterMemory
+#       sidecar reads the pronouns when it starts.
 @application.route("/setUserProfile", methods=["POST"])
 def set_user_profile():
     data = request.get_json(silent=True)
-    if not isinstance(data, dict) or not ({"pronouns", "address"} & data.keys()):
-        return jsonify({"message": "Send 'pronouns' and/or 'address'"}), 400
-    for field in ("pronouns", "address"):
+    fields = ("pronouns", "address", "town")
+    if not isinstance(data, dict) or not (set(fields) & data.keys()):
+        return jsonify({"message": "Send 'pronouns', 'address' and/or 'town'"}), 400
+    for field in fields:
         if field in data and not isinstance(data[field], str):
             return jsonify({"message": f"'{field}' must be a string"}), 400
     if "pronouns" in data:
         memory.save_pronouns(data["pronouns"])
     if "address" in data:
         memory.save_address(data["address"])
+    if "town" in data:
+        memory.save_town(data["town"])
     return jsonify({"status": "ok", "pronouns": memory.load_pronouns(),
-                    "address": memory.load_address()})
+                    "address": memory.load_address(), "town": memory.load_town()})
 
 
 def _model_in_list(model_name: str, server_models: list[str]) -> bool:

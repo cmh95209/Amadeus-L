@@ -18,6 +18,15 @@ export type WeatherSource = {
   kind: "weather";
   place: string;
   url: string | null;
+  /** The fetch failed: the place was not found, or the service was down.
+   *  The chip still shows (the web was used) and says what went wrong. */
+  status?: "not_found" | "down";
+};
+
+/** What a failed weather fetch shows on its card and chip. */
+export const WEATHER_FAILED: Record<"not_found" | "down", string> = {
+  not_found: "place not found",
+  down: "service unreachable",
 };
 
 /** A link the user sent (2026-10-26): the app opened it for her reply. */
@@ -96,6 +105,7 @@ export function normalizeSources(raw: unknown): SourceEntry[] {
         kind: "weather",
         place: typeof e.place === "string" ? e.place : "",
         url: isWebLink(e.url) ? e.url.trim() : null,
+        ...(e.status === "not_found" || e.status === "down" ? { status: e.status } : {}),
       });
     } else if (e.kind === "link" && isWebLink(e.url)) {
       out.push({
@@ -135,14 +145,16 @@ export function sourceLinks(entries: SourceEntry[]): SourceLink[] {
   for (const entry of entries) {
     if (entry.kind === "weather") {
       if (!entry.url) continue;
-      const key = linkKey(entry.url);
+      // One card per place (two towns = two cards, same service address).
+      const key = `${linkKey(entry.url)}#${entry.place.toLowerCase()}`;
       if (!seen.has(key)) {
         seen.set(key, {
           url: entry.url,
           title: entry.place ? `Live weather for ${entry.place}` : "Live weather",
           domain: domainOf(entry.url),
-          read: true,
+          read: !entry.status,
           kind: "weather",
+          ...(entry.status ? { failed: WEATHER_FAILED[entry.status] } : {}),
         });
       }
       continue;
@@ -227,7 +239,14 @@ export function dateLabel(iso: string | undefined, now: Date = new Date()): { te
 /** The chip's text: "5 sources · read 3" / "1 source" / "Live weather";
  *  "From my notes · ..." when every search was answered from saved notes. */
 export function chipLabel(links: SourceLink[], entries: SourceEntry[] = []): string {
-  if (links.length === 1 && links[0].kind === "weather") return "Live weather";
+  if (links.length > 0 && links.every((l) => l.kind === "weather")) {
+    const failed = links.filter((l) => l.failed);
+    if (failed.length === links.length) {
+      const why = new Set(failed.map((l) => l.failed));
+      return `Live weather · ${why.size === 1 ? failed[0].failed : "lookup failed"}`;
+    }
+    return "Live weather" + (failed.length ? ` · ${failed.length} failed` : "");
+  }
   if (links.length > 0 && links.every((l) => l.sent)) {
     const opened = links.filter((l) => l.read).length;
     const what = links.length === 1 ? "Your link" : `Your ${links.length} links`;

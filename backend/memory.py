@@ -372,6 +372,34 @@ def save_address(value: str) -> str:
     return value
 
 
+# The user's home town (Settings -> Profile, optional; 2026-11-16): where
+# "here" is for the weather, so neither she nor the router guesses a town.
+PATH_TO_TOWN = os.path.join(DATA_DIR, "user_town.txt")
+
+
+def load_town() -> str:
+    try:
+        with open(PATH_TO_TOWN, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def save_town(town: str) -> str:
+    """Persist the user's home town; '' clears it. Capped: free text."""
+    clean = " ".join((town or "").split())[:60]
+    with open(PATH_TO_TOWN, "w", encoding="utf-8") as f:
+        f.write(clean)
+    return clean
+
+
+def town_sentence() -> str:
+    """'The user lives in X ...' - '' when not set."""
+    town = load_town()
+    return (f"The user lives in {town} (saved in the settings) - that is where \"here\" "
+            "is, e.g. for the weather, unless they name another place.") if town else ""
+
+
 def pronoun_sentence() -> str:
     """'The user uses she/her pronouns.' - '' when not set."""
     pronouns = load_pronouns()
@@ -1839,6 +1867,9 @@ def load_internal_context(now: datetime | None = None, is_greeting=False,
             f"- {pronouns} Use them whenever you refer to the user in the "
             "third person (for example in the English line)."
         )
+    town = town_sentence()
+    if town:
+        cross_lines.append(f"- {town}")
     cross_block = (
 "\n".join(cross_lines) + "\n") if cross_lines else ""
     return {
@@ -2695,9 +2726,13 @@ def sources_for_ui(sources) -> list:
                 item["reused"] = True
             out.append(item)
         elif kind == "weather":
-            out.append({"kind": "weather",
-                        "place": str(entry.get("place") or "")[:_SOURCE_TEXT_MAX],
-                        "url": _safe_link(entry.get("url")) or None})
+            item = {"kind": "weather",
+                    "place": str(entry.get("place") or "")[:_SOURCE_TEXT_MAX],
+                    "url": _safe_link(entry.get("url")) or None}
+            # A failed fetch keeps its chip, marked (2026-11-16).
+            if entry.get("status") in ("not_found", "down"):
+                item["status"] = entry["status"]
+            out.append(item)
         elif kind == "link":
             # A link the user sent (2026-10-26): opened or not, and why not.
             url = _safe_link(entry.get("url"))

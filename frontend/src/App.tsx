@@ -243,6 +243,8 @@ export default function App() {
   // Pronouns: "" (not set), a preset, or "custom" + pronounsCustom.
   const [pronounsChoice, setPronounsChoice] = useState("");
   const [pronounsCustom, setPronounsCustom] = useState("");
+  // Home town ("" = not set): where "here" is for the weather.
+  const [userTown, setUserTown] = useState("");
   // What she calls you: "auto" (let her decide), a preset key, or "custom".
   const [addressChoice, setAddressChoice] = useState("auto");
   const [addressCustom, setAddressCustom] = useState("");
@@ -1546,7 +1548,7 @@ export default function App() {
           getContextBudgetInfo().catch(() => ({ budget: 40000, builtinCap: null, defaultBudget: 40000 })),
           getLLMServer().catch(() => ""),
           getUsername().catch(() => ({ name: "", reading: "" })),
-          getUserProfile().catch(() => ({ pronouns: "", address: "auto" })),
+          getUserProfile().catch(() => ({ pronouns: "", address: "auto", town: "" })),
           getBrainMode().catch(() => null),
           getNames().catch(() => [] as NameEntry[]),
         ]);
@@ -1566,6 +1568,7 @@ export default function App() {
       setUserName(savedName.name);
       setUserNameReading(savedName.reading);
       setNameRows(names);
+      setUserTown(profile.town);
       if (!profile.pronouns || PRONOUN_PRESETS.includes(profile.pronouns)) {
         setPronounsChoice(profile.pronouns);
       } else {
@@ -1934,6 +1937,7 @@ export default function App() {
             addressChoice === "custom"
               ? (addressCustom.trim() ? `custom:${addressCustom.trim()}` : "auto")
               : addressChoice,
+          town: userTown.trim(),
         });
       } catch {
         profileSaved = false;
@@ -3951,6 +3955,24 @@ export default function App() {
                   "Let her decide" starts polite (さん) and gets more familiar as
                   trust grows, taking your pronouns into account. The ending also
                   shows in the English line (e.g. {(userName.trim() || "Alex") + "-kun"}).
+                </p>
+
+                <label>
+                  Your town
+                  <input
+                    value={userTown}
+                    disabled={settingsBusy}
+                    onChange={(event) => setUserTown(event.target.value)}
+                    placeholder="e.g. Springfield"
+                    maxLength={60}
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-describedby="town-help"
+                  />
+                </label>
+                <p className="settings-help" id="town-help">
+                  Optional. Where "here" is when you talk about the weather, so she
+                  can check it without asking. Leave it empty and she asks which town.
                 </p>
 
 

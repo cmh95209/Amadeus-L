@@ -3504,7 +3504,15 @@ def _web_triage(llm, messages):
     call fails - the caller then uses the keyword fallback, so a dead or slow
     triage call can only cost bounded time, never the reply.
     """
-    convo = [{"role": "system", "content": _TRIAGE_SYSTEM}]
+    try:
+        town = store.load_town()
+    except Exception:
+        town = ""
+    convo = [{"role": "system", "content": _TRIAGE_SYSTEM + (
+        f" The user's home town (saved in their settings) is {town}: use it as "
+        "weather_place when they ask about the weather without naming a place "
+        "or the conversation's place."
+        if town else "")}]
     # A wide-enough window that a place discussed a while ago ("I drove to
     # my hometown" + the Springfield search yesterday) is still visible to the
     # router, without feeding the whole chat into a call that should stay
@@ -3568,18 +3576,76 @@ def _web_triage(llm, messages):
     return None
 
 
+LOOKUP_CHOICE_REASONING_CHARS = 400   # how much of her reasoning summary the log keeps
+
+
+def _reasoning_text(reply) -> str:
+    """Her reasoning summary when the server sent one back (OpenRouter /
+    Gemini / llama.cpp put it in different places), else ''."""
+    extra = getattr(reply, "additional_kwargs", None) or {}
+    for key in ("reasoning_content", "reasoning", "thinking"):
+        value = extra.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for item in extra.get("reasoning_details") or []:
+        if isinstance(item, dict):
+            text = item.get("summary") or item.get("text")
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+    content = getattr(reply, "content", None)
+    if isinstance(content, list):          # thinking blocks in a content list
+        for block in content:
+            if isinstance(block, dict) and block.get("type") in ("thinking", "reasoning"):
+                text = block.get("thinking") or block.get("text") or block.get("reasoning")
+                if isinstance(text, str) and text.strip():
+                    return text.strip()
+    return ""
+
+
+def _log_lookup_choice(reply, calls) -> None:
+    """One log line per decision of hers in the web loop (2026-11-16, MH:
+    "I have no way of knowing" whether she chose to look something up):
+    what she chose, and her reasoning summary when the server returns one."""
+    try:
+        picked = []
+        for call in calls or []:
+            name = call.get("name")
+            args = call.get("args") or {}
+            if name == "AmadeusPack":
+                picked.append("answered without a lookup")
+            elif name == "web_search":
+                picked.append(f"web_search({str(args.get('query', ''))[:80]!r})")
+            elif name == "get_weather":
+                picked.append(f"get_weather({str(args.get('place', ''))[:60]!r})")
+            else:
+                picked.append(str(name))
+        print("[Amadeus] Her lookup choice: "
+              + ("; ".join(picked) if picked else "answered without a lookup (plain text)"))
+        thought = _reasoning_text(reply)
+        if thought:
+            flat = " ".join(thought.split())
+            print("[Amadeus] Her reasoning: " + flat[:LOOKUP_CHOICE_REASONING_CHARS]
+                  + ("..." if len(flat) > LOOKUP_CHOICE_REASONING_CHARS else ""))
+    except Exception:
+        pass   # a log line must never cost the reply
+
+
 def _deterministic_route(last_user, messages, allow_check=False):
     """Keyword routing - the FALLBACK when the triage call is unavailable.
 
-    Returns {"weather": True, "place": str|None} or
-    {"search": True, "topic": str|None}, or None when nothing fast-routes
-    (the normal tool loop handles the message). Weather outranks search.
+    Returns {"check": True} or {"search": True, "topic": str|None}, or None
+    when nothing fast-routes (the normal tool loop handles the message).
     allow_check: only when the triage call itself FAILED - a triage "no"
     is trusted for the web-access check ("I turned your web access on.
     Could you try again?" is a retry, not a check).
+
+    Weather is NOT routed here any more (2026-11-16): after the router said
+    "no", "the weather wasn't super hot" was forced into a lookup for the
+    "town" "Stomach actually felt okay" (the leftover words of the
+    sentence). The router's "no" is trusted; when the router call failed she
+    still has get_weather in the loop and picks the town from the chat
+    herself - the app never guesses a town from leftover words.
     """
-    if isinstance(last_user, str) and _weather_intent(last_user):
-        return {"weather": True, "place": _extract_place(last_user) or None}
     if allow_check and isinstance(last_user, str) and _web_check_hint(last_user) \
             and _WEB_CHECK_STRICT_RE.search(last_user):
         return {"check": True}
@@ -3689,7 +3755,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
         triage_failed = triaged is None
         # Triage wins only when it AFFIRMATIVELY routes (weather or search).
         # A "no/no" answer or a failed call defers to the keyword safety net
-        # below, which still catches the classic phrasings.
+        # below - which no longer routes weather (see _deterministic_route).
         if triaged and (triaged.get("weather") or triaged.get("search")
                         or triaged.get("check")):
             route = triaged
@@ -3718,11 +3784,10 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
             reports = []
             for one in places:
                 report = weather.fetch_weather_report(one)
+                _record_source(live_lookup.weather_source(one, report))
                 if weather.NOT_FOUND_LINE in report:
                     report += "\n" + live_lookup.NOT_FOUND_NOTE
                 reports.append("Live weather data for '" + one + "':\n" + report)
-                _record_source({"kind": "weather", "place": one,
-                                "url": "https://open-meteo.com/"})
             convo.append({
                 "role": "assistant",
                 "content": "I checked the live weather service for: " + ", ".join(places),
@@ -3847,9 +3912,11 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
             raw_text = reply.content if isinstance(reply.content, str) else str(reply.content or "")
             calls = _parse_textual_tool_calls(raw_text)
             if not calls:
+                _log_lookup_choice(reply, [])
                 last_plain = _strip_thinking(raw_text)
                 break
 
+        _log_lookup_choice(reply, calls)
         first = calls[0]
         if first.get("name") == "AmadeusPack":
             return _pack_from_args(first.get("args"))

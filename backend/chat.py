@@ -5884,12 +5884,17 @@ def regenerateReply():
         for message_id in excluded:
             store.set_message_active(message_id, False)
 
+    answering_id = target["id"] if excluded else last["id"]
     # The turn being answered again: its lookups are not reused (a fresh
     # search instead); lookups of earlier questions still are.
-    _turn.skip_lookup_turn = store.message_turn(
-        target["id"] if excluded else last["id"])
-    internal_context = store.load_internal_context()
-    context = store.build_prompt_messages(exclude_ids=excluded)
+    _turn.skip_lookup_turn = store.message_turn(answering_id)
+    # Written as of the moment the user asked (2026-11-16, MH): a redo hours
+    # later must not read as "the user just came back" - she answers as she
+    # would have then, and the new version keeps the original reply's time.
+    moment, stamp = _regenerate_moment(answering_id, excluded)
+    internal_context = store.load_internal_context(
+        now=moment, answering_id=answering_id if moment else None)
+    context = store.build_prompt_messages(exclude_ids=excluded, now=moment)
     try:
         # The same pictures as the first answer (they belong to the user's message).
         pack = _with_picture_retry(
@@ -5904,11 +5909,30 @@ def regenerateReply():
     finally:
         _turn.skip_lookup_turn = None
     new_id = store.append_message(
-        "assistant", pack.assistant_reply_ENG, japanese=pack.assistant_reply_JPS
+        "assistant", pack.assistant_reply_ENG, japanese=pack.assistant_reply_JPS,
+        created_at=stamp
     )
     store.set_message_sources(new_id, take_turn_sources())
     store.set_message_doc_reads(new_id, attachments.take_turn_reads())
     return pack, new_id
+
+
+def _regenerate_moment(answering_id, excluded):
+    """(moment, stamp) for a regenerated reply.
+
+    moment: the time of the user message being re-answered, as an aware
+    datetime - every time fact in her prompt is measured from it.
+    stamp: the stored time the new version shows - the first version's own
+    time (a retry with no earlier version: the user message's time).
+    Both None when the stored time can't be read (then the reply is written
+    at the real current time, as before)."""
+    asked = store.get_message_created_at(answering_id)
+    try:
+        moment = datetime.fromisoformat(asked).astimezone()
+    except (TypeError, ValueError):
+        return None, None
+    stamp = (store.get_message_created_at(min(excluded)) if excluded else None) or asked
+    return moment, stamp
 
 
 

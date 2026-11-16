@@ -709,7 +709,8 @@ def _collapse_line(text: str, limit: int = 120) -> str:
     return clean[:limit] + ("..." if len(clean) > limit else "")
 
 
-def _last_user_timing(now: datetime | None = None) -> Dict[str, object]:
+def _last_user_timing(now: datetime | None = None,
+                      before_id: int | None = None) -> Dict[str, object]:
     """Shared timing facts about the most recent user message.
 
     Used by load_internal_context() (per-reply timing context) and by the
@@ -719,10 +720,14 @@ def _last_user_timing(now: datetime | None = None) -> Dict[str, object]:
     Returns a dict with keys: previous (row or None), previous_time
     (datetime or None), gap (human string or None), elapsed_seconds (float or
     None), reliable (bool).
+    before_id (a regenerated reply, 2026-11-16): only user messages OLDER
+    than that id count - the message being re-answered is the "incoming"
+    one, so the gap is measured from the user message before it.
     """
     now_local = (now or datetime.now().astimezone()).astimezone()
     previous = next(
-        (m for m in reversed(load_memory_raw()) if m.get("role") == "user"),
+        (m for m in reversed(load_memory_raw()) if m.get("role") == "user"
+         and (before_id is None or int(m.get("id") or 0) < int(before_id))),
         None,
     )
     out: Dict[str, object] = {
@@ -1013,7 +1018,8 @@ def recent_user_material(days: int = 30, max_chars: int = 6000,
     return "\n\n".join(blocks)[:max_chars]
 
 
-def previous_contact_timing(now: datetime | None = None) -> Dict[str, object] | None:
+def previous_contact_timing(now: datetime | None = None,
+                            up_to: str | None = None) -> Dict[str, object] | None:
     """The user's newest message OUTSIDE the active conversation, measured.
 
     The per-tab timing facts (_last_user_timing) only see the active
@@ -1029,6 +1035,9 @@ def previous_contact_timing(now: datetime | None = None) -> Dict[str, object] | 
           "content"} for the newest user message in any OTHER conversation,
           or None when no other conversation holds a user message.
           Does not modify memory.
+    up_to (a regenerated reply, 2026-11-16): a stored "YYYY-MM-DD HH:MM"
+    moment; only messages said at or before it count (the reply is written
+    as of that moment, so later messages have not happened yet).
     """
     now_local = (now or datetime.now().astimezone()).astimezone()
     try:
@@ -1044,7 +1053,9 @@ def previous_contact_timing(now: datetime | None = None) -> Dict[str, object] | 
             "SELECT m.conversation_id, c.title, m.created_at, m.content "
             "FROM messages m JOIN conversations c ON c.id = m.conversation_id "
             "WHERE m.role = 'user' AND m.conversation_id != ? "
-            "ORDER BY m.created_at DESC, m.id DESC LIMIT 1", (active,)
+            + ("AND m.created_at <= ? " if up_to else "")
+            + "ORDER BY m.created_at DESC, m.id DESC LIMIT 1",
+            (active, up_to) if up_to else (active,)
         ).fetchone()
     finally:
         conn.close()
@@ -1660,8 +1671,15 @@ def load_previous_tab_summary(previous_conversation_id: int | None = None,
 
 def load_internal_context(now: datetime | None = None, is_greeting=False,
                           conversation_id=None, is_return=True,
-                          previous_conversation_id=None) -> Dict[str, str]:
+                          previous_conversation_id=None,
+                          answering_id=None) -> Dict[str, str]:
     """Capture before appending the incoming message, once per chat request.
+
+    answering_id (a regenerated reply, 2026-11-16): the id of the user
+    message being re-answered (already stored). The timing lines then treat
+    it as the incoming message - the gap is measured from the user message
+    before it - and the cross-conversation line only counts what was said
+    up to `now` (pass the moment of that message as `now`).
 
     Existing SQLite timestamps are server-local, with minute precision. Treat
     their elapsed times as approximate; also accept timezone-aware ISO dates.
@@ -1694,7 +1712,7 @@ def load_internal_context(now: datetime | None = None, is_greeting=False,
     them (live 2026-09-22).
     """
     now_local = (now or datetime.now().astimezone()).astimezone()
-    facts = _last_user_timing(now)
+    facts = _last_user_timing(now, before_id=answering_id)
     cross_lines: List[str] = []
     new_greeting = is_greeting and conversation_id is not None
     if new_greeting:
@@ -1778,7 +1796,9 @@ def load_internal_context(now: datetime | None = None, is_greeting=False,
         # conversation holds a user message (single-tab installs keep the
         # baseline byte-identical).
         try:
-            prev_contact = previous_contact_timing(now)
+            prev_contact = previous_contact_timing(
+                now, up_to=(now_local.strftime("%Y-%m-%d %H:%M")
+                            if answering_id is not None else None))
         except Exception:
             prev_contact = None
         if prev_contact is not None:
@@ -2574,12 +2594,14 @@ def maybe_roll_summary(conversation_id=None) -> None:
 # tab it is written for, so a tab switch mid-generation cannot swap the
 # history under it.
 def build_prompt_messages(token_budget: int | None = None, exclude_ids=None,
-                          conversation_id=None) -> List[Dict[str, str]]:
+                          conversation_id=None, now=None) -> List[Dict[str, str]]:
+    # now: the moment the reply is written at (a regenerated reply: the time
+    # of the message it re-answers); None = the real current time.
     if token_budget is None:
         # Pictures she will see take room too (none -> the usual budget).
         token_budget = text_context_budget(conversation_id)
     messages = load_memory_for_prompt(conversation_id=conversation_id,
-                                      exclude_ids=exclude_ids)
+                                      exclude_ids=exclude_ids, now=now)
     # Rolling summary: drop the rows the stored summary already covers and
     # hand the summary over as a leading system message (it merges into the
     # one system message the chat template requires). No summary yet -> the
@@ -2838,7 +2860,9 @@ def load_memory_raw(conversation_id=None) -> List[Dict[str, str]]:
 # post: a new row is inserted into messages with a correct auto-incremented id
 #       every other info e.g., created_at also must be correctly placed
 def append_message(_role: str, _content: str, conversation_id=None, japanese=None,
-                   is_greeting=False, aside=False) -> int:
+                   is_greeting=False, aside=False, created_at=None) -> int:
+    # created_at: a stored "YYYY-MM-DD HH:MM" stamp to use instead of the
+    # current time (a regenerated reply keeps its original time, 2026-11-16).
     conv = _active_conv_id(None) if conversation_id is None else int(conversation_id)
     conn = _connect_db()
     c = conn.cursor()
@@ -2851,6 +2875,8 @@ def append_message(_role: str, _content: str, conversation_id=None, japanese=Non
          1 if _role == "user" else 0, conv)
     )
     new_id = c.lastrowid
+    if created_at:
+        c.execute("UPDATE messages SET created_at = ? WHERE id = ?", (created_at, new_id))
 
     # Keep the session list sorted by recency.
     c.execute(
@@ -3667,6 +3693,20 @@ def get_trailing_turn(conversation_id=None) -> List[int]:
     return turns[-1] if turns else []
 
 
+# pre: message_id may or may not exist
+# post: the row's stored created_at string ("YYYY-MM-DD HH:MM"), or None
+def get_message_created_at(message_id: int):
+    conn = _connect_db()
+    try:
+        c = conn.cursor()
+        _ensure_messages_table(c)
+        row = c.execute("SELECT created_at FROM messages WHERE id = ?",
+                        (int(message_id),)).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
 # pre: exclude_ids is a list of message ids to skip over
 # post: the newest row older than all excluded ids, as {"id","role","content"}
 #       or None when there is nothing before them
@@ -3980,7 +4020,8 @@ def _merge_asides(rows):
     return out
 
 
-def load_memory_for_prompt(conversation_id=None, exclude_ids=None) -> List[Dict[str, str]]:
+def load_memory_for_prompt(conversation_id=None, exclude_ids=None,
+                           now=None) -> List[Dict[str, str]]:
     conv = _active_conv_id(None) if conversation_id is None else int(conversation_id)
     conn = _connect_db()
     c = conn.cursor()
@@ -4015,7 +4056,7 @@ def load_memory_for_prompt(conversation_id=None, exclude_ids=None) -> List[Dict[
     last_user_index = max(
         (i for i, row in enumerate(rows) if row[1] == "user"), default=-1
     )
-    now_local = datetime.now().astimezone()  # one "now" for every note
+    now_local = (now or datetime.now().astimezone()).astimezone()  # one "now" for every note
     for i, (mid, role, content, japanese, created_at, _aside) in enumerate(rows):
         base = japanese if (role == "assistant" and japanese) else content
         if shown.get(mid) and i != last_user_index:

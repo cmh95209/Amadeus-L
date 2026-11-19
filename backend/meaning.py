@@ -66,6 +66,15 @@ LOOK_MIN, LOOK_MARGIN = 0.45, 0.06     # 7/7 look-again lines, 0/6 remember-line
 # sent). Measured 2026-11-13 on 102 references + 603 other lines, 18 chats:
 # 70/102 right, 0 wrong files, 9/603 other lines (mostly real references).
 PICK_MIN, PICK_MARGIN, PICK_MARGIN_TALK = 0.45, 0.12, 0.05
+# Asks (SEARCH_ASK ...): measured 2026-11-19 with scripts/measure_asks.py
+# (16 languages, casual texting, English examples): search 28/32 caught,
+# 2/64 ordinary chat (a wrong yes only costs the deciding triage call);
+# link 16/16, 1/64; again 13/16, 0/64; time 15/16 at margin 0.05 but 1/64
+# false - TIME uses margin 0.10 (12/16, 0/64), since a "time" query skips
+# a search (a miss only means the old behaviour: it is searched).
+ASK_SEARCH_MIN = ASK_TIME_MIN = ASK_LINK_MIN = ASK_AGAIN_MIN = 0.50
+ASK_MARGIN = 0.05
+ASK_TIME_MARGIN = 0.10
 FIT_MIN = 0.30             # message vs a file's description, below = blocked
                            # (only clear mismatches: talk that merely shares a
                            # topic scores 0.6 - other_media() handles that)
@@ -151,6 +160,40 @@ NOT_LOOK_AGAIN = [
     "What was it about again?", "Was the photo cute?",
 ]
 
+# What the user ASKS FOR, in any language (multi-language, 2026-11-19): the
+# English/Japanese word rules in chat.py stay first; these catch the other
+# languages ("tolong cari", "帮我查一下", "ค้นหาให้หน่อย").
+SEARCH_ASK = [
+    "Can you search that for me?", "Look it up online, please.", "Google it.",
+    "Search the web for the new iPhone price.", "Find out online when the store opens.",
+    "Check the internet for the latest news about the election.",
+    "Can you look up the movie's release date?", "Search for reviews of that restaurant.",
+    "Do a quick web search on it.", "Look up who won the match last night.",
+    "Can you check online whether the trains are running?",
+]
+TIME_ASK = [
+    "What time is it now?", "What's today's date?", "What day is it today?",
+    "What's the time right now?", "Tell me the current time.", "What's the date today?",
+    "Which day of the week is it?",
+]
+LINK_ASK = [
+    "Send me the link.", "Can you give me the URL?", "What's the website address?",
+    "Where's the source link?", "Share the link to that page.", "Give me the links to those articles.",
+]
+AGAIN_ASK = [
+    "Try again.", "Search it again.", "Look it up again, please.", "One more time.",
+    "Check again, maybe it changed.", "Refresh that search.", "Can you retry?",
+    "I turned the web back on, try now.", "Please try once more.",
+]
+NOT_ASK = [
+    "I searched everywhere for my keys.", "I googled it yesterday but found nothing.",
+    "I don't have time today.", "Time flies so fast.", "We had a great time.",
+    "The website I made is finally online.", "I lost the link to my old blog years ago.",
+    "Again, I'm sorry about yesterday.", "I tried again and failed again.",
+    "My friend is always online.", "I'll look for a new job next year.",
+    "What a day it has been.", "Let's meet again next week.",
+]
+
 SHARED_FILE = {
     "picture": ["What do you think of the picture I sent you?",
                 "Did you see the photo I showed you?", "Look at that pic I sent again.",
@@ -200,7 +243,8 @@ _embed_fn = None        # tests / measuring inject a local embedder here
 
 def _all_examples() -> list:
     out = (WEATHER_ASK + CHAT + FORECAST + NOT_FORECAST + OTHER_MEDIA
-           + LOOKUP_CLAIM + NOT_LOOKUP_CLAIM + LOOK_AGAIN + NOT_LOOK_AGAIN)
+           + LOOKUP_CLAIM + NOT_LOOKUP_CLAIM + LOOK_AGAIN + NOT_LOOK_AGAIN
+           + SEARCH_ASK + TIME_ASK + LINK_ASK + AGAIN_ASK + NOT_ASK)
     for group in SHARED_FILE.values():
         out += group
     return list(dict.fromkeys(out))
@@ -431,3 +475,30 @@ def misfit(text: str, description: str) -> bool:
         return False
     f = fit(text, description)
     return f is not None and f < FIT_MIN
+
+
+def _asks(text, group, least, margin):
+    others = CHAT + NOT_ASK
+    return _decide(text, group, others, least, margin)
+
+
+def asks_to_search(text: str):
+    """The user asks her to search the web / look something up online.
+    None when unknown."""
+    return _asks(text, SEARCH_ASK, ASK_SEARCH_MIN, ASK_MARGIN)
+
+
+def asks_time(text: str):
+    """The user (or a search query) asks for the current time or date."""
+    return _asks(text, TIME_ASK, ASK_TIME_MIN, ASK_TIME_MARGIN)
+
+
+def asks_for_link(text: str):
+    """The user asks for a link / web address / source."""
+    return _asks(text, LINK_ASK, ASK_LINK_MIN, ASK_MARGIN)
+
+
+def asks_again(text: str):
+    """The user asks her to try / search / check again."""
+    return _asks(text, AGAIN_ASK, ASK_AGAIN_MIN, ASK_MARGIN)
+

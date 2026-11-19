@@ -69,6 +69,8 @@ DEFAULT_FAST_LANGUAGES = (
     "id",
     "vi",
     "th",
+    "ms",
+    "ta",
 )
 
 

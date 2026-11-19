@@ -1172,7 +1172,9 @@ def _lookup_index_message(last_user: str = ""):
     lookups = _recent_lookups()
     if not lookups:
         return None
-    with_links = bool(_LINK_ASK_RE.search(last_user or ""))
+    # Words first; by meaning for the other languages ("hantar link tu").
+    with_links = bool(_LINK_ASK_RE.search(last_user or "")
+                      or (last_user and meaning.asks_for_link(last_user) is True))
     lines = []
     for lk in lookups:
         sites = _lookup_sites(lk)
@@ -1458,7 +1460,8 @@ def _read_user_links(message) -> str:
         sites = ", ".join(dict.fromkeys(webreader._site(u) for u in links if u not in refused))
         _maybe_start_aside("the link" + ("s" if len(links) - len(refused) > 1 else "")
                            + f" they sent ({sites})")
-    again = bool(_AGAIN_RE.search(question))
+    again = bool(_AGAIN_RE.search(question)
+                 or (question and meaning.asks_again(question) is True))
     reused = {u: lk for u in links if u not in refused
               for lk in [None if again else _link_lookup(u)] if lk}
     if reused:
@@ -2980,7 +2983,8 @@ def _search_retry_intent(messages) -> bool:
          if m.get("role") == "user"),
         "",
     )
-    return bool(last_user) and bool(_RETRY_INTENT_RE.search(last_user))
+    return bool(last_user) and bool(_RETRY_INTENT_RE.search(last_user)
+                                    or meaning.asks_again(last_user) is True)
 
 
 def _find_prior_search_query(messages, lookback=8) -> str:
@@ -3541,6 +3545,10 @@ def _web_triage_candidate(last_user, messages) -> bool:
         return True
     # A web-access check, or the message right after her LAST reply said web
     # access was off ("I just turned it on. Could you confirm?").
+    # A search request in any language ("帮我查一下", "tolong cari"): the word
+    # rules above know English and Japanese; the triage call then decides.
+    if meaning.asks_to_search(last_user) is True:
+        return True
     if _web_check_hint(last_user) or _last_reply_refused_search(messages):
         return True
     if _weather_follow_up(messages):

@@ -143,6 +143,7 @@ th|Thai|ไทย
 vi|Vietnamese|Tiếng Việt"
 select_app_language() {
     [ -f "$PROJ/backend/language.txt" ] && return 0   # a re-run keeps it
+    [ -t 0 ] || return 0   # no one typing (scripted runs, tests): the app asks later
     local a="" i=0 _t
     log ""
     log "  Which language should Amadeus show (her page and the translation of her replies)?"

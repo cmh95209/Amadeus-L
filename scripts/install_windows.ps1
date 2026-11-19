@@ -508,6 +508,8 @@ $script:AppLanguage = ""
 function Select-AppLanguage {
     # A re-run keeps the language already saved (no question).
     if (Test-Path (Join-Path $InstallDir "Amadeus-Project\backend\language.txt")) { return }
+    # No one typing (scripted runs, the project's tests): English, changeable in Settings.
+    try { if ([Console]::IsInputRedirected) { return } } catch { return }
     try {
         Log ""
         Log "  Which language should Amadeus show (her page and the translation of her replies)?" "Cyan"

@@ -1809,6 +1809,15 @@ def _display_name() -> str:
     return display_lang.english_name()
 
 
+def _script_hint() -> str:
+    """", written in its own script" for a language with its own letters (a
+    small model once wrote Hindi in Latin letters); "" otherwise, so
+    English and the Latin-letter languages keep the same request."""
+    if display_lang.get() in display_lang.SCRIPTS:
+        return f", written in {_display_name()}'s own script"
+    return ""
+
+
 def _display_is_japanese() -> bool:
     """The user reads Japanese: her line itself is the display line, no
     translation call at all."""
@@ -1825,6 +1834,10 @@ def _display_line_ok(text: str, jps: str = "") -> bool:
     if _display_is_japanese():
         return True
     if _has_japanese(t):
+        return False
+    # Written in English (or other letters) although the user reads another
+    # language: a small model follows the form's old habit (2026-11-19 test).
+    if display_lang.wrong_language(t):
         return False
     return not (jps and _is_verbatim_echo(t, jps.strip()))
 
@@ -2116,7 +2129,7 @@ def _ensure_english(pack: "AmadeusPack", llm) -> "AmadeusPack":
         trans = llm.invoke([{
             "role": "user",
             "content": (
-                f"Translate the following Japanese into natural spoken {_display_name()}. "
+                f"Translate the following Japanese into natural spoken {_display_name()}{_script_hint()}. "
                 "Copy any web address (https://...) exactly as written. "
                 f"Output ONLY the {_display_name()} text - no quotes, no commentary.\n"
                 + "".join(h + "\n" for h in _user_hint_lines(pack.assistant_reply_JPS or eng)) + "\n"
@@ -2127,6 +2140,7 @@ def _ensure_english(pack: "AmadeusPack", llm) -> "AmadeusPack":
         if _display_line_ok(new_eng, pack.assistant_reply_JPS or "") and not _META_TRANSLATION.search(new_eng):
             print("[Amadeus] ENG was not English - repaired with a translation pass")
             return AmadeusPack(assistant_reply_JPS=pack.assistant_reply_JPS, assistant_reply_ENG=new_eng)
+        print(f"[Amadeus] Translation pass unusable - kept the line as it was - raw: {new_eng[:120]!r}")
     except Exception as e:
         print("[Amadeus] English repair failed:", repr(e))
     # Fallback: show the Japanese line rather than an empty box.
@@ -2258,7 +2272,7 @@ def _salvage_plain_text(raw, llm) -> "AmadeusPack":
             trans = llm.invoke([{
                 "role": "user",
                 "content": (
-                    f"Translate the following Japanese into natural spoken {_display_name()}. "
+                    f"Translate the following Japanese into natural spoken {_display_name()}{_script_hint()}. "
                     "Copy any web address (https://...) exactly as written. "
                     f"Output ONLY the {_display_name()} text - no quotes, no commentary.\n"
                     + "".join(h + "\n" for h in _user_hint_lines(text)) + "\n"
@@ -5871,7 +5885,7 @@ def _translate_reply_en(llm, jps: str, context_lines) -> str:
     lines = [
         f"You are writing the {name} line shown to the user in the chat UI for "
         "one of Amadeus's replies. Translate her Japanese line into natural, "
-        f"spoken {name} in her voice - keep her tone and meaning exactly. "
+        f"spoken {name}{_script_hint()} in her voice - keep her tone and meaning exactly. "
         "Copy any web address (https://...) exactly as written. "
         f"Output ONLY the {name} text - no quotes, no Japanese, no commentary.",
     ] + _user_hint_lines(jps)

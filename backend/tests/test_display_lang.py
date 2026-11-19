@@ -112,9 +112,34 @@ class TranslationLineTests(_LangFile):
     def test_line_ok_any_language(self):
         self.write("zh\n")
         self.assertTrue(chat._display_line_ok("是啊，今天有点冷。带上外套吧。", self.JPS))
-        self.assertTrue(chat._display_line_ok("ஆமாம், இன்று கொஞ்சம் குளிர்.", self.JPS))
         self.assertFalse(chat._display_line_ok(self.JPS, self.JPS))       # echo (kana)
         self.assertFalse(chat._display_line_ok("", self.JPS))
+        self.write("ta\n")
+        self.assertTrue(chat._display_line_ok("ஆமாம், இன்று கொஞ்சம் குளிர்.", self.JPS))
+
+    def test_english_line_for_another_reader_is_not_ok(self):
+        # 2026-11-19 test copy: the built-in model wrote English for zh/ms/ta.
+        english = "Mochi, right? You've told me before, but why are you asking me?"
+        for code in ("zh", "ta", "ms", "es"):
+            self.write(code + "\n")
+            self.assertFalse(chat._display_line_ok(english, self.JPS), code)
+        self.write("en\n")
+        self.assertTrue(chat._display_line_ok(english, self.JPS))
+
+    def test_english_line_gets_the_translation_pass(self):
+        self.write("zh\n")
+        pack = chat.AmadeusPack(assistant_reply_JPS=self.JPS,
+                                assistant_reply_ENG="Yeah, it's a bit cold today. Take a jacket.")
+        out = chat._ensure_english(pack, _FakeLLM("是啊，今天有点冷。带上外套吧。"))
+        self.assertEqual(out.assistant_reply_ENG, "是啊，今天有点冷。带上外套吧。")
+
+    def test_failed_pass_keeps_the_english_line(self):
+        self.write("ta\n")
+        pack = chat.AmadeusPack(assistant_reply_JPS=self.JPS,
+                                assistant_reply_ENG="Yeah, it's a bit cold today. Take a jacket.")
+        out = chat._ensure_english(pack, _FakeLLM("Yeah, it's a bit cold today."))
+        self.assertEqual(out.assistant_reply_ENG, "Yeah, it's a bit cold today. Take a jacket.")
+
 
     def test_voice_first_translation_in_chinese(self):
         self.write("zh\n")
@@ -202,6 +227,37 @@ class HerVoiceStaysJapaneseTests(_LangFile):
         llm = _FakeLLM("そうね、今日は少し寒いわ。")
         out = chat._ensure_japanese_jps("是啊，今天有点冷。带上外套吧。", llm)
         self.assertEqual(out, "そうね、今日は少し寒いわ。")
+
+
+class WrongLanguageTests(unittest.TestCase):
+    def test_own_letters(self):
+        w = display_lang.wrong_language
+        self.assertFalse(w("是啊，今天有点冷。", "zh"))
+        self.assertTrue(w("Yes, it is cold today.", "zh"))
+        self.assertFalse(w("네, 오늘은 좀 춥네요.", "ko"))
+        self.assertFalse(w("Да, сегодня холодно, Mochi.", "ru"))
+        self.assertTrue(w("Yes, it is cold today.", "ar"))
+        self.assertFalse(w("OK", "th"))                      # too short to judge
+        self.assertFalse(w("官网在这里。\nhttps://www.hokkaido-np.co.jp/article/1336962/", "zh"))
+
+    def test_latin_letter_languages(self):
+        w = display_lang.wrong_language
+        english = "It's going to be a clear day, but you should be ready for the cold."
+        for code in ("es", "fr", "de", "pt", "ms", "id", "vi"):
+            self.assertTrue(w(english, code), code)
+        for code, line in (
+                ("es", "Sí, hoy hace un poco de frío. Lleva una chaqueta."),
+                ("fr", "Oui, il fait un peu froid aujourd'hui. Prends une veste."),
+                ("de", "Ja, heute ist es etwas kalt. Nimm eine Jacke mit, das ist besser."),
+                ("pt", "Sim, hoje está um pouco frio. Leva um casaco."),
+                ("ms", "Ya, hari ini agak sejuk. Bawa jaket, Alex."),
+                ("id", "Iya, hari ini agak dingin. Bawa jaket ya."),
+                ("vi", "Ừ, hôm nay hơi lạnh. Mang theo áo khoác nhé.")):
+            self.assertFalse(w(line, code), code)
+
+    def test_english_and_japanese_readers_never(self):
+        self.assertFalse(display_lang.wrong_language("是啊", "en"))
+        self.assertFalse(display_lang.wrong_language("Yes, it is what it is and you know it.", "ja"))
 
 
 if __name__ == "__main__":

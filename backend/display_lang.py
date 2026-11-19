@@ -13,14 +13,16 @@ read can switch back by hand (MH 2026-11-19). The file is personal (in
 works after a page refresh, no restart. A missing / empty / unknown code
 means English, so a typo can never break the app.
 
-The page's own text lives in frontend/src/lang/<code>.json and the
-launcher/installer text in scripts/lang/<code>.json; the backend only needs
-the code (for the page) and the language's English name (for her
-translation line instructions).
+The page's own text lives in frontend/src/lang/<code>.json (the installers
+and the launcher stay English; they only ask for and save the code). The
+backend needs the code (for the page), the language's English name (for her
+translation line instructions) and wrong_language() (a line the model wrote
+in English anyway gets the translation pass).
 """
 from __future__ import annotations
 
 import os
+import re
 import threading
 from typing import Dict, List
 
@@ -28,8 +30,8 @@ from typing import Dict, List
 DEFAULT = "en"
 # code -> (English name used in her instructions, the language's own name).
 # Order = the order of the Settings / installer menu. Adding a language: add a
-# row here, a frontend/src/lang/<code>.json and a scripts/lang/<code>.json
-# (missing lines fall back to English).
+# row here and a frontend/src/lang/<code>.json (missing lines fall back to
+# English); a language with its own letters also gets a SCRIPTS row.
 LANGUAGES: Dict[str, tuple] = {
     "en": ("English", "English"),
     "zh": ("Simplified Chinese", "中文"),
@@ -51,6 +53,29 @@ LANGUAGES: Dict[str, tuple] = {
 # Languages written right to left (the page flips its layout).
 RTL = ("ar",)
 FILE_NAME = "language.txt"
+# Wrong-language check (2026-11-19 test: the built-in model wrote her
+# translation line in English for Chinese / Malay / Tamil readers although
+# her rules named the language). A language with its own letters: the line
+# must be at least SCRIPT_MIN_SHARE of them. A Latin-letter language: the line
+# is English when ENGLISH_MIN_HITS+ words, and ENGLISH_MIN_SHARE of all
+# words, are common English words (none of them a word in those languages).
+SCRIPTS: Dict[str, str] = {
+    "zh": "一-鿿㐀-䶿",
+    "ko": "가-힯ᄀ-ᇿ㄰-㆏",
+    "ru": "Ѐ-ӿ",
+    "ar": "؀-ۿݐ-ݿ",
+    "hi": "ऀ-ॿ",
+    "ta": "஀-௿",
+    "th": "฀-๿",
+}
+SCRIPT_MIN_SHARE = 0.3
+SCRIPT_MIN_LETTERS = 4
+ENGLISH_WORDS = frozenset(
+    "the you your you're you've you'll is are and it it's that that's of this what "
+    "with have not just but why how there there's they we she my i i'm i've i'll "
+    "don't can't for will would should be".split())
+ENGLISH_MIN_HITS = 3
+ENGLISH_MIN_SHARE = 0.15
 # ------------------------------------------------------------------------------
 
 _LOCK = threading.Lock()
@@ -132,6 +157,27 @@ def english_name(code: str = None) -> str:
 
 def is_rtl(code: str = None) -> bool:
     return (code if code in LANGUAGES else get()) in RTL
+
+
+def wrong_language(text: str, code: str = None) -> bool:
+    """True when a translation line is clearly NOT in the user's language:
+    too few of its own letters (Chinese, Korean, Tamil ...), or English
+    for a Latin-letter language. English / Japanese readers: never. Unsure
+    (short lines, names, numbers) -> False: the line is kept."""
+    c = code if code in LANGUAGES else get()
+    if c in ("en", "ja"):
+        return False
+    t = re.sub(r"https?://\S+", " ", text or "")    # web addresses are any language
+    if c in SCRIPTS:
+        letters = [ch for ch in t if ch.isalpha()]
+        if len(letters) < SCRIPT_MIN_LETTERS:
+            return False
+        mine = len(re.findall(f"[{SCRIPTS[c]}]", t))
+        return mine / len(letters) < SCRIPT_MIN_SHARE
+    # Whole words in any letters ("tôi" stays one word, never "t" + "i").
+    words = re.findall(r"[^\W\d_]+(?:'[^\W\d_]+)?", t.lower().replace("’", "'"))
+    hits = sum(1 for w in words if w in ENGLISH_WORDS)
+    return hits >= ENGLISH_MIN_HITS and hits / max(len(words), 1) >= ENGLISH_MIN_SHARE
 
 
 def listing() -> Dict[str, object]:

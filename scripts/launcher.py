@@ -2083,6 +2083,41 @@ def write_restart_status(status: dict, path: Path | None = None) -> None:
         note(f"Could not write the restart status: {exc}")
 
 
+# Restart from the launcher window itself (MH 2026-11-19, option A): when
+# the page is stuck or out of reach. Only these keys act; any other key is
+# ignored. Windows reads one key; Mac / Linux terminals need Enter after it.
+CONSOLE_KEYS = {"r": "all", "b": "brain"}
+CONSOLE_KEYS_LINE = " Press R to restart her, B to restart only her brain (the backend)."
+CONSOLE_KEYS_LINE_ENTER = (" Type R + Enter to restart her, B + Enter to restart only her "
+                           "brain (the backend).")
+
+
+def read_console_key(stdin=None, windows: bool | None = None) -> str | None:
+    """"all" / "brain" when R / B was pressed in the launcher window, else
+    None. Never waits, never raises (no console / input redirected: None)."""
+    stdin = stdin or sys.stdin
+    windows = os.name == "nt" if windows is None else windows
+    try:
+        if not stdin or not stdin.isatty():
+            return None
+        if windows:
+            import msvcrt
+            found = None
+            while msvcrt.kbhit():                  # everything typed since the last look
+                ch = msvcrt.getwch()
+                if ch in ("\x00", "\xe0"):         # arrow / function key: two codes
+                    msvcrt.getwch()
+                    continue
+                found = CONSOLE_KEYS.get(ch.lower(), found)
+            return found
+        import select
+        if not select.select([stdin], [], [], 0)[0]:
+            return None
+        return CONSOLE_KEYS.get(stdin.readline().strip().lower()[:1])
+    except Exception:
+        return None
+
+
 def take_restart_request(path: Path | None = None) -> bool:
     """True (once) when Settings asked for a restart (or, with
     SHUTDOWN_REQUEST, a shutdown); the request is used up."""
@@ -2107,8 +2142,10 @@ def clear_restart_files() -> None:
 
 
 def restart_services(parts: dict, starters: dict, *, status_path: Path | None = None,
-                     wait=None, terminate=None, clear=None, now=time.time) -> dict:
-    """Restart her brain, voice and memory in place.
+                     wait=None, terminate=None, clear=None, now=time.time,
+                     brain_only: bool = False, source: str = "Settings") -> dict:
+    """Restart her brain, voice and memory in place (brain_only: her brain
+    alone - voice and memory keep running; the launcher window's B key).
 
     pre: parts maps "brain" / "voice" / "memory" to the running process (or
          None); starters maps the same names to a function that starts that
@@ -2157,7 +2194,7 @@ def restart_services(parts: dict, starters: dict, *, status_path: Path | None = 
                 tries_left -= 1
                 start(part)
 
-    note("Restart requested from Settings.")
+    note(f"Restart requested from {source}" + (" (her brain only)." if brain_only else "."))
     stop("brain")
     start("brain")
     if not settle("brain", 1):
@@ -2166,6 +2203,13 @@ def restart_services(parts: dict, starters: dict, *, status_path: Path | None = 
         write_restart_status(status, status_path)
         raise RuntimeError("The backend did not come back after a restart from "
                            f"Settings. Details: {LOG_DIR}")
+
+    if brain_only:
+        for part in ("voice", "memory"):
+            mark(part, "ready" if new.get(part) is not None else "off")
+        status.update(state="done", finished=now())
+        write_restart_status(status, status_path)
+        return new
 
     has_memory = starters.get("memory") is not None
     if has_memory:
@@ -2388,6 +2432,7 @@ def run(no_browser: bool = False, simulate_vram_gb: int | None = None,
     say("\n========================================")
     say(" Amadeus is online")
     say(f" {url}")
+    say(CONSOLE_KEYS_LINE if os.name == "nt" else CONSOLE_KEYS_LINE_ENTER)
     say(" Press Ctrl+C to shut everything down.")
     say("========================================\n")
 
@@ -2403,17 +2448,24 @@ def run(no_browser: bool = False, simulate_vram_gb: int | None = None,
             say("\n  Shutting down from Settings...")
             note("Shutdown requested from Settings.")
             return   # main()'s cleanup stops every part; exit 0 closes the window
-        if take_restart_request():
-            say("\n  Restarting from Settings: her brain first, then her voice and memory...")
+        asked, source = ("all" if take_restart_request() else None), "Settings"
+        if asked is None:
+            asked, source = read_console_key(), "the launcher window"
+        if asked:
+            brain_only = asked == "brain"
+            say(f"\n  Restarting from {source}: "
+                + ("her brain only..." if brain_only
+                   else "her brain first, then her voice and memory..."))
             parts = restart_services(
                 {"brain": backend, "voice": gpt, "memory": cm},
                 {"brain": start_brain, "voice": start_voice,
-                 "memory": start_memory if cm_available else None})
+                 "memory": start_memory if cm_available else None},
+                brain_only=brain_only, source=source)
             backend, gpt, cm = parts["brain"], parts["voice"], parts["memory"]
-            cm_warned = False
+            cm_warned = cm_warned and brain_only
             # The page's code changed since it was built (an update while she
             # ran): build it again and serve the new one.
-            if page_built and not page_dev_mode():
+            if page_built and not page_dev_mode() and not brain_only:
                 try:
                     stale = PAGE_STAMP.read_text(encoding="utf-8").strip() != page_fingerprint()
                 except OSError:

@@ -126,6 +126,129 @@ class RestartServicesTests(unittest.TestCase):
         self.assertEqual(status["state"], "done")
 
 
+    def test_brain_only_leaves_voice_and_memory_running(self):
+        """The launcher window's B key (MH 2026-11-19): her brain alone."""
+        old = {"brain": _Proc("brain"), "voice": _Proc("voice"), "memory": _Proc("memory")}
+        starters = {part: self.starter(part) for part in old}
+        new = self.launcher.restart_services(
+            old, starters, status_path=self.status_path, wait=self.wait,
+            terminate=self.terminate, clear=self.clear, brain_only=True,
+            source="the launcher window")
+        self.assertEqual(self.events, [("stop", "brain"), ("start", "brain"), ("wait", "brain")])
+        self.assertIs(new["voice"], old["voice"])
+        self.assertIs(new["memory"], old["memory"])
+        self.assertIsNot(new["brain"], old["brain"])
+        status = self.status()
+        self.assertEqual(status["state"], "done")
+        self.assertEqual(status["parts"], {"brain": "ready", "voice": "ready", "memory": "ready"})
+
+    def test_brain_only_with_no_memory_says_off(self):
+        old = {"brain": _Proc("brain"), "voice": _Proc("voice"), "memory": None}
+        self.launcher.restart_services(
+            old, {"brain": self.starter("brain"), "voice": self.starter("voice"), "memory": None},
+            status_path=self.status_path, wait=self.wait, terminate=self.terminate,
+            clear=self.clear, brain_only=True)
+        self.assertEqual(self.status()["parts"]["memory"], "off")
+
+    def test_brain_only_that_never_comes_back_stops_everything(self):
+        self.fail["brain"] = 5
+        old = {"brain": _Proc("brain"), "voice": _Proc("voice"), "memory": _Proc("memory")}
+        with self.assertRaises(RuntimeError):
+            self.launcher.restart_services(
+                old, {part: self.starter(part) for part in old},
+                status_path=self.status_path, wait=self.wait, terminate=self.terminate,
+                clear=self.clear, brain_only=True)
+        self.assertEqual(self.status()["state"], "failed")
+
+
+class _Tty:
+    def __init__(self, tty=True, line=""):
+        self.tty, self.line = tty, line
+
+    def isatty(self):
+        return self.tty
+
+    def readline(self):
+        return self.line
+
+
+class _FakeMsvcrt:
+    def __init__(self, typed):
+        self.typed = list(typed)
+
+    def kbhit(self):
+        return bool(self.typed)
+
+    def getwch(self):
+        return self.typed.pop(0)
+
+
+class ConsoleKeyTests(unittest.TestCase):
+    """R / B in the launcher window restart her (MH 2026-11-19, option A)."""
+
+    def setUp(self):
+        self.launcher = _load_launcher()
+
+    def windows_keys(self, typed, tty=True):
+        import sys
+        from unittest.mock import patch
+        fake = _FakeMsvcrt(typed)
+        with patch.dict(sys.modules, {"msvcrt": fake}):
+            got = self.launcher.read_console_key(_Tty(tty), windows=True)
+        return got, fake.typed
+
+    def test_r_and_b_on_windows(self):
+        self.assertEqual(self.windows_keys("r")[0], "all")
+        self.assertEqual(self.windows_keys("R")[0], "all")
+        self.assertEqual(self.windows_keys("b")[0], "brain")
+        self.assertEqual(self.windows_keys("B")[0], "brain")
+
+    def test_other_keys_do_nothing_and_are_used_up(self):
+        got, left = self.windows_keys("xyz q")
+        self.assertIsNone(got)
+        self.assertEqual(left, [])
+        self.assertIsNone(self.windows_keys("")[0])
+
+    def test_arrow_keys_are_not_read_as_letters(self):
+        # an arrow key arrives as "\xe0" + a letter code ("H" = up, "P" = down)
+        self.assertIsNone(self.windows_keys(["\xe0", "P", "\x00", "B"])[0])
+        self.assertEqual(self.windows_keys(["\xe0", "P", "r"])[0], "all")
+
+    def test_no_console_reads_nothing(self):
+        got, left = self.windows_keys("r", tty=False)
+        self.assertIsNone(got)
+        self.assertEqual(left, ["r"])        # never touched
+        self.assertIsNone(self.launcher.read_console_key(_Tty(False), windows=False))
+
+    def test_a_broken_console_never_raises(self):
+        class Broken(_Tty):
+            def isatty(self):
+                raise OSError("closed")
+        self.assertIsNone(self.launcher.read_console_key(Broken(), windows=True))
+
+    def test_mac_linux_read_a_line(self):
+        from unittest.mock import patch
+        import select
+        ready = lambda r, w, x, t: (r, [], [])
+        with patch.object(select, "select", ready):
+            self.assertEqual(self.launcher.read_console_key(_Tty(line="r\n"), windows=False), "all")
+            self.assertEqual(self.launcher.read_console_key(_Tty(line=" B \n"), windows=False),
+                             "brain")
+            self.assertIsNone(self.launcher.read_console_key(_Tty(line="hello\n"), windows=False))
+        with patch.object(select, "select", lambda r, w, x, t: ([], [], [])):
+            self.assertIsNone(self.launcher.read_console_key(_Tty(line="r\n"), windows=False))
+
+    def test_the_window_says_the_keys_and_uses_them(self):
+        src = _LAUNCHER.read_text(encoding="utf-8")
+        online = src[src.index('say(" Amadeus is online")'):][:400]
+        self.assertIn("CONSOLE_KEYS_LINE", online)
+        loop = src[src.index("    while True:\n        if take_restart_request(SHUTDOWN_REQUEST):"):]
+        loop = loop[:loop.index("time.sleep(1)")]
+        self.assertIn("read_console_key()", loop)
+        self.assertIn("brain_only=brain_only", loop)
+        self.assertIn("not brain_only", loop)          # B does not rebuild the page
+
+
 class RequestFileTests(unittest.TestCase):
     def setUp(self):
         self.launcher = _load_launcher()
@@ -153,7 +276,7 @@ class RequestFileTests(unittest.TestCase):
         src = _LAUNCHER.read_text(encoding="utf-8")
         self.assertIn('"AMADEUS_LAUNCHER_SHUTDOWN": "1"', src)
         loop = src[src.index("    while True:\n        if take_restart_request(SHUTDOWN_REQUEST):"):]
-        self.assertIn("return", loop[:loop.index("if take_restart_request():")])
+        self.assertIn("return", loop[:loop.index('("all" if take_restart_request() else None)')])
         self.assertIn("SHUTDOWN_REQUEST", src[src.index("def clear_restart_files"):][:400])
 
 

@@ -359,6 +359,57 @@ class VoiceFirstTests(unittest.TestCase):
         self.assertEqual(len(assistant_rows), 1)
         self.assertEqual(assistant_rows[0][2], JA_LINE)
 
+    # -- English line retry on a rate limit (2026-11-19) -------------------------
+
+    def _rate_limit(self, text="Error code: 429 - Resource exhausted."):
+        exc = RuntimeError(text)
+        exc.status_code = 429
+        return exc
+
+    def test_rate_limited_english_waits_and_retries_once(self):
+        fake = _FakeLLM()
+        with patch.object(chat, "TRANSLATE_RETRY_WAIT_S", 0.01):
+            fake, turn, exc, rows = self._run(
+                fake, call="output", plain_script=[self._rate_limit(), EN_LINE])
+            self.assertIsNone(exc)
+            self.assertEqual(turn.wait_en(timeout=5.0), EN_LINE)
+        self.assertTrue(turn.en_pending.is_set())   # the page was told
+        self.assertFalse(turn.en_failed)
+        assistant_rows = [r for r in rows if r[1] == "assistant"]
+        self.assertEqual(assistant_rows[0][2], EN_LINE)
+
+    def test_second_rate_limit_marks_the_line_failed(self):
+        fake = _FakeLLM()
+        with patch.object(chat, "TRANSLATE_RETRY_WAIT_S", 0.01):
+            fake, turn, exc, rows = self._run(
+                fake, call="output",
+                plain_script=[self._rate_limit(), self._rate_limit()])
+            self.assertEqual(turn.wait_en(timeout=5.0), JA_LINE)
+        self.assertTrue(turn.en_failed)
+
+    def test_daily_quota_is_not_waited_for(self):
+        fake = _FakeLLM()
+        quota = self._rate_limit("Error code: 429 - Quota exceeded: PerDayPerProjectPerModel")
+        fake, turn, exc, rows = self._run(fake, call="output", plain_script=[quota, EN_LINE])
+        self.assertEqual(turn.wait_en(timeout=5.0), JA_LINE)
+        self.assertTrue(turn.en_failed)
+        self.assertFalse(turn.en_pending.is_set())
+
+    def test_side_jobs_run_after_the_english_line(self):
+        order = []
+        turn = chat.VoiceFirstTurn(chat.AmadeusPack(assistant_reply_JPS=JA_LINE,
+                                                     assistant_reply_ENG=""), 1, 2, 1)
+        turn.after_english.append(lambda: order.append("rescore"))
+
+        class _LLM:
+            def invoke(self, _messages):
+                order.append("english")
+                return type("R", (), {"content": EN_LINE})()
+        with patch.object(chat.store, "update_message_content"), \
+             patch.object(chat.voice_gate, "on_processor", return_value=False):
+            chat._backfill_english(turn, _LLM(), [])
+        self.assertEqual(order, ["english", "rescore"])
+
     def test_backfill_verbatim_echo_with_latin_is_rejected(self):
         # 2026-10-08 incident: a weak model repeated her Japanese line as the
         # "English" translation; it slipped the letter check because the line

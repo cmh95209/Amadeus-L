@@ -5636,6 +5636,14 @@ class VoiceFirstTurn:
         self.conv_id = conv_id
         self._en_event = threading.Event()
         self._en_text = ""
+        # English line state for the page (2026-11-19): pending = a
+        # rate-limited English call is waiting to retry; failed = no
+        # English line (the text falls back to the Japanese line).
+        self.en_pending = threading.Event()
+        self.en_failed = False
+        # Low-priority calls of this turn (captions, trust rescore): run
+        # after the English line so they do not compete with it.
+        self.after_english = []
         # Set by the route once her line has a speech id (see hold_english).
         self._voice_event = threading.Event()
         self._voice_key = None
@@ -5661,9 +5669,21 @@ class VoiceFirstTurn:
         self._en_event.wait(timeout)
         return self._en_text or self.pack.assistant_reply_JPS or ""
 
-    def _set_en(self, text: str) -> None:
+    def _set_en(self, text: str, failed: bool = False) -> None:
         self._en_text = text or ""
+        self.en_failed = bool(failed)
         self._en_event.set()
+
+    def _set_pending(self) -> None:
+        self.en_pending.set()
+
+    def _run_after_english(self) -> None:
+        jobs, self.after_english = self.after_english, []
+        for job in jobs:
+            try:
+                job()
+            except Exception as exc:
+                print(f"[Amadeus] Voice-first: side job after the English line failed: {exc!r}")
 
 
 def _voice_first_context_lines(context, max_lines: int = 4) -> list:
@@ -5785,19 +5805,56 @@ def _translate_reply_en(llm, jps: str, context_lines) -> str:
     return en
 
 
+# --- English line retry (2026-11-19) ------------------------------------------
+# Vertex answered her Japanese line, then 429'd the English call right after
+# it (three replies in a row on MH's install): the page showed the Japanese
+# line in the English box until a regenerate. A rate-limited English call now
+# waits and tries once more, in the background (her voice is untouched - it
+# comes from the Japanese line); the page shows "Translation loading..."
+# meanwhile (the route's "text_pending" event). The low-priority calls of the
+# turn (picture captions, trust rescore) start only after it, so they no
+# longer use up the same per-minute allowance at the same moment.
+TRANSLATE_RETRY_WAIT_S = 30.0        # when the provider gives no Retry-After
+TRANSLATE_RETRY_MAX_WAIT_S = 60.0
+
+
+def _translate_retry_wait(exc) -> float:
+    try:
+        headers = getattr(getattr(exc, "response", None), "headers", None)
+        hint = headers.get("retry-after") if headers is not None else None
+        if hint:
+            return max(_RATE_LIMIT_MIN_WAIT, min(float(hint), TRANSLATE_RETRY_MAX_WAIT_S))
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return TRANSLATE_RETRY_WAIT_S
+
+
 def _backfill_english(turn: "VoiceFirstTurn", llm, context_lines) -> None:
     """Call 2, in a background thread: write the English display line for the
     Japanese line call 1 already stored, then publish it (the stored row and
-    the UI). Any failure degrades to showing the Japanese line itself - her
-    real words, just untranslated - so a slow or down model never holds her
-    voice hostage."""
+    the UI). A rate limit (429, not a daily quota) gets ONE wait and retry.
+    A final failure stores the Japanese line as the text (old clients keep
+    working) and marks the turn failed; the page then shows her line in the
+    Japanese place with "Translate again" (POST /messages/<id>/translate).
+    The turn's deferred side jobs run afterwards, whatever happened."""
     jps = (turn.pack.assistant_reply_JPS or "").strip()
     # Voice on the processor + voice started early: let her finish first.
     turn._wait_for_voice()
     started = timing.now()
     timing.start_reports()
+    en = ""
     try:
-        en = _translate_reply_en(llm, jps, context_lines)
+        try:
+            en = _translate_reply_en(llm, jps, context_lines)
+        except Exception as exc:
+            if not _is_rate_limited(exc) or _is_daily_quota_exhausted(exc):
+                raise
+            wait = _translate_retry_wait(exc)
+            print(f"[Amadeus] Voice-first: English line rate-limited (429); "
+                  f"waiting {wait:.0f}s, then retrying once.")
+            turn._set_pending()
+            time.sleep(wait)
+            en = _translate_reply_en(llm, jps, context_lines)
     except Exception as exc:
         print("[Amadeus] Voice-first: English backfill failed:", repr(exc))
         en = ""
@@ -5807,7 +5864,23 @@ def _backfill_english(turn: "VoiceFirstTurn", llm, context_lines) -> None:
         store.update_message_content(turn.assistant_id, final)
     except Exception as exc:
         print("[Amadeus] Voice-first: could not store the English line:", repr(exc))
-    turn._set_en(final)
+    turn._set_en(final, failed=not en)
+    turn._run_after_english()
+
+
+def retranslate_message(message_id: int) -> str:
+    """"Translate again" on a reply whose English line failed: one English
+    call for its stored Japanese line; stores and returns the English.
+    Raises on a model error (the route shows the plain error message)."""
+    jps = (store.get_message_japanese(message_id) or "").strip()
+    if not jps:
+        raise ValueError("This reply has no Japanese line to translate")
+    context_lines = _voice_first_context_lines(store.build_prompt_messages())
+    en = _translate_reply_en(_translation_llm(), jps, context_lines)
+    if not en:
+        raise ValueError("The model returned an unusable translation")
+    store.update_message_content(message_id, en)
+    return en
 
 
 # pre:
@@ -5857,13 +5930,15 @@ def getOutputPackedVoiceFirst(user_message: str, attachment_ids=None) -> VoiceFi
     # CharacterMemory: mirror the line she actually spoke (same rule as the
     # single-call path: the Japanese line when present).
     her_line = (pack.assistant_reply_JPS or "").strip() or pack.assistant_reply_ENG
+    turn = VoiceFirstTurn(pack, user_id, assistant_id, store.load_active_conversation())
     if pictures:
-        _after_picture_turn(conv_now, user_id, user_message, her_line, assistant_id)
+        # The caption call waits for the English line (2026-11-19).
+        turn.after_english.append(lambda: _after_picture_turn(
+            conv_now, user_id, user_message, her_line, assistant_id))
     else:
         cm_bridge.save_turn(store.load_active_conversation(), "assistant", her_line)
     _note_reply_feelings()
-    maybe_schedule_trust_rescore()
-    turn = VoiceFirstTurn(pack, user_id, assistant_id, store.load_active_conversation())
+    turn.after_english.append(maybe_schedule_trust_rescore)
     # Rolling summary: fold whatever this new turn pushed out of the verbatim
     # window (background worker; no-op while the window is not full).
     store.maybe_roll_summary(turn.conv_id)
@@ -5881,7 +5956,8 @@ def getOutputPackedVoiceFirst(user_message: str, attachment_ids=None) -> VoiceFi
                          args=(turn, llm, context_lines),
                          daemon=True, name="voice-first-en").start()
     else:
-        turn._set_en((pack.assistant_reply_JPS or "").strip())
+        turn._set_en((pack.assistant_reply_JPS or "").strip(), failed=True)
+        turn._run_after_english()
     return turn
 
 

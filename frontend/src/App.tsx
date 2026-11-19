@@ -121,6 +121,8 @@ import {
   deleteConversation as deleteConversationApi,
   getStats,
   StatInfo,
+  translateMessage,
+  untranslatedState,
 } from "./api";
 import type {
   NameEntry,
@@ -191,6 +193,7 @@ const REASONING_CHOICES: Array<[ReasoningLevel, string]> = [
 
 export default function App() {
   const [messages, setMessages] = useState<MemoryMessage[]>([]);
+  const [retranslatingId, setRetranslatingId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -1687,11 +1690,25 @@ export default function App() {
       }, sent.ids, voiceEarly);
       characterRef.current?.setLooking(false);
       let reply = turn.reply;
+      // The English line is waiting for a retry after a rate limit: the
+      // bubble shows her Japanese line + "Translation loading..." (2026-11-19).
+      let englishPending = false;
+      let englishFailed = false;
       if (!voiceEarly && !reply.response) {
         // Default: wait for the English line, so the bubble and her voice
-        // arrive together (the typing dots stay up meanwhile).
-        const english = await turn.text.catch(() => "");
-        reply = { ...reply, response: english || reply.japanese || "" };
+        // arrive together (the typing dots stay up meanwhile) - but not
+        // through a rate-limit retry (up to a minute): then her voice goes
+        // ahead with her Japanese line shown.
+        const english = await Promise.race([
+          turn.text.catch(() => ""),
+          turn.pending.then(() => null),
+        ]);
+        if (english === null) {
+          englishPending = true;
+        } else {
+          englishFailed = await turn.translationFailed.catch(() => false);
+          reply = { ...reply, response: english || reply.japanese || "" };
+        }
       }
 
       // The reply tells us which conversation the turn was stored in. If the
@@ -1722,7 +1739,9 @@ export default function App() {
           content: reply.response,
           japanese: reply.japanese,
           id: reply.assistantId,
-          translating: !reply.response,
+          translating: !reply.response && !englishPending,
+          ...(englishPending ? { translation: "pending" as const } : {}),
+          ...(englishFailed ? { translation: "failed" as const } : {}),
           ...(reply.sources && reply.sources.length > 0 ? { sources: reply.sources } : {}),
           ...(reply.docReads ? { doc_reads: reply.docReads } : {}),
         });
@@ -1768,14 +1787,21 @@ export default function App() {
       // arrives a moment after she starts speaking. If it never arrives the
       // stream was cut - the backend still stores it, so pick the turn up
       // from the server's copy instead of showing an empty bubble.
+      // Voice playback Early: the bubble is already up; a rate-limit retry
+      // switches its dots to "Translation loading..." with her Japanese line.
+      void turn.pending.then(() => setMessages((current) => current.map((m) =>
+        m.role === "assistant" && m.id === reply.assistantId && !m.content
+          ? { ...m, translating: false, translation: "pending" as const } : m)));
       void turn.text
         .then(async (english) => {
           if (english) {
+            const failed = await turn.translationFailed.catch(() => false);
             setMessages((current) => {
               const next = [...current];
               for (let i = next.length - 1; i >= 0; i--) {
                 if (next[i].role === "assistant" && next[i].id === reply.assistantId) {
-                  next[i] = { ...next[i], content: english, translating: false };
+                  next[i] = { ...next[i], content: english, translating: false,
+                              translation: failed ? "failed" : undefined };
                   break;
                 }
               }
@@ -2500,6 +2526,22 @@ export default function App() {
     }
   }
 
+  // "Translate again" on a reply whose English line failed: her reply and
+  // voice stay as they are; only the English line is written (2026-11-19).
+  async function handleTranslateAgain(messageId: number) {
+    setRetranslatingId(messageId);
+    try {
+      const english = await translateMessage(messageId);
+      setMessages((current) => current.map((m) =>
+        m.id === messageId && m.role !== "user"
+          ? { ...m, content: english, translating: false, translation: undefined } : m));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Translation failed. Please try again.");
+    } finally {
+      setRetranslatingId(null);
+    }
+  }
+
   async function handleRegenerate() {
     if (loading) return;
     characterRef.current?.stopSpeech();
@@ -3007,16 +3049,42 @@ export default function App() {
                   {message.role === "user" && message.attachments && message.attachments.length > 0 && (
                     <PictureStrip pictures={message.attachments} onOpen={setViewerPicture} />
                   )}
-                  <LinkedText text={message.content}
-                    known={message.role === "user" ? undefined : knownLinkKeys(message.sources)} />
-                  {message.translating && !message.content && (
-                    <span className="bubble-translating" aria-label="Writing the English line">
-                      <i />
-                      <i />
-                      <i />
-                    </span>
-                  )}
-                  {japaneseShown && message.role !== "user" && message.japanese && (
+                  {(() => {
+                    // No English line yet (rate-limit retry) or none at all:
+                    // her Japanese line goes in its own place, shown for this
+                    // message even with "show her Japanese line" off; the
+                    // English place says what is happening (2026-11-19).
+                    const missing = untranslatedState(message);
+                    return (<>
+                      {!missing && (
+                        <LinkedText text={message.content}
+                          known={message.role === "user" ? undefined : knownLinkKeys(message.sources)} />
+                      )}
+                      {missing === "pending" && (
+                        <span className="bubble-translation-note" role="status">
+                          Translation loading…
+                        </span>
+                      )}
+                      {missing === "failed" && (
+                        <span className="bubble-translation-note">
+                          The English translation didn't come through.{" "}
+                          <button type="button" className="translate-again"
+                            disabled={retranslatingId === message.id || message.id == null}
+                            onClick={() => void handleTranslateAgain(message.id!)}>
+                            {retranslatingId === message.id ? "Translating…" : "Translate again"}
+                          </button>
+                        </span>
+                      )}
+                      {message.translating && !message.content && (
+                        <span className="bubble-translating" aria-label="Writing the English line">
+                          <i />
+                          <i />
+                          <i />
+                        </span>
+                      )}
+                    </>);
+                  })()}
+                  {(japaneseShown || untranslatedState(message)) && message.role !== "user" && message.japanese && (
                     <span className="bubble-japanese" lang="ja">
                       <LinkedText text={message.japanese} known={knownLinkKeys(message.sources)} />
                     </span>

@@ -855,9 +855,32 @@ def request_message():
         # already playing by the time this line runs. Longer than the voice
         # gate's cap (90 s): in "early" mode on a processor voice the English
         # line is written only after she finished speaking.
-        english = turn.wait_en(timeout=180.0)
+        # 2026-11-19: a rate-limited English line waits and retries in the
+        # background; the page is told at once ("text_pending" -> it shows
+        # "Translation loading..." with her Japanese line). Bounded by the
+        # voice wait + the retry wait.
+        pending = getattr(turn, "en_pending", None)
+        deadline = time.monotonic() + 300.0
+        english = None
+        if pending is not None:
+            told = False
+            while time.monotonic() < deadline:
+                if getattr(turn, "_en_event").wait(1.0):
+                    break
+                if not told and pending.is_set():
+                    told = True
+                    yield "data: " + json.dumps(
+                        {"phase": "text_pending", "assistant_id": turn.assistant_id},
+                        ensure_ascii=False) + "\n\n"
+            english = turn.wait_en(timeout=0.1)
+        else:
+            english = turn.wait_en(timeout=180.0)
+        failed = bool(getattr(turn, "en_failed", False))
         yield "data: " + json.dumps(
-            {"phase": "text", "assistant_id": turn.assistant_id, "response": english},
+            {"phase": "text", "assistant_id": turn.assistant_id, "response": english,
+             # True: no English line - "response" is her Japanese line (old
+             # clients show it); the page shows "Translate again" instead.
+             "translation_failed": failed},
             ensure_ascii=False) + "\n\n"
 
     response = Response(generate(), mimetype="text/event-stream")
@@ -1241,6 +1264,22 @@ def undo_last_reply():
 
 # pre: an API key is configured and the newest message is a user turn
 # post: her last reply is replaced with a fresh one (same flow as /)
+@application.route("/messages/<int:message_id>/translate", methods=["POST"])
+def translate_message(message_id):
+    """"Translate again" for a reply whose English line failed (2026-11-19):
+    one English call for its stored Japanese line; her reply is unchanged."""
+    if not has_api_key():
+        return jsonify({"message": "No API key. Add one in Settings."}), 400
+    try:
+        english = chat.retranslate_message(message_id)
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except Exception as exc:
+        print("[Flask] Translate again failed:", repr(exc))
+        return jsonify({"message": _llm_error_message(exc)}), 502
+    return jsonify({"assistant_id": message_id, "response": english})
+
+
 @application.route("/regenerate", methods=["POST"])
 def regenerate():
     if not has_api_key():

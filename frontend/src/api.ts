@@ -38,6 +38,10 @@ export type MemoryMessage = {
   attachments?: PictureInfo[];
   /** Screen-only: her voice started before the English line arrived. */
   translating?: boolean;
+  /** Screen-only (2026-11-19): the English line is waiting for a retry
+   *  after a rate limit ("pending"), or never came ("failed" - the page
+   *  offers "Translate again"). Her Japanese line is shown meanwhile. */
+  translation?: "pending" | "failed";
 };
 
 export type MessageReply = {
@@ -137,6 +141,12 @@ export type MessageTurn = {
    * falls back to her Japanese line if the call fails or times out).
    * Resolves immediately for web-ON replies, which carry it in one JSON. */
   text: Promise<string>;
+  /** Resolves when the backend says the English line is waiting for a
+   *  retry after a rate limit (voice-first only; otherwise never). */
+  pending: Promise<void>;
+  /** Resolves with the text: true when no English line came (the text is
+   *  then her Japanese line). */
+  translationFailed: Promise<boolean>;
 };
 
 /** What a live web-ON reply reports while it is being written. */
@@ -193,7 +203,8 @@ export async function sendMessage(
       typeof data.conversation_id === "number" ? data.conversation_id : undefined,
     sources: normalizeSources(data.sources),
   };
-  return { reply, text: Promise.resolve(reply.response) };
+  return { reply, text: Promise.resolve(reply.response), pending: new Promise<void>(() => undefined),
+           translationFailed: Promise.resolve(false) };
 }
 
 type VoiceFirstEvent = {
@@ -209,6 +220,7 @@ type VoiceFirstEvent = {
   message?: string;
   sources?: unknown;
   doc_reads?: string;
+  translation_failed?: boolean;
 };
 
 function replyFromEvent(event: VoiceFirstEvent, response: string): MessageReply {
@@ -256,6 +268,11 @@ export async function readVoiceFirstStream(
     rejectReply = reject;
   });
   const textPromise = new Promise<string>((r) => (resolveText = r));
+  let resolvePending: (() => void) | null = null;
+  const pendingPromise = new Promise<void>((r) => (resolvePending = r));
+  let resolveFailed: ((failed: boolean) => void) | null = null;
+  const failedPromise = new Promise<boolean>((r) => (resolveFailed = r));
+  let textFailed = false;
 
   let reply: MessageReply | null = null;
   let text = "";
@@ -272,6 +289,7 @@ export async function readVoiceFirstStream(
     if (!textSettled && resolveText) {
       textSettled = true;
       resolveText(value);
+      (resolveFailed as ((failed: boolean) => void) | null)?.(textFailed || !value);
     }
   };
 
@@ -300,8 +318,11 @@ export async function readVoiceFirstStream(
             if (event.phase === "voice") {
               reply = replyFromEvent(event, "");
               settleReply();
+            } else if (event.phase === "text_pending") {
+              (resolvePending as (() => void) | null)?.();
             } else if (event.phase === "text") {
               if (typeof event.response === "string") text = event.response;
+              textFailed = event.translation_failed === true;
               settleText(text);
             } else if (event.phase === "status") {
               if (typeof event.text === "string") hooks.onStatus?.(event.text, event.step ?? "");
@@ -341,7 +362,28 @@ export async function readVoiceFirstStream(
   void pump();
 
   const resolvedReply = await replyPromise;
-  return { reply: resolvedReply, text: textPromise };
+  return { reply: resolvedReply, text: textPromise, pending: pendingPromise,
+           translationFailed: failedPromise };
+}
+
+/** "Translate again" for a reply whose English line failed: one English
+ *  call for her stored Japanese line; returns the English line. */
+export async function translateMessage(messageId: number): Promise<string> {
+  const data = await parseResponse(await fetch(`${API_BASE}/messages/${messageId}/translate`, {
+    method: "POST",
+  }));
+  if (typeof data.response !== "string") throw new Error("Backend returned an invalid response");
+  return data.response;
+}
+
+/** A reply shown without its English line: still waiting for a retry, or
+ *  failed (also an older reply saved with her Japanese line as its text). */
+export function untranslatedState(m: MemoryMessage): "pending" | "failed" | null {
+  if (m.role === "user" || !m.japanese || m.translating) return m.translation === "pending" ? "pending" : null;
+  if (m.translation) return m.translation;
+  const text = (m.content || "").trim();
+  if (!text || text === m.japanese.trim()) return "failed";
+  return null;
 }
 
 export type GreetingReply = {

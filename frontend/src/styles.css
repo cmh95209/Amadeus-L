@@ -526,6 +526,31 @@ button {
   animation-delay: 0.4s;
 }
 
+/* No English line yet (rate-limit retry) or none at all: said in the
+   English place; her Japanese line shows below it. */
+.bubble-translation-note {
+  display: block;
+  color: #8b95a3;
+  font-style: italic;
+}
+
+.bubble-translation-note .translate-again {
+  margin-left: 4px;
+  padding: 2px 10px;
+  font-style: normal;
+  font-size: 0.85em;
+  border: 1px solid rgba(129, 146, 168, 0.4);
+  border-radius: 999px;
+  background: transparent;
+  color: #b9c4d2;
+  cursor: pointer;
+}
+
+.bubble-translation-note .translate-again:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .user .bubble {
   background: rgba(80, 111, 151, 0.14);
   border-color: rgba(112, 150, 197, 0.16);

@@ -54,9 +54,10 @@ assert.ok(!isKnownLink("https://store.steampowered.com/app/999999", steam));
 assert.ok(isKnownLink("https://www.youtube.com/watch?v=abc", steam));
 assert.ok(isKnownLink("https://store.steampowered.com", steam));               // the site itself
 
-// --- the component: plain text stays plain; links open in a new tab.
+// --- the component: plain text stays plain (marked translate="no" so the
+// page translator never touches chat text, i18n.ts); links open in a new tab.
 assert.equal(renderToStaticMarkup(createElement(LinkedText, { text: "hello <b>there</b>" })),
-  "hello &lt;b&gt;there&lt;/b&gt;");
+  '<span translate="no">hello &lt;b&gt;there&lt;/b&gt;</span>');
 const mine = renderToStaticMarkup(createElement(LinkedText, { text: "read https://a.com/x please" }));
 assert.match(mine, /<a class="chat-link" href="https:\/\/a.com\/x" target="_blank" rel="noopener noreferrer"/);
 assert.doesNotMatch(mine, /unchecked/);
@@ -65,5 +66,8 @@ const hers = renderToStaticMarkup(createElement(LinkedText, {
 }));
 assert.equal((hers.match(/chat-link-unchecked/g) ?? []).length, 1);
 assert.match(hers, /made-up\.example\.org\/page<\/a><span class="chat-link-unchecked"/);
+// chat text is never translated; the "unchecked" label is
+assert.ok(!/class="chat-link-unchecked"[^>]*translate="no"/.test(hers));
+assert.match(hers, /<a class="chat-link"[^>]*translate="no"/);
 
 console.log("linkText.test.ts: ok");

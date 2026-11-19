@@ -4285,6 +4285,10 @@ export default function App() {
                   {personalityNotice && <p className="settings-success" role="status">{personalityNotice}</p>}
                   <div className="modal-actions personality-actions">
                     {!personalityLoaded ? <button className="ghost-button"
+                    {/* Close (2026-11-19): every other tab had one; unsaved
+                        edits still get closeSettings' "Discard?" question. */}
+                    <button className="ghost-button" onClick={closeSettings}
+                      disabled={settingsBusy}>Close</button>
                       onClick={() => setPersonalityReload((value) => value + 1)}>Retry loading</button> : <>
                       <button className="ghost-button" disabled={settingsBusy || !personalityDirty}
                         onClick={() => {

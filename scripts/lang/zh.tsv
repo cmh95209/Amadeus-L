@@ -1,0 +1,329 @@
+# Amadeus installers + launcher, zh. One line: English<TAB>translation.
+'Test connection' - the dot turns green when she can reach	“测试连接”——当她能连上时，圆点会变绿
+(a couple of GB - this is normal; keep the window open)	（几 GB——这很正常，请保持窗口打开）
+(a large download - this is normal; keep the window open)	（下载量很大——这很正常，请保持窗口打开）
+(a package needs a C compiler - adding conda-forge's to the voice toolbox and trying again...)	（某个包需要 C 编译器——正在把 conda-forge 的编译器加入语音工具箱并重试...）
+(adding the helper library llama.cpp needs (libgomp) from conda-forge...)	（正在从 conda-forge 添加 llama.cpp 需要的辅助库 libgomp...）
+(and this one too: {1})	（还有这个文件：{1}）
+(asking Git-LFS to identify itself said: {1})	（让 Git-LFS 报告自身信息时它说：{1}）
+(asking the tool to identify itself said: {1})	（让这个工具报告自身信息时它说：{1}）
+(Closing an earlier Amadeus that was still running.)	（正在关闭之前仍在运行的 Amadeus。）
+(Conda was also added to your terminal's startup file - undo with 'conda init --reverse'.)	（Conda 也已加入你终端的启动文件——可用 'conda init --reverse' 撤销。）
+(copy anything you want back from there).	（需要的话可以从那里拷回任何内容）。
+(Could not add Amadeus to the app menu - start her with start_linux.sh instead.)	（无法把 Amadeus 加入应用菜单——请改用 start_linux.sh 启动她。）
+(Details: {1}/logs/memory-setup.log)	（详情：{1}/logs/memory-setup.log）
+(full package list failed - retrying without the optional Japanese text helper)	（完整的包列表安装失败——去掉可选的日语文本辅助后重试）
+(her voice files arrived as Git-LFS placeholders - fetching the real files...)	（她的语音文件是 Git-LFS 占位文件——正在获取真正的文件...）
+(If she is offline at first start, her voice will retry the download automatically.)	（如果第一次启动时她离线，她的语音会自动重试下载。）
+(If the page does not open later, re-run this installer - it resumes where it stopped.)	（如果之后页面打不开，请重新运行这个安装程序——它会从中断处继续。）
+(Install log saved to: {1})	（安装日志已保存到：{1}）
+(load her model later in Settings -> Connection, or unload it there any time).	（之后可在 设置 -> 连接 中加载她的模型，也可随时在那里卸载）。
+(moved this copy from the old feature branch to main)	（已把这个副本从旧的功能分支移到 main）
+(Not a git folder - cannot update it; using it as is.)	（不是 git 文件夹——无法更新，按原样使用。）
+(note: the local copy is not on the expected branch - continuing on what it has)	（注意：本地副本不在预期的分支上——继续使用现有内容）
+(the downloaded archive contains:)	（下载的压缩包包含：）
+(the FFmpeg download did not work - trying conda-forge instead, a few minutes...)	（FFmpeg 下载失败——改用 conda-forge，需要几分钟...）
+(the project's history was cleaned up - moved this copy onto it)	（项目历史已整理——已把这个副本移到新的历史上）
+(This is Linux inside Windows (WSL) - fine for testing; on Windows itself, install_windows.ps1 is the usual way.)	（这是 Windows 里的 Linux（WSL）——用来测试没问题；在 Windows 本身上，通常用 install_windows.ps1。）
+(this Mac does not offer 'unzip' yet - using the built-in bsdtar...)	（这台 Mac 还没有 'unzip'——改用内置的 bsdtar...）
+(trying your Homebrew first...)	（先试你的 Homebrew...）
+(what the setup attempts reported:)	（安装尝试的报告：）
+(You can switch to your own model or a cloud service any time in Settings -> Connection.)	（你随时可以在 设置 -> 连接 中换成你自己的模型或云服务。）
+- a cloud model service (e.g. OpenRouter or OpenAI), or	- 云端模型服务（例如 OpenRouter 或 OpenAI），或
+- a local model server on this PC (e.g. KoboldCpp, Unsloth	- 这台电脑上的本地模型服务器（例如 KoboldCpp、Unsloth
+1) Double-click this file to START Amadeus:	1) 双击这个文件来启动 Amadeus：
+1) START Amadeus: choose "Amadeus" in your app menu, or run:	1) 启动 Amadeus：在应用菜单中选择“Amadeus”，或运行：
+2) When she opens in your browser, read her introduction message -	2) 她在浏览器中打开后，读一下她的自我介绍——
+3) (Shortcut) You can also open Settings -> Connection and click	3) （快捷方式）你也可以打开 设置 -> 连接 并点击
+3) (Shortcut) You can also open Settings -> Connection, enter the	3) （快捷方式）你也可以打开 设置 -> 连接，输入
+A dialog will appear: click 'Install' and wait for it to finish.	会出现一个对话框：点击“安装”并等待完成。
+A local model needs a separate graphics card. On this PC she would think far too slowly, so Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	本地模型需要独立显卡。在这台电脑上她的思考会太慢，所以 Amadeus 将使用选项 B：由你自己连接模型（例如 OpenRouter 这样的云服务，或你自己的模型服务器）。
+A) Install and set up a local model automatically (private, runs on this Mac, no account needed)	A) 自动安装并设置本地模型（私密，在这台 Mac 上运行，无需账户）
+A) Install and set up a local model automatically (private, runs on this PC, no account needed)	A) 自动安装并设置本地模型（私密，在这台电脑上运行，无需账户）
+Added Amadeus to your app menu.	已把 Amadeus 加入你的应用菜单。
+again. Or type S to start her model anyway (she will be slower until the	再检查一次。或输入 S 仍然启动她的模型（在显卡有空间之前她会比较慢），
+All done	全部完成
+ALL DONE!	全部完成！
+Already have Amadeus-Project - checking for updates.	已经有 Amadeus-Project——正在检查更新。
+Already have llama.cpp {1} ({2}) - skipping.	已经有 llama.cpp {1}（{2}）——跳过。
+Already have {1} (checked) - skipping.	已经有 {1}（已检查）——跳过。
+Amadeus is online	Amadeus 已上线
+Amadeus is starting in her own window (the first start takes a little longer). You can close this one.	Amadeus 正在她自己的窗口中启动（第一次启动会久一点）。你可以关闭这个窗口。
+Amadeus is starting. (Details: {1})	Amadeus 正在启动。（详情：{1}）
+and paste its API key, if your provider has one.	如果你的服务商有 API 密钥，请粘贴。
+App toolbox ready (startup smoke test passed).	应用工具箱就绪（启动冒烟测试通过）。
+Apple developer tools are not installed yet - asking macOS for them...	Apple 开发者工具还没安装——正在向 macOS 请求...
+Apple developer tools installed - continuing.	Apple 开发者工具已安装——继续。
+Apple developer tools: present.	Apple 开发者工具：已存在。
+B) I'll do it myself (choose this if using a cloud model or your own local model)	B) 我自己来（如果使用云端模型或你自己的本地模型，选这个）
+Backend ready (startup smoke test passed).	后端就绪（启动冒烟测试通过）。
+building toolbox '{1}' (Python {2}) - this can take a minute...	正在构建工具箱“{1}”（Python {2}）——可能需要一分钟...
+Built-in model settings saved: {1}	内置模型设置已保存：{1}
+card has room), or N to start without it (load it later in	有空间），或输入 N 不带模型启动（之后在
+Checking that PyTorch can use your GPU	检查 PyTorch 能否使用你的 GPU
+Checking the downloaded file (about a minute for the big ones)...	正在检查下载的文件（大文件约需一分钟）...
+Checking the voice engine's hardware support	检查语音引擎的硬件支持
+Checking the Windows installer tool (winget)	检查 Windows 安装工具（winget）
+Checking your Mac	检查你的 Mac
+Checking your PC	检查你的电脑
+Chip : {1}	芯片：{1}
+Choose N to keep your own versions. You can still switch to	选 N 保留你自己的版本。之后仍可在设置里
+Chosen: option B - you connect a model yourself in Settings after the install.	已选择：选项 B——安装后在设置中由你自己连接模型。
+Close games or other programs for full speed, then press Enter to check	关闭游戏或其他程序以获得全速，然后按 Enter
+Conda not found - installing Miniforge (the community conda build, ~85 MB)...	没找到 Conda——正在安装 Miniforge（社区版 conda，约 85 MB）...
+Conda not found - installing Miniforge (the community conda build, ~90 MB)...	没找到 Conda——正在安装 Miniforge（社区版 conda，约 90 MB）...
+Conda terms of service handled (required by newer conda before it will build environments unattended).	已处理 Conda 服务条款（新版 conda 无人值守构建环境前需要）。
+Conda: found your existing install at {1} - reusing it.	Conda：在 {1} 找到你已有的安装——直接使用。
+Could not build the '{1}' toolbox.	无法构建工具箱“{1}”。
+Could not download her voice models.	无法下载她的语音模型。
+Could not fast-forward (local commits present?) - leaving it as is.	无法快进（存在本地提交？）——保持原样。
+Could not find Miniconda after installing it. Look at this window and the log.	安装后找不到 Miniconda。请查看这个窗口和日志。
+Could not install PyTorch.	无法安装 PyTorch。
+Could not pre-fetch all of the voice text data right now (is your internet reachable?). No problem - Amadeus checks again every time she starts, and the voice engine fetches anything still missing the first time she speaks such a word.	现在无法预取全部语音文本数据（网络通吗？）。没关系——Amadeus 每次启动都会再检查，语音引擎第一次说到这类词时也会取回缺少的数据。
+Could not set up Amadeus' own Miniconda. Look at this window and the log.	无法设置 Amadeus 自己的 Miniconda。请查看这个窗口和日志。
+Could not set up Git LFS. Look at this window and the log.	无法设置 Git LFS。请查看这个窗口和日志。
+Could not set up Git-LFS (the details above explain why).	无法设置 Git-LFS（上面的详情说明了原因）。
+Could not set up Git-LFS (the line above explains why).	无法设置 Git-LFS（上面那行说明了原因）。
+Could not set up Git. Look at this window and the log.	无法设置 Git。请查看这个窗口和日志。
+Could not set up Node.js. Look at this window and the log.	无法设置 Node.js。请查看这个窗口和日志。
+Desktop, NInfer, Ollama or vLLM).	Desktop、NInfer、Ollama 或 vLLM）。
+did not start	没有启动
+Downloading her model - still going in the background, waiting for it to finish...	正在下载她的模型——仍在后台进行，等待完成...
+Downloading her voice models (about 1.2 GB the first time)	正在下载她的语音模型（第一次约 1.2 GB）
+Downloading Miniconda from Anaconda (about 125 MB, can take a few minutes)...	正在从 Anaconda 下载 Miniconda（约 125 MB，可能需要几分钟）...
+Downloading the Amadeus project	下载 Amadeus 项目
+Downloading the project (a few dozen MB)...	正在下载项目（几十 MB）...
+Downloading the voice engine (GPT-SoVITS)	下载语音引擎（GPT-SoVITS）
+Downloading the web page's packages...	正在下载网页所需的包...
+ERROR: {1}	错误：{1}
+Everything else installs now. It downloads several gigabytes, so give it time.	其余部分现在开始安装。要下载好几 GB，请耐心等待。
+Everything is installed EXCEPT her built-in local model (see the messages above).	除了她的内置本地模型，其他都已安装好（见上方信息）。
+Everything is installed. Amadeus needs a model to think with:	全部安装完成。Amadeus 需要一个模型来思考：
+FFmpeg already present.	FFmpeg 已存在。
+FFmpeg for videos ready (9.0.2, in your home folder).	视频用的 FFmpeg 就绪（9.0.2，在你的主文件夹中）。
+FFmpeg for videos ready (from conda-forge, in your home folder).	视频用的 FFmpeg 就绪（来自 conda-forge，在你的主文件夹中）。
+FFmpeg for videos: already set up.	视频用的 FFmpeg：已设置好。
+FFmpeg for videos: downloading (about 60 MB)...	视频用的 FFmpeg：正在下载（约 60 MB）...
+FFmpeg for videos: setting it up from conda-forge (a few minutes)...	视频用的 FFmpeg：正在从 conda-forge 设置（需要几分钟）...
+FFmpeg: present on this Mac - videos use it.	FFmpeg：这台 Mac 上已有——视频会使用它。
+FFmpeg: present on this PC - videos use it.	FFmpeg：这台电脑上已有——视频会使用它。
+For now, Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	目前 Amadeus 将使用选项 B：由你自己连接模型（例如 OpenRouter 这样的云服务，或你自己的模型服务器）。
+Found an existing Amadeus at {1} - updating it...	在 {1} 找到已有的 Amadeus——正在更新...
+Free disk : {1} GB	可用磁盘：{1} GB
+from: {1}	来自：{1}
+Frontend ready.	前端就绪。
+Getting Amadeus (the project files)	获取 Amadeus（项目文件）
+Git + LFS ready.	Git + LFS 就绪。
+Git already present (Amadeus' own copy).	Git 已存在（Amadeus 自己的副本）。
+Git already present.	Git 已存在。
+git was not found (it comes with Apple's developer tools).	没有找到 git（它随 Apple 开发者工具提供）。
+git, curl, Git-LFS: present.	git、curl、Git-LFS：已存在。
+Git-LFS is installed but could not be switched on (git lfs install).	Git-LFS 已安装但无法启用（git lfs install）。
+Git-LFS ready.	Git-LFS 就绪。
+Git-LFS: present.	Git-LFS：已存在。
+git: {1}	git：{1}
+Graphics card : none found (or built-in graphics only)	显卡：没有找到（或只有集成显卡）
+Her built-in model ... loading in the background (this window says when it is ready)	她的内置模型……正在后台加载（就绪时这个窗口会提示）
+Her built-in model has no model file yet - put a GGUF file in {1} and load it in Settings -> Connection (or run the installer again and choose A).	她的内置模型还没有模型文件——把 GGUF 文件放到 {1}，然后在 设置 -> 连接 中加载（或重新运行安装程序并选择 A）。
+Her built-in model needs a 64-bit Intel or AMD processor (this PC has: {1}). So Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	她的内置模型需要 64 位 Intel 或 AMD 处理器（这台电脑是：{1}）。所以 Amadeus 将使用选项 B：由你自己连接模型（例如 OpenRouter 这样的云服务，或你自己的模型服务器）。
+Her built-in model needs a graphics card (NVIDIA, AMD or Intel, 6 GB or more). This PC has none, so Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	她的内置模型需要显卡（NVIDIA、AMD 或 Intel，6 GB 或以上）。这台电脑没有，所以 Amadeus 将使用选项 B：由你自己连接模型（例如 OpenRouter 这样的云服务，或你自己的模型服务器）。
+Her built-in model needs a graphics card with at least 6 GB of its own memory (this one has {1} GB). The smaller models that would fit don't sound like her, so Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	她的内置模型需要至少 6 GB 独立显存的显卡（这块只有 {1} GB）。能放下的更小模型听起来不像她，所以 Amadeus 将使用选项 B：由你自己连接模型（例如 OpenRouter 这样的云服务，或你自己的模型服务器）。
+Her built-in model needs a Mac with an Apple chip (M1 or newer). On this Mac she would think far too slowly, so Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	她的内置模型需要搭载 Apple 芯片（M1 或更新）的 Mac。在这台 Mac 上她的思考会太慢，所以 Amadeus 将使用选项 B：由你自己连接模型（例如 OpenRouter 这样的云服务，或你自己的模型服务器）。
+Her built-in model needs at least {1} GB of memory (this Mac has {2} GB). The smaller models that would fit don't sound like her, so Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	她的内置模型需要至少 {1} GB 内存（这台 Mac 有 {2} GB）。能放下的更小模型听起来不像她，所以 Amadeus 将使用选项 B：由你自己连接模型（例如 OpenRouter 这样的云服务，或你自己的模型服务器）。
+Her built-in model will not be loaded (load it in Settings -> Connection).	不会加载她的内置模型（可在 设置 -> 连接 中加载）。
+Her Japanese pronunciation dictionary could not be prepared right now - it downloads the first time she speaks.	她的日语发音词典现在无法准备——会在她第一次说话时下载。
+Her Japanese pronunciation dictionary is in place.	她的日语发音词典已就位。
+Her memory	她的记忆
+Her memory could not be set up right now - Amadeus finishes it when she starts.	她的记忆现在无法设置——Amadeus 启动时会完成。
+Her memory is not available - she works without long-term memory.	她的记忆不可用——她在没有长期记忆的情况下工作。
+Her memory is set up.	她的记忆已设置好。
+Her memory needs a one-time setup first (a few minutes).	她的记忆需要先进行一次性设置（几分钟）。
+Her memory's search model (about 1.2 GB) starts downloading in the background now.	她的记忆搜索模型（约 1.2 GB）现在开始在后台下载。
+Her memory's search model could not be downloaded right now - she fetches it at her first start.	她的记忆搜索模型现在无法下载——她会在第一次启动时获取。
+Her memory's search model is in place.	她的记忆搜索模型已就位。
+Her new default personality and voice rules are in place. Your previous versions ({1}) are in: {2}	她新的默认性格和语音规则已就位。你之前的版本（{1}）在：{2}
+Her personality and voice rules were NOT replaced: this copy could not be updated (see above).	她的性格和语音规则没有被替换：这个副本无法更新（见上方）。
+Her voice	她的语音
+Her voice files are already in place.	她的语音文件已经就位。
+Her voice files are in place.	她的语音文件已就位。
+Her voice files could not be downloaded (Git-LFS).	无法下载她的语音文件（Git-LFS）。
+Her voice runs on the processor on this PC (the voice engine can only use NVIDIA cards) - it works, just a little slower.	在这台电脑上她的语音在处理器上运行（语音引擎只能使用 NVIDIA 显卡）——可以用，只是稍慢。
+Her voice will run on the processor.	她的语音将在处理器上运行。
+Her voice's model files (about 1.2 GB)	她语音的模型文件（约 1.2 GB）
+Her web page's parts were set up with a different Node.js - setting them up again.	她网页的组件是用另一个 Node.js 设置的——正在重新设置。
+Here is what to do next:	接下来要做的：
+How should Amadeus think?	Amadeus 应该怎样思考？
+If you choose Y, your current versions are REPLACED by the	如果选 Y，你当前的版本会被
+Install log also copied to: {1}/logs/install_log.txt	安装日志也已复制到：{1}/logs/install_log.txt
+INSTALL STOPPED:	安装已停止：
+Install the NVIDIA driver the usual way for your Linux version (on Ubuntu: the 'Additional Drivers' app), restart the PC, then run this installer again to get her built-in model.	按你的 Linux 版本的常规方式安装 NVIDIA 驱动（Ubuntu 上用“附加驱动”应用），重启电脑，然后再运行这个安装程序即可获得她的内置模型。
+Installing Amadeus	正在安装 Amadeus
+Installing Git-LFS (needed so the voice models download as real files)...	正在安装 Git-LFS（让语音模型以真实文件下载）...
+Installing llama.cpp, so you can also run a GGUF model of your own on this PC	安装 llama.cpp，让你也能在这台电脑上运行自己的 GGUF 模型
+Installing PyTorch (Apple-chip build, uses the MPS accelerator) - the biggest download...	正在安装 PyTorch（Apple 芯片版，使用 MPS 加速）——最大的下载...
+Installing PyTorch (Intel/CPU build) - the biggest download...	正在安装 PyTorch（Intel/CPU 版）——最大的下载...
+Installing required programs (only the ones you don't already have)	安装所需程序（只装你还没有的）
+Installing the voice engine's remaining packages...	正在安装语音引擎剩余的包...
+instead (start_linux_no_model.sh; load her model later in Settings -> Connection).	（start_linux_no_model.sh；之后在 设置 -> 连接 中加载她的模型）。
+It downloads several gigabytes, so give it time. Keep this window open.	要下载好几 GB，请耐心等待。保持这个窗口打开。
+It has unsaved local changes - not updating, so nothing of yours is lost.	它有未保存的本地修改——不更新，这样你的东西不会丢失。
+it walks you through connecting your model, step by step.	她会一步步带你连接你的模型。
+Keep that choice? Type Y (yes) or N (choose again)	保留这个选择？输入 Y（是）或 N（重新选择）
+Linux version : {1}	Linux 版本：{1}
+llama.cpp (to run a model of your own later) starts downloading in the background now.	llama.cpp（之后运行你自己的模型用）现在开始在后台下载。
+llama.cpp {1} ({2}) ready.	llama.cpp {1}（{2}）就绪。
+Local model : not offered - it needs a Mac with an Apple chip (option B only)	本地模型：不提供——需要搭载 Apple 芯片的 Mac（只能选 B）
+Local model : not offered - it needs at least {1} GB of memory (option B only)	本地模型：不提供——至少需要 {1} GB 内存（只能选 B）
+macOS version : {1}	macOS 版本：{1}
+Making sure the basic tools are present	确认基础工具都在
+Miniforge installed at {1}.	Miniforge 已安装在 {1}。
+model (type to search), then press 'Use this model'.	模型（可输入搜索），然后按“使用这个模型”。
+Need help? Ask on our Discord: {1} - and send the file {2}.	需要帮助？请到我们的 Discord 提问：{1}——并发送文件 {2}。
+Need help? Ask on our Discord: {1}.	需要帮助？请到我们的 Discord 提问：{1}。
+new defaults. They are saved first in a new folder inside	新的默认值替换。它们会先保存在
+No answer was given.	没有给出回答。
+no local-model downloads (screens + settings file only)	不下载本地模型（只有界面和设置文件）
+No NVIDIA card found - installing PyTorch's processor build (her voice works, just a little slower).	没有找到 NVIDIA 显卡——正在安装 PyTorch 的处理器版（她的语音可以用，只是稍慢）。
+No working NVIDIA GPU found - installing the CPU version (works, but voice is slower).	没有找到可用的 NVIDIA GPU——正在安装 CPU 版（可以用，但语音较慢）。
+Node.js already present (Amadeus' own copy).	Node.js 已存在（Amadeus 自己的副本）。
+Node.js not found (or older than 18) - installing the official build into your home folder...	没有找到 Node.js（或低于 18）——正在把官方版本安装到你的主文件夹...
+Node.js not found - installing it with Homebrew...	没有找到 Node.js——正在用 Homebrew 安装...
+Node.js not found - installing the official build for this Mac (no admin password needed)...	没有找到 Node.js——正在安装适用于这台 Mac 的官方版本（不需要管理员密码）...
+Node.js ready ({1}).	Node.js 就绪（{1}）。
+Node.js ready ({1}, in your home folder).	Node.js 就绪（{1}，在你的主文件夹中）。
+Node.js: found ({1}) - using it.	Node.js：找到了（{1}）——使用它。
+Node.js: found yours ({1}) - reusing it.	Node.js：找到你的（{1}）——直接使用。
+Not enough free disk space for the local model: it needs about {1} GB, this disk has {2} GB free.	本地模型的磁盘空间不够：大约需要 {1} GB，这块磁盘只剩 {2} GB。
+NOTE: Amadeus is tested on 64-bit Intel/AMD processors (x86_64). On {1} it should work, but is not tested.	注意：Amadeus 在 64 位 Intel/AMD 处理器（x86_64）上测试过。在 {1} 上应该能用，但没有测试过。
+NOTE: PyTorch is installed but could not see the GPU yet. Update your NVIDIA driver, then re-run this installer once.	注意：PyTorch 已安装，但还看不到 GPU。请更新 NVIDIA 驱动，然后再运行一次这个安装程序。
+NOTE: PyTorch sees your GPU but a test calculation on it failed (details in install_log.txt). If her voice does not work, update your NVIDIA driver and re-run this installer once.	注意：PyTorch 能看到你的 GPU，但在上面的测试计算失败了（详情见 install_log.txt）。如果她的语音不工作，请更新 NVIDIA 驱动并再运行一次这个安装程序。
+NOTICE: this graphics card has only {1} GB. Her model then runs partly on the processor - she answers, but slowly.	提示：这块显卡只有 {1} GB。她的模型会部分在处理器上运行——能回答，但很慢。
+Now {1} GB free - starting her model.	现在有 {1} GB 可用——正在启动她的模型。
+npm install reported an issue, but this is often harmless. Continuing.	npm install 报告了一个问题，但这通常无害。继续。
+NVIDIA card found - installing PyTorch's graphics-card build (CUDA 12.8, about 3 GB)...	找到 NVIDIA 显卡——正在安装 PyTorch 显卡版（CUDA 12.8，约 3 GB）...
+NVIDIA GPU found - installing PyTorch CUDA 12.8 (the graphics-card version).	找到 NVIDIA GPU——正在安装 PyTorch CUDA 12.8（显卡版）。
+On a Mac, good choices: a cloud service (OpenRouter, OpenAI...)	在 Mac 上的好选择：云服务（OpenRouter、OpenAI...）
+On this PC her voice has to run on the processor, which needs at least {1} GB of normal memory (this PC has {2} GB). So Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	在这台电脑上她的语音必须在处理器上运行，这至少需要 {1} GB 内存（这台电脑有 {2} GB）。所以 Amadeus 将使用选项 B：由你自己连接模型（例如 OpenRouter 这样的云服务，或你自己的模型服务器）。
+or a local model server like Ollama, LM Studio or llama.cpp.	或 Ollama、LM Studio、llama.cpp 这样的本地模型服务器。
+Please type one of: {1}	请输入以下之一：{1}
+Pre-downloading the voice language model (~130 MB)...	正在预下载语音语言模型（约 130 MB）...
+Preparing the web page	准备网页
+Press Ctrl+C to shut everything down.	按 Ctrl+C 关闭所有程序。
+Press R to restart her, B to restart only her brain (the backend).	按 R 重启她，按 B 只重启她的大脑（后端）。
+Processor : {1}	处理器：{1}
+Project files ready.	项目文件就绪。
+PyTorch can use your GPU - voice synthesis will run on it.	PyTorch 可以使用你的 GPU——语音合成将在上面运行。
+PyTorch installed.	PyTorch 已安装。
+ready ({1})	就绪（{1}）
+Ready: {1} (in your home folder).	就绪：{1}（在你的主文件夹中）。
+Removed the old full voice-model download from the temp folder (about 13 GB freed).	已从临时文件夹删除旧的完整语音模型下载（释放约 13 GB）。
+Removed the old full voice-model download from the temp folder.	已从临时文件夹删除旧的完整语音模型下载。
+Replace them with the new defaults? Type Y (yes) or N (no, keep mine)	用新的默认值替换它们？输入 Y（是）或 N（否，保留我的）
+repo already present at {1} - updating it (best effort)...	仓库已在 {1}——正在更新（尽力而为）...
+Retrying the voice packages without the optional Japanese text helper...	正在去掉可选的日语文本辅助后重试语音包...
+Run this installer again when you can - it continues the download where it stopped.	方便时请再运行这个安装程序——它会从中断处继续下载。
+Running in CPU mode (graphics card too old for the voice engine - her voice uses the processor).	以 CPU 模式运行（显卡对语音引擎来说太旧——她的语音使用处理器）。
+Running in CPU mode (no GPU detected).	以 CPU 模式运行（没有检测到 GPU）。
+server address and API key, press 'Refresh list' and pick your	服务器地址和 API 密钥，按“刷新列表”并选择你的
+Setting up Amadeus's Python toolboxes	设置 Amadeus 的 Python 工具箱
+Setting up her memory (about 1.3 GB, a few minutes)...	正在设置她的记忆（约 1.3 GB，几分钟）...
+Setting up the Amadeus Python environments	设置 Amadeus 的 Python 环境
+Setting up the local-model helper (llama.cpp)	设置本地模型辅助程序（llama.cpp）
+Setting up the voice engine	设置语音引擎
+Setting up the voice engine environment (big download, be patient)	设置语音引擎环境（下载量大，请耐心）
+Setting up the voice engine's toolbox (big download, be patient)	设置语音引擎的工具箱（下载量大，请耐心）
+Setting up the web interface (frontend)	设置网页界面（前端）
+Setting up what this PC lacks ({1}) from conda-forge - a minute or two...	正在从 conda-forge 补上这台电脑缺少的（{1}）——一两分钟...
+Settings -> Connection).	设置 -> 连接 中加载）。
+Settings : {1} context, {2} memory, voice on the Apple chip's accelerator, Metal build	设置：{1} 上下文，{2} 内存，语音使用 Apple 芯片加速器，Metal 版
+Shutting down Amadeus...	正在关闭 Amadeus...
+Shutting down from Settings...	正在从设置中关闭...
+Something unexpected went wrong.	发生了意外错误。
+Speech model for videos ready.	视频用的语音识别模型就绪。
+Start Amadeus now? Type Y (yes) or N (no, I'll start it later)	现在启动 Amadeus？输入 Y（是）或 N（否，我之后再启动）
+starting in the background	正在后台启动
+Starting without her model (load it in Settings -> Connection).	不带她的模型启动（可在 设置 -> 连接 中加载）。
+STEP	步骤
+Step	步骤
+Still waiting for Apple's developer tools.	仍在等待 Apple 开发者工具。
+Stopped - nothing was changed. Free up some space, then run the installer again.	已停止——什么都没改动。请腾出一些空间，然后再运行安装程序。
+STOPPED:	已停止：
+Switching the voice engine to the tested version ({1})...	正在把语音引擎切换到测试过的版本（{1}）...
+The app	应用
+The card has room now - starting her model.	显卡现在有空间了——正在启动她的模型。
+The download was interrupted - trying again shortly (it continues where it stopped)...	下载中断了——稍后重试（会从中断处继续）...
+The memory environment's Python was not found: {1}	找不到记忆环境的 Python：{1}
+The Miniforge install step failed.	Miniforge 安装步骤失败。
+the new defaults later in Settings, with one click.	新的默认值，一键即可。
+The speech model for videos could not be downloaded now - Amadeus downloads it herself later.	视频用的语音识别模型现在无法下载——Amadeus 之后会自己下载。
+The voice patch files are missing from the project.	项目中缺少语音补丁文件。
+The web page	网页
+The web page changed - preparing it again...	网页有变化——正在重新准备...
+The web page could not be prepared - using its developer version (a little slower, works the same). Details: {1}	网页无法准备——改用开发者版本（稍慢，功能一样）。详情：{1}
+then choose Built-in in Settings -> Connection and press Refresh list.	然后在 设置 -> 连接 中选择“内置”并按“刷新列表”。
+This graphics card is too old for the voice engine's graphics-card build (it needs an RTX 20 / GTX 16 series card or newer). Her voice will run on the processor - it works, just slower.	这块显卡对语音引擎的显卡版来说太旧（需要 RTX 20 / GTX 16 系列或更新）。她的语音将在处理器上运行——可以用，只是更慢。
+This graphics card is too old for the voice engine's graphics-card version (it needs an RTX 20 / GTX 16 series card or newer). Her voice will run on the processor instead - it works, just slower.	这块显卡对语音引擎的显卡版本来说太旧（需要 RTX 20 / GTX 16 系列或更新）。她的语音将改在处理器上运行——可以用，只是更慢。
+This installer is for Linux (this machine is: {1}).	这个安装程序用于 Linux（这台机器是：{1}）。
+This installer is for Mac OS (this machine is: {1}).	这个安装程序用于 Mac OS（这台机器是：{1}）。
+This PC has an NVIDIA graphics card, but NVIDIA's own driver is not installed (or not working), so her model cannot use the card yet.	这台电脑有 NVIDIA 显卡，但 NVIDIA 自己的驱动没有安装（或不工作），所以她的模型还不能使用显卡。
+This PC has neither curl nor wget (one of them is needed to download anything).	这台电脑既没有 curl 也没有 wget（下载任何东西都需要其中之一）。
+To run a GGUF model on this Mac instead: put the file in	要改在这台 Mac 上运行 GGUF 模型：把文件放到
+To run a GGUF model on this PC instead: put the file in	要改在这台电脑上运行 GGUF 模型：把文件放到
+To START Amadeus, double-click this file:	要启动 Amadeus，双击这个文件：
+To START Amadeus: choose "Amadeus" in your app menu, or run:	要启动 Amadeus：在应用菜单中选择“Amadeus”，或运行：
+toolbox '{1}' already present - reusing it.	工具箱“{1}”已存在——直接使用。
+Trying llama.cpp's Vulkan build instead...	改试 llama.cpp 的 Vulkan 版...
+Trying the general (Vulkan) version of llama.cpp instead...	改试 llama.cpp 的通用（Vulkan）版本...
+Type a number and press Enter (just Enter = English)	输入数字并按 Enter（直接按 Enter = 英语）
+Type a number and press Enter (just Enter = English):	输入数字并按 Enter（直接按 Enter = 英语）：
+Type A or B	输入 A 或 B
+Type A to install the local model anyway, or B for option B	输入 A 仍然安装本地模型，或输入 B 选择选项 B
+Type B to continue with option B, or Q to stop here (free up space, then run the installer again)	输入 B 继续选项 B，或输入 Q 在此停止（腾出空间后再运行安装程序）
+Type R + Enter to restart her, B + Enter to restart only her brain (the backend).	输入 R + Enter 重启她，B + Enter 只重启她的大脑（后端）。
+Unpacking llama.cpp ({1})...	正在解压 llama.cpp（{1}）...
+Updated to the latest version (now following the main branch).	已更新到最新版本（现在跟随 main 分支）。
+Updated to the latest version (your own settings and personality were kept).	已更新到最新版本（保留了你自己的设置和性格）。
+Updated to the latest version on the {1} branch.	已更新到 {1} 分支的最新版本。
+Updated to the latest version.	已更新到最新版本。
+Vision file not downloaded - she works, but cannot see pictures or videos until you run the installer again: {1}	视觉文件没有下载——她能工作，但在你再次运行安装程序前看不了图片或视频：{1}
+Voice engine is on the tested version.	语音引擎是测试过的版本。
+Voice engine mode: this is an Intel Mac - her voice will run on the CPU (a little slower than on Apple chips).	语音引擎模式：这是 Intel Mac——她的语音将在 CPU 上运行（比 Apple 芯片稍慢）。
+Voice engine mode: this Mac has an Apple chip - her voice will use its built-in accelerator (MPS).	语音引擎模式：这台 Mac 有 Apple 芯片——她的语音将使用内置加速器（MPS）。
+Voice hardware: Apple-chip accelerator (MPS) - her voice will run at full speed.	语音硬件：Apple 芯片加速器（MPS）——她的语音将全速运行。
+Voice hardware: CPU mode (PyTorch {1}). On this Mac her voice works but takes a few extra seconds per line.	语音硬件：CPU 模式（PyTorch {1}）。在这台 Mac 上她的语音可以用，但每句多花几秒。
+Voice language model already present.	语音语言模型已存在。
+Voice language model pre-downloaded.	语音语言模型已预下载。
+Voice models are in place.	语音模型已就位。
+Voice packages installed (Japanese text helper skipped - voice still works).	语音包已安装（跳过了日语文本辅助——语音仍然可用）。
+Voice patches applied (no C compiler needed for them).	语音补丁已应用（不需要 C 编译器）。
+Voice patches applied.	语音补丁已应用。
+Voice text data for Western-script words is in place.	西文单词的语音文本数据已就位。
+WARNING: 'extra-req' install had issues - continuing (see {1}).	警告：'extra-req' 安装有问题——继续（见 {1}）。
+WARNING: could not pre-download the voice language model right now.	警告：现在无法预下载语音语言模型。
+WARNING: FFmpeg could not be set up - her voice may not work, and videos need it. Run the installer again later.	警告：无法设置 FFmpeg——她的语音可能不工作，视频也需要它。请稍后再运行安装程序。
+WARNING: her built-in model cannot start - {1}. Run the installer again to finish setting it up.	警告：她的内置模型无法启动——{1}。请再运行安装程序完成设置。
+WARNING: her memory could not be set up (details: {1}). She works without long-term memory for now.	警告：她的记忆无法设置（详情：{1}）。她暂时在没有长期记忆的情况下工作。
+WARNING: her memory could not be set up (details: {1}). She works without long-term memory for now; Amadeus tries again at the next start.	警告：她的记忆无法设置（详情：{1}）。她暂时在没有长期记忆的情况下工作；Amadeus 下次启动时会再试。
+WARNING: her memory needs Python {1}.{2}+, and its own '{3}' environment was not found. She works without long-term memory; running the installer again fixes this.	警告：她的记忆需要 Python {1}.{2}+，但找不到它自己的“{3}”环境。她在没有长期记忆的情况下工作；再运行安装程序即可修复。
+WARNING: her memory stopped (exit {1}) - she works without long-term memory until the next start. Details: {2}	警告：她的记忆停止了（退出码 {1}）——在下次启动前她没有长期记忆。详情：{2}
+WARNING: macOS {1} is older than macOS 12 - Amadeus is known to work best on macOS 12 or newer. Continuing, but you may hit issues.	警告：macOS {1} 比 macOS 12 旧——Amadeus 在 macOS 12 或更新版本上效果最好。继续，但可能遇到问题。
+WARNING: PyTorch could not be loaded in the voice toolbox - her voice will not work until this is fixed. Send the log.	警告：语音工具箱中无法加载 PyTorch——修好前她的语音无法工作。请发送日志。
+WARNING: the startup smoke test did not pass. If Amadeus fails to start later, send the log.	警告：启动冒烟测试没有通过。如果之后 Amadeus 启动失败，请发送日志。
+WARNING: the web page's package download did not finish.	警告：网页的包下载没有完成。
+Web page already prepared - skipping.	网页已准备好——跳过。
+Web page ready.	网页就绪。
+When a game needs the graphics memory, start her with 'Start Amadeus without her model.bat' instead (load her model later in Settings -> Connection, or unload it there any time).	当游戏需要显存时，请改用“Start Amadeus without her model.bat”启动她（之后在 设置 -> 连接 中加载她的模型，或随时在那里卸载）。
+When another program needs the graphics card, start "Amadeus (without her model)"	当其他程序需要显卡时，请改为启动“Amadeus (without her model)”
+When another program needs the memory, start her with start_macos_no_model.command instead	当其他程序需要内存时，请改用 start_macos_no_model.command 启动她
+winget could not install Miniconda here - falling back to Anaconda's official download (the same program, just a different door).	winget 无法在这里安装 Miniconda——改用 Anaconda 的官方下载（同一个程序，只是换个入口）。
+winget was not found. It is built into Windows 10/11. Update Windows, or install 'App Installer' from the Microsoft Store, then run this script again.	没有找到 winget。它内置于 Windows 10/11。请更新 Windows，或从 Microsoft Store 安装“应用安装程序”，然后再运行这个脚本。
+with lots of improvements.	并带来许多改进。
+Your existing Amadeus copy has changes of its own and cannot be updated automatically.	你现有的 Amadeus 副本有自己的修改，无法自动更新。
+Your existing Amadeus copy has diverged and cannot be updated automatically.	你现有的 Amadeus 副本已分叉，无法自动更新。
+Your graphics card could not run the voice engine's graphics-card build. Switching her voice to the processor (works, just slower)...	你的显卡无法运行语音引擎的显卡版。正在把她的语音切换到处理器（可以用，只是更慢）...
+Your graphics card could not run the voice engine's graphics-card version. Switching her voice to the processor (works, just slower)...	你的显卡无法运行语音引擎的显卡版本。正在把她的语音切换到处理器（可以用，只是更慢）...
+Your graphics card is busy: {1} GB free, her model needs about {2} GB.	你的显卡很忙：可用 {1} GB，她的模型需要约 {2} GB。
+your model. Pick your model from the chips (or type its name)	模型。从标签中选择你的模型（或输入名称）
+{1} downloaded and checked.	{1} 已下载并检查。
+{1}/start_linux.sh	{1}/start_linux.sh
+{1}/start_macos.command	{1}/start_macos.command

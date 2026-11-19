@@ -100,10 +100,20 @@ def _close_line() -> None:
         _line_open = False
 
 
+def _tr(text: str) -> str:
+    """The line in the user's language (backend/language.txt +
+    scripts/lang/<code>.tsv, lang_tsv.py); English on any problem."""
+    try:
+        from lang_tsv import tr
+        return tr(text)
+    except Exception:
+        return text
+
+
 def say(text: str = "", file=None) -> None:
-    """A line for the user (and the log)."""
+    """A line for the user (and the log - always in English)."""
     _close_line()
-    print(text, file=file or sys.stdout, flush=True)
+    print(_tr(text), file=file or sys.stdout, flush=True)
     if text.strip():
         note(text.strip())
 
@@ -112,7 +122,7 @@ def begin(text: str) -> None:
     """Start a status line ("  Her voice ..."); end() finishes it."""
     global _line_open
     _close_line()
-    print(f"  {text} ...", end="", flush=True)
+    print(f"  {_tr(text)} ...", end="", flush=True)
     _line_open = True
     note(text + " ...")
 
@@ -120,10 +130,10 @@ def begin(text: str) -> None:
 def end(result: str) -> None:
     global _line_open
     if _line_open:
-        print(f" {result}", flush=True)
+        print(f" {_tr(result)}", flush=True)
         _line_open = False
     else:
-        print(f"  {result}", flush=True)
+        print(f"  {_tr(result)}", flush=True)
     note("  -> " + result)
 
 

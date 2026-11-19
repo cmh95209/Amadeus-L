@@ -306,7 +306,7 @@ if ($InstallDir -and -not (Test-InstallDirOk $InstallDir)) {
     Write-Host ("INSTALL STOPPED: '" + $InstallDir + "' is not a full folder path.") -ForegroundColor Red
     Write-Host "Use a full path such as D:\Amadeus after -InstallDir, or leave -InstallDir out" -ForegroundColor Yellow
     Write-Host "to install in your user folder (" (Join-Path $env:USERPROFILE "Amadeus") ")." -ForegroundColor Yellow
-    Read-Host "Press Enter to close this window" | Out-Null
+    Read-Host (T "Press Enter to close this window") | Out-Null
     exit 1
 }
 if (-not $InstallDir) { $InstallDir = Join-Path $env:USERPROFILE "Amadeus" }
@@ -343,7 +343,7 @@ function Write-LogLines($lines, $file = $LogPath){
     try { [IO.File]::AppendAllText($file, (($lines -join "`r`n") + "`r`n"), $Utf8NoBom) } catch {}
 }
 function Log($msg, $color="Gray"){
-    Write-Host $msg -ForegroundColor $color
+    Write-Host (T $msg) -ForegroundColor $color
     Write-LogLines @(("{0}  {1}" -f (Get-Date -Format 'HH:mm:ss'), $msg))
 }
 function Write-LogOnly($msg){ Write-LogLines @(("{0}  {1}" -f (Get-Date -Format 'HH:mm:ss'), $msg)) }
@@ -352,9 +352,10 @@ function Write-LogOnly($msg){ Write-LogLines @(("{0}  {1}" -f (Get-Date -Format 
 # Invoke-Tool shows the current program's progress under it.
 $TotalSteps = 11
 function Step($n,$title){
-    Log ""; Log ("==== STEP $n of $TotalSteps : $title ====") "Cyan"
+    Log ""; Write-Host ("==== " + (T "STEP") + " $n / $TotalSteps : " + (T $title) + " ====") -ForegroundColor Cyan
+    Write-LogOnly ("==== STEP $n of $TotalSteps : $title ====")
     $ProgressPreference = "Continue"
-    Write-Progress -Id 1 -Activity "Installing Amadeus" -Status ("Step $n of $TotalSteps : $title") `
+    Write-Progress -Id 1 -Activity (T "Installing Amadeus") -Status ((T "Step") + " $n / $TotalSteps : " + (T $title)) `
         -PercentComplete ([int]([math]::Min(100, [math]::Max(0, $n) * 100 / $TotalSteps)))
 }
 
@@ -488,15 +489,154 @@ function Resolve-Exe($name){
     if ($c) { return $c.Source }
     return $name
 }
+# ---------- The user's language (multi-language, 2026-11-19) ----------
+# The very first question: which language this window (and Amadeus) uses.
+# The lines come from scripts/lang/<code>.tsv ("English<TAB>translation",
+# the same files the launcher reads); the choice is saved as
+# backend\language.txt, the app's own setting. The log file stays English
+# (it is for support). Any problem: English, never a stop.
+# Native names are written as \u escapes: this file must stay plain ASCII
+# for Windows PowerShell 5.1.
+$InstallLanguages = @(
+    @("en", "English", "English"),
+    @("zh", "Simplified Chinese", "\u4e2d\u6587"),
+    @("ja", "Japanese", "\u65e5\u672c\u8a9e"),
+    @("ko", "Korean", "\ud55c\uad6d\uc5b4"),
+    @("es", "Spanish", "Espa\u00f1ol"),
+    @("fr", "French", "Fran\u00e7ais"),
+    @("de", "German", "Deutsch"),
+    @("pt", "Portuguese", "Portugu\u00eas"),
+    @("ru", "Russian", "\u0420\u0443\u0441\u0441\u043a\u0438\u0439"),
+    @("ar", "Arabic", "\u0627\u0644\u0639\u0631\u0628\u064a\u0629"),
+    @("hi", "Hindi", "\u0939\u093f\u0928\u094d\u0926\u0940"),
+    @("ta", "Tamil", "\u0ba4\u0bae\u0bbf\u0bb4\u0bcd"),
+    @("ms", "Malay", "Bahasa Melayu"),
+    @("id", "Indonesian", "Bahasa Indonesia"),
+    @("th", "Thai", "\u0e44\u0e17\u0e22"),
+    @("vi", "Vietnamese", "Ti\u1ebfng Vi\u1ec7t")
+)
+$script:LangCode = "en"
+$script:LangExact = New-Object 'System.Collections.Generic.Dictionary[string,string]'
+$script:LangPatterns = New-Object 'System.Collections.Generic.List[object]'
+
+function Get-LangLines($code){
+    # A re-run or -Source: the project's own copy; else this branch on GitHub.
+    $paths = @(Join-Path $InstallDir ("Amadeus-Project\scripts\lang\" + $code + ".tsv"))
+    if ($Source) { $paths += (Join-Path $Source ("scripts\lang\" + $code + ".tsv")) }
+    foreach ($p in $paths) {
+        if (Test-Path $p) { try { return [IO.File]::ReadAllLines($p, [Text.Encoding]::UTF8) } catch {} }
+    }
+    $tmp = Join-Path $InstallDir ("lang-" + $code + ".tsv")
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -UseBasicParsing -Uri ("https://raw.githubusercontent.com/cmh95209/Amadeus-Project/" + $Branch + "/scripts/lang/" + $code + ".tsv") -OutFile $tmp
+        $lines = [IO.File]::ReadAllLines($tmp, [Text.Encoding]::UTF8)
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        return $lines
+    } catch { Remove-Item $tmp -Force -ErrorAction SilentlyContinue; return @() }
+}
+
+function Set-InstallLanguage($code){
+    $script:LangCode = $code
+    $script:LangExact.Clear(); $script:LangPatterns.Clear()
+    if ($code -eq "en") { return }
+    foreach ($line in (Get-LangLines $code)) {
+        if (-not $line -or $line.StartsWith("#") -or -not $line.Contains("`t")) { continue }
+        $i = $line.IndexOf("`t")
+        $en = ($line.Substring(0, $i) -replace '\s+', ' ').Trim()
+        $tr = $line.Substring($i + 1).Trim()
+        if (-not $en -or -not $tr -or $en -ceq $tr) { continue }
+        if ($en -match '\{\d+\}') {
+            $slots = @(); $rx = "^"
+            foreach ($part in [regex]::Split($en, '(\{\d+\})')) {
+                if ($part -match '^\{(\d+)\}$') { $slots += $Matches[1]; $rx += "(.+?)" }
+                else { $rx += [regex]::Escape($part) }
+            }
+            $script:LangPatterns.Add(@(($rx + '$'), $slots, $tr, $en.Length))
+        } else { $script:LangExact[$en] = $tr }
+    }
+    # the most specific line (longest English) is tried first
+    $sorted = @($script:LangPatterns | Sort-Object -Property @{ Expression = { $_[3] }; Descending = $true })
+    $script:LangPatterns.Clear()
+    foreach ($p in $sorted) { $script:LangPatterns.Add($p) }
+}
+
+# One shown line in the user's language (its English when there is none).
+function T($text){
+    if ($script:LangCode -eq "en" -or -not $text) { return $text }
+    $s = [string]$text
+    if (-not $s.Trim()) { return $s }
+    $lead = $s.Substring(0, $s.Length - $s.TrimStart().Length)
+    $trail = $s.Substring($s.TrimEnd().Length)
+    $key = ($s -replace '\s+', ' ').Trim()
+    if ($script:LangExact.ContainsKey($key)) { return $lead + $script:LangExact[$key] + $trail }
+    foreach ($p in $script:LangPatterns) {
+        $m = [regex]::Match($key, $p[0])
+        if ($m.Success) {
+            $out = $p[2]
+            for ($k = 0; $k -lt $p[1].Count; $k++) { $out = $out.Replace("{" + $p[1][$k] + "}", $m.Groups[$k + 1].Value) }
+            return $lead + $out + $trail
+        }
+    }
+    return $s
+}
+
+function Select-InstallLanguage {
+    # A re-run keeps the language already saved (Settings can change it).
+    $saved = Join-Path $InstallDir "Amadeus-Project\backend\language.txt"
+    if (Test-Path $saved) {
+        $code = ""
+        try {
+            foreach ($l in [IO.File]::ReadAllLines($saved, [Text.Encoding]::UTF8)) {
+                $s = $l.Trim()
+                if ($s -and -not $s.StartsWith("#")) { $code = $s.Split()[0].ToLower(); break }
+            }
+        } catch {}
+        if ($InstallLanguages | Where-Object { $_[0] -eq $code }) { Set-InstallLanguage $code; return }
+    }
+    Write-Host ""
+    Write-Host "  Choose your language:" -ForegroundColor Cyan
+    for ($i = 0; $i -lt $InstallLanguages.Count; $i++) {
+        $row = $InstallLanguages[$i]
+        $own = [regex]::Unescape($row[2])
+        $label = if ($own -eq $row[1]) { $own } else { $own + "  (" + $row[1] + ")" }
+        Write-Host ("  {0,2}) {1}" -f ($i + 1), $label)
+    }
+    $valid = 1..$InstallLanguages.Count | ForEach-Object { [string]$_ }
+    while ($true) {
+        $a = (Read-Host "  Type a number and press Enter (just Enter = English)").Trim()
+        if (-not $a) { $a = "1" }
+        if ($valid -contains $a) { break }
+    }
+    $code = $InstallLanguages[[int]$a - 1][0]
+    Write-LogOnly ("Language: " + $code)
+    Set-InstallLanguage $code
+    if ($code -ne "en" -and $script:LangExact.Count -eq 0) {
+        Write-Host "  (This language's installer text could not be downloaded - the installer continues in English. Amadeus herself will use your language.)" -ForegroundColor Yellow
+    }
+}
+
+# After the project is downloaded: the app starts in the chosen language.
+function Save-InstallLanguage($proj){
+    $path = Join-Path $proj "backend\language.txt"
+    if ((Test-Path $path) -or -not (Test-Path (Join-Path $proj "backend"))) { return }
+    $names = ($InstallLanguages | ForEach-Object { $_[0] + " " + $_[1] }) -join ", "
+    $text = $script:LangCode + "`n# Amadeus display language: change the code on the first line, save,`n" +
+            "# then refresh the Amadeus page. Unknown or empty = English.`n# " + $names + "`n"
+    try { [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding $false)) } catch {}
+}
+
 function Die($msg, $extraFile = $null){
     Stop-BackgroundDownloads   # its ".part" files stay: the next run continues them
-    Log "" "Red"; Log ("INSTALL STOPPED: " + $msg) "Red"
+    Log "" "Red"
+    Write-Host ((T "INSTALL STOPPED:") + " " + (T $msg)) -ForegroundColor Red
+    Write-LogOnly ("INSTALL STOPPED: " + $msg)
     Log ("Need help? Ask on our Discord: " + $DiscordHelpUrl + " - and send the file " + $LogPath + ".") "Yellow"
     if ($extraFile -and (Test-Path $extraFile)) {
         Log ("  (and this one too: " + $extraFile + ")") "Yellow"
     }
     Copy-InstallLogToProject (Join-Path $InstallDir "Amadeus-Project")
-    Read-Host "Press Enter to close this window" | Out-Null
+    Read-Host (T "Press Enter to close this window") | Out-Null
     exit 1
 }
 # The installer's log, copied into the app's logs folder so it stays with her
@@ -1402,7 +1542,7 @@ $DownloadRetryDelaySeconds = 15
 # empty/invalid answers so a closed input can never loop forever.
 function Read-Answer($prompt, $valid){
     for ($i = 0; $i -lt 20; $i++) {
-        $a = Read-Host $prompt
+        $a = Read-Host (T $prompt)
         if ($null -eq $a) { $a = "" }
         $a = $a.Trim().ToUpper()
         if ($valid -contains $a) { Log ("  (answer: " + $a + ")"); return $a }
@@ -1432,7 +1572,7 @@ function Confirm-LocalModel($hw){
         } else {
             Log ("  On this PC her voice has to run on the processor, which needs at least " + $TierTable.voice_on_cpu_min_ram_gb + " GB of normal memory (this PC has " + $hw.ram_gb + " GB). So Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).") "Yellow"
         }
-        Read-Host "Press Enter to continue with option B" | Out-Null
+        Read-Host (T "Press Enter to continue with option B") | Out-Null
         return (New-CustomChoice)
     }
     if ($hw.choice.warning) {
@@ -1445,7 +1585,7 @@ function Confirm-LocalModel($hw){
         if ((Read-Answer "Type B to continue with option B, or Q to stop here (free up space, then run the installer again)" @("B","Q")) -eq "Q") {
             Log "Stopped - nothing was changed. Free up some space, then run the installer again." "Yellow"
             Copy-InstallLogToProject (Join-Path $InstallDir "Amadeus-Project")
-            Read-Host "Press Enter to close this window" | Out-Null
+            Read-Host (T "Press Enter to close this window") | Out-Null
             exit 0
         }
         return (New-CustomChoice)
@@ -1989,7 +2129,7 @@ function Offer-StartAmadeus($proj){
     $ProgressPreference = "Continue"
     Write-Progress -Id 1 -Activity "Installing Amadeus" -Completed
     $bat = Join-Path $proj "start_windows.bat"
-    if (-not (Test-Path $bat)) { Read-Host "Press Enter to close this window" | Out-Null; return }
+    if (-not (Test-Path $bat)) { Read-Host (T "Press Enter to close this window") | Out-Null; return }
     Log ""
     if ((Read-Answer "Start Amadeus now? Type Y (yes) or N (no, I'll start it later)" @("Y","N")) -eq "Y") {
         try {
@@ -2001,7 +2141,7 @@ function Offer-StartAmadeus($proj){
     } else {
         Log ("  To start her later, double-click: " + $bat)
     }
-    Read-Host "Press Enter to close this window" | Out-Null
+    Read-Host (T "Press Enter to close this window") | Out-Null
 }
 
 if ($HardwareCheckOnly) {
@@ -2019,6 +2159,7 @@ if ($LlmScreensOnly) { $SkipLlmDownload = $true }
 
 try {
 
+    Select-InstallLanguage
     Log "============================================================" "Green"
     Log ("  AMADEUS INSTALLER " + $InstallerVersion + "  (safe to re-run - it resumes where it stopped)") "Green"
     Log "============================================================" "Green"
@@ -2053,7 +2194,7 @@ try {
     $ReplaceDefaults = Confirm-NewDefaults (Join-Path $InstallDir "Amadeus-Project")
     Log ""
     Log "Everything else installs now. It downloads several gigabytes, so give it time." "Yellow"
-    Read-Host "Press Enter to begin" | Out-Null
+    Read-Host (T "Press Enter to begin") | Out-Null
     Start-BackgroundDownloads $llmChoice $hw
 
     # ---------- STEP 1: winget ----------
@@ -2352,6 +2493,7 @@ try {
     Log ("  Python environments: " + $EnvApp + ", " + $EnvCm + ", " + $EnvVoice)
 
     # ---------- STEP 4: voice engine ----------
+    Save-InstallLanguage (Join-Path $InstallDir "Amadeus-Project")
     Step 4 "Downloading the voice engine (GPT-SoVITS)"
     $gpt = Join-Path $proj "GPT-SoVITS"
     Ensure-Clone $GptSovitsUrl $gpt $null @("requirements.txt","extra-req.txt")

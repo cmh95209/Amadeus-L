@@ -1,0 +1,329 @@
+# Amadeus installers + launcher, es. One line: English<TAB>translation.
+'Test connection' - the dot turns green when she can reach	'Probar conexión' - el punto se pone verde cuando ella puede conectar
+(a couple of GB - this is normal; keep the window open)	(un par de GB - es normal; deja la ventana abierta)
+(a large download - this is normal; keep the window open)	(una descarga grande - es normal; deja la ventana abierta)
+(a package needs a C compiler - adding conda-forge's to the voice toolbox and trying again...)	(un paquete necesita un compilador de C - añadiendo el de conda-forge a la caja de herramientas de voz y reintentando...)
+(adding the helper library llama.cpp needs (libgomp) from conda-forge...)	(añadiendo la biblioteca auxiliar que necesita llama.cpp (libgomp) desde conda-forge...)
+(and this one too: {1})	(y este también: {1})
+(asking Git-LFS to identify itself said: {1})	(al pedir a Git-LFS que se identificara dijo: {1})
+(asking the tool to identify itself said: {1})	(al pedir a la herramienta que se identificara dijo: {1})
+(Closing an earlier Amadeus that was still running.)	(Cerrando un Amadeus anterior que seguía en marcha.)
+(Conda was also added to your terminal's startup file - undo with 'conda init --reverse'.)	(Conda también se añadió al archivo de inicio de tu terminal - deshazlo con 'conda init --reverse'.)
+(copy anything you want back from there).	(copia de ahí lo que quieras recuperar).
+(Could not add Amadeus to the app menu - start her with start_linux.sh instead.)	(No se pudo añadir Amadeus al menú de apps - iníciala con start_linux.sh.)
+(Details: {1}/logs/memory-setup.log)	(Detalles: {1}/logs/memory-setup.log)
+(full package list failed - retrying without the optional Japanese text helper)	(falló la lista completa de paquetes - reintentando sin el ayudante opcional de texto japonés)
+(her voice files arrived as Git-LFS placeholders - fetching the real files...)	(sus archivos de voz llegaron como marcadores de Git-LFS - obteniendo los archivos reales...)
+(If she is offline at first start, her voice will retry the download automatically.)	(Si está sin conexión al primer inicio, su voz reintentará la descarga sola.)
+(If the page does not open later, re-run this installer - it resumes where it stopped.)	(Si luego la página no abre, vuelve a ejecutar este instalador - sigue donde se quedó.)
+(Install log saved to: {1})	(Registro de instalación guardado en: {1})
+(load her model later in Settings -> Connection, or unload it there any time).	(carga su modelo luego en Ajustes -> Conexión, o descárgalo ahí cuando quieras).
+(moved this copy from the old feature branch to main)	(se movió esta copia de la antigua rama de función a main)
+(Not a git folder - cannot update it; using it as is.)	(No es una carpeta git - no se puede actualizar; se usa tal cual.)
+(note: the local copy is not on the expected branch - continuing on what it has)	(nota: la copia local no está en la rama esperada - se continúa con lo que tiene)
+(the downloaded archive contains:)	(el archivo descargado contiene:)
+(the FFmpeg download did not work - trying conda-forge instead, a few minutes...)	(la descarga de FFmpeg falló - probando conda-forge, unos minutos...)
+(the project's history was cleaned up - moved this copy onto it)	(se limpió el historial del proyecto - se movió esta copia a él)
+(This is Linux inside Windows (WSL) - fine for testing; on Windows itself, install_windows.ps1 is the usual way.)	(Esto es Linux dentro de Windows (WSL) - bien para pruebas; en Windows mismo, lo habitual es install_windows.ps1.)
+(this Mac does not offer 'unzip' yet - using the built-in bsdtar...)	(este Mac aún no tiene 'unzip' - usando el bsdtar integrado...)
+(trying your Homebrew first...)	(probando primero tu Homebrew...)
+(what the setup attempts reported:)	(lo que informaron los intentos de instalación:)
+(You can switch to your own model or a cloud service any time in Settings -> Connection.)	(Puedes cambiar a tu propio modelo o a un servicio en la nube cuando quieras en Ajustes -> Conexión.)
+- a cloud model service (e.g. OpenRouter or OpenAI), or	- un servicio de modelos en la nube (p. ej. OpenRouter u OpenAI), o
+- a local model server on this PC (e.g. KoboldCpp, Unsloth	- un servidor de modelos local en este PC (p. ej. KoboldCpp, Unsloth
+1) Double-click this file to START Amadeus:	1) Haz doble clic en este archivo para INICIAR Amadeus:
+1) START Amadeus: choose "Amadeus" in your app menu, or run:	1) INICIAR Amadeus: elige "Amadeus" en el menú de apps, o ejecuta:
+2) When she opens in your browser, read her introduction message -	2) Cuando se abra en tu navegador, lee su mensaje de presentación -
+3) (Shortcut) You can also open Settings -> Connection and click	3) (Atajo) También puedes abrir Ajustes -> Conexión y pulsar
+3) (Shortcut) You can also open Settings -> Connection, enter the	3) (Atajo) También puedes abrir Ajustes -> Conexión, escribir la
+A dialog will appear: click 'Install' and wait for it to finish.	Aparecerá un diálogo: pulsa 'Instalar' y espera a que termine.
+A local model needs a separate graphics card. On this PC she would think far too slowly, so Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	Un modelo local necesita una tarjeta gráfica dedicada. En este PC pensaría demasiado despacio, así que Amadeus usará la opción B: conectas tú un modelo (un servicio en la nube como OpenRouter, o tu propio servidor de modelos).
+A) Install and set up a local model automatically (private, runs on this Mac, no account needed)	A) Instalar y configurar un modelo local automáticamente (privado, funciona en este Mac, sin cuenta)
+A) Install and set up a local model automatically (private, runs on this PC, no account needed)	A) Instalar y configurar un modelo local automáticamente (privado, funciona en este PC, sin cuenta)
+Added Amadeus to your app menu.	Amadeus se añadió a tu menú de apps.
+again. Or type S to start her model anyway (she will be slower until the	de nuevo. O escribe S para iniciar su modelo igualmente (irá más lenta hasta que la
+All done	Todo listo
+ALL DONE!	¡TODO LISTO!
+Already have Amadeus-Project - checking for updates.	Amadeus-Project ya existe - buscando actualizaciones.
+Already have llama.cpp {1} ({2}) - skipping.	llama.cpp {1} ({2}) ya existe - se omite.
+Already have {1} (checked) - skipping.	{1} ya existe (comprobado) - se omite.
+Amadeus is online	Amadeus está en línea
+Amadeus is starting in her own window (the first start takes a little longer). You can close this one.	Amadeus se inicia en su propia ventana (el primer inicio tarda un poco más). Puedes cerrar esta.
+Amadeus is starting. (Details: {1})	Amadeus se está iniciando. (Detalles: {1})
+and paste its API key, if your provider has one.	y pega su clave API, si tu proveedor tiene una.
+App toolbox ready (startup smoke test passed).	Caja de herramientas de la app lista (prueba de arranque superada).
+Apple developer tools are not installed yet - asking macOS for them...	Las herramientas de desarrollo de Apple aún no están instaladas - pidiéndoselas a macOS...
+Apple developer tools installed - continuing.	Herramientas de desarrollo de Apple instaladas - continuando.
+Apple developer tools: present.	Herramientas de desarrollo de Apple: presentes.
+B) I'll do it myself (choose this if using a cloud model or your own local model)	B) Lo haré yo (elige esto si usas un modelo en la nube o tu propio modelo local)
+Backend ready (startup smoke test passed).	Backend listo (prueba de arranque superada).
+building toolbox '{1}' (Python {2}) - this can take a minute...	creando la caja de herramientas '{1}' (Python {2}) - puede tardar un minuto...
+Built-in model settings saved: {1}	Ajustes del modelo integrado guardados: {1}
+card has room), or N to start without it (load it later in	tarjeta tenga sitio), o N para iniciar sin él (cárgalo luego en
+Checking that PyTorch can use your GPU	Comprobando que PyTorch puede usar tu GPU
+Checking the downloaded file (about a minute for the big ones)...	Comprobando el archivo descargado (un minuto para los grandes)...
+Checking the voice engine's hardware support	Comprobando el soporte de hardware del motor de voz
+Checking the Windows installer tool (winget)	Comprobando la herramienta de instalación de Windows (winget)
+Checking your Mac	Comprobando tu Mac
+Checking your PC	Comprobando tu PC
+Chip : {1}	Chip : {1}
+Choose N to keep your own versions. You can still switch to	Elige N para conservar tus versiones. Aún podrás cambiar a
+Chosen: option B - you connect a model yourself in Settings after the install.	Elegido: opción B - conectas tú un modelo en Ajustes tras la instalación.
+Close games or other programs for full speed, then press Enter to check	Cierra juegos u otros programas para ir a toda velocidad y pulsa Intro para comprobar
+Conda not found - installing Miniforge (the community conda build, ~85 MB)...	Conda no encontrado - instalando Miniforge (el conda de la comunidad, ~85 MB)...
+Conda not found - installing Miniforge (the community conda build, ~90 MB)...	Conda no encontrado - instalando Miniforge (el conda de la comunidad, ~90 MB)...
+Conda terms of service handled (required by newer conda before it will build environments unattended).	Términos de servicio de Conda gestionados (el conda reciente los exige antes de crear entornos sin supervisión).
+Conda: found your existing install at {1} - reusing it.	Conda: se encontró tu instalación en {1} - se reutiliza.
+Could not build the '{1}' toolbox.	No se pudo crear la caja de herramientas '{1}'.
+Could not download her voice models.	No se pudieron descargar sus modelos de voz.
+Could not fast-forward (local commits present?) - leaving it as is.	No se pudo avanzar (¿commits locales?) - se deja como está.
+Could not find Miniconda after installing it. Look at this window and the log.	No se encuentra Miniconda tras instalarlo. Mira esta ventana y el registro.
+Could not install PyTorch.	No se pudo instalar PyTorch.
+Could not pre-fetch all of the voice text data right now (is your internet reachable?). No problem - Amadeus checks again every time she starts, and the voice engine fetches anything still missing the first time she speaks such a word.	Ahora no se pudieron precargar todos los datos de texto de voz (¿hay internet?). No pasa nada: Amadeus vuelve a comprobarlo en cada inicio, y el motor de voz obtiene lo que falte la primera vez que dice esa palabra.
+Could not set up Amadeus' own Miniconda. Look at this window and the log.	No se pudo configurar el Miniconda propio de Amadeus. Mira esta ventana y el registro.
+Could not set up Git LFS. Look at this window and the log.	No se pudo configurar Git LFS. Mira esta ventana y el registro.
+Could not set up Git-LFS (the details above explain why).	No se pudo configurar Git-LFS (los detalles de arriba explican por qué).
+Could not set up Git-LFS (the line above explains why).	No se pudo configurar Git-LFS (la línea de arriba explica por qué).
+Could not set up Git. Look at this window and the log.	No se pudo configurar Git. Mira esta ventana y el registro.
+Could not set up Node.js. Look at this window and the log.	No se pudo configurar Node.js. Mira esta ventana y el registro.
+Desktop, NInfer, Ollama or vLLM).	Desktop, NInfer, Ollama o vLLM).
+did not start	no arrancó
+Downloading her model - still going in the background, waiting for it to finish...	Descargando su modelo - sigue en segundo plano, esperando a que termine...
+Downloading her voice models (about 1.2 GB the first time)	Descargando sus modelos de voz (unos 1,2 GB la primera vez)
+Downloading Miniconda from Anaconda (about 125 MB, can take a few minutes)...	Descargando Miniconda de Anaconda (unos 125 MB, puede tardar unos minutos)...
+Downloading the Amadeus project	Descargando el proyecto Amadeus
+Downloading the project (a few dozen MB)...	Descargando el proyecto (unas decenas de MB)...
+Downloading the voice engine (GPT-SoVITS)	Descargando el motor de voz (GPT-SoVITS)
+Downloading the web page's packages...	Descargando los paquetes de la página web...
+ERROR: {1}	ERROR: {1}
+Everything else installs now. It downloads several gigabytes, so give it time.	Ahora se instala todo lo demás. Descarga varios gigabytes, así que dale tiempo.
+Everything is installed EXCEPT her built-in local model (see the messages above).	Todo está instalado EXCEPTO su modelo local integrado (mira los mensajes de arriba).
+Everything is installed. Amadeus needs a model to think with:	Todo está instalado. Amadeus necesita un modelo para pensar:
+FFmpeg already present.	FFmpeg ya está.
+FFmpeg for videos ready (9.0.2, in your home folder).	FFmpeg para vídeos listo (9.0.2, en tu carpeta personal).
+FFmpeg for videos ready (from conda-forge, in your home folder).	FFmpeg para vídeos listo (de conda-forge, en tu carpeta personal).
+FFmpeg for videos: already set up.	FFmpeg para vídeos: ya configurado.
+FFmpeg for videos: downloading (about 60 MB)...	FFmpeg para vídeos: descargando (unos 60 MB)...
+FFmpeg for videos: setting it up from conda-forge (a few minutes)...	FFmpeg para vídeos: configurándolo desde conda-forge (unos minutos)...
+FFmpeg: present on this Mac - videos use it.	FFmpeg: presente en este Mac - los vídeos lo usan.
+FFmpeg: present on this PC - videos use it.	FFmpeg: presente en este PC - los vídeos lo usan.
+For now, Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	Por ahora, Amadeus usará la opción B: conectas tú un modelo (un servicio en la nube como OpenRouter, o tu propio servidor de modelos).
+Found an existing Amadeus at {1} - updating it...	Se encontró un Amadeus existente en {1} - actualizándolo...
+Free disk : {1} GB	Disco libre : {1} GB
+from: {1}	desde: {1}
+Frontend ready.	Frontend listo.
+Getting Amadeus (the project files)	Obteniendo Amadeus (los archivos del proyecto)
+Git + LFS ready.	Git + LFS listos.
+Git already present (Amadeus' own copy).	Git ya está (la copia propia de Amadeus).
+Git already present.	Git ya está.
+git was not found (it comes with Apple's developer tools).	no se encontró git (viene con las herramientas de desarrollo de Apple).
+git, curl, Git-LFS: present.	git, curl, Git-LFS: presentes.
+Git-LFS is installed but could not be switched on (git lfs install).	Git-LFS está instalado pero no se pudo activar (git lfs install).
+Git-LFS ready.	Git-LFS listo.
+Git-LFS: present.	Git-LFS: presente.
+git: {1}	git: {1}
+Graphics card : none found (or built-in graphics only)	Tarjeta gráfica : no encontrada (o solo gráficos integrados)
+Her built-in model ... loading in the background (this window says when it is ready)	Su modelo integrado ... cargando en segundo plano (esta ventana avisa cuando esté listo)
+Her built-in model has no model file yet - put a GGUF file in {1} and load it in Settings -> Connection (or run the installer again and choose A).	Su modelo integrado aún no tiene archivo de modelo - pon un archivo GGUF en {1} y cárgalo en Ajustes -> Conexión (o vuelve a ejecutar el instalador y elige A).
+Her built-in model needs a 64-bit Intel or AMD processor (this PC has: {1}). So Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	Su modelo integrado necesita un procesador Intel o AMD de 64 bits (este PC tiene: {1}). Así que Amadeus usará la opción B: conectas tú un modelo (un servicio en la nube como OpenRouter, o tu propio servidor de modelos).
+Her built-in model needs a graphics card (NVIDIA, AMD or Intel, 6 GB or more). This PC has none, so Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	Su modelo integrado necesita una tarjeta gráfica (NVIDIA, AMD o Intel, 6 GB o más). Este PC no tiene, así que Amadeus usará la opción B: conectas tú un modelo (un servicio en la nube como OpenRouter, o tu propio servidor de modelos).
+Her built-in model needs a graphics card with at least 6 GB of its own memory (this one has {1} GB). The smaller models that would fit don't sound like her, so Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	Su modelo integrado necesita una tarjeta gráfica con al menos 6 GB de memoria propia (esta tiene {1} GB). Los modelos más pequeños que cabrían no suenan como ella, así que Amadeus usará la opción B: conectas tú un modelo (un servicio en la nube como OpenRouter, o tu propio servidor de modelos).
+Her built-in model needs a Mac with an Apple chip (M1 or newer). On this Mac she would think far too slowly, so Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	Su modelo integrado necesita un Mac con chip Apple (M1 o posterior). En este Mac pensaría demasiado despacio, así que Amadeus usará la opción B: conectas tú un modelo (un servicio en la nube como OpenRouter, o tu propio servidor de modelos).
+Her built-in model needs at least {1} GB of memory (this Mac has {2} GB). The smaller models that would fit don't sound like her, so Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	Su modelo integrado necesita al menos {1} GB de memoria (este Mac tiene {2} GB). Los modelos más pequeños que cabrían no suenan como ella, así que Amadeus usará la opción B: conectas tú un modelo (un servicio en la nube como OpenRouter, o tu propio servidor de modelos).
+Her built-in model will not be loaded (load it in Settings -> Connection).	Su modelo integrado no se cargará (cárgalo en Ajustes -> Conexión).
+Her Japanese pronunciation dictionary could not be prepared right now - it downloads the first time she speaks.	Ahora no se pudo preparar su diccionario de pronunciación japonesa - se descarga la primera vez que hable.
+Her Japanese pronunciation dictionary is in place.	Su diccionario de pronunciación japonesa está listo.
+Her memory	Su memoria
+Her memory could not be set up right now - Amadeus finishes it when she starts.	Ahora no se pudo configurar su memoria - Amadeus la termina al iniciarse.
+Her memory is not available - she works without long-term memory.	Su memoria no está disponible - funciona sin memoria a largo plazo.
+Her memory is set up.	Su memoria está configurada.
+Her memory needs a one-time setup first (a few minutes).	Su memoria necesita primero una configuración única (unos minutos).
+Her memory's search model (about 1.2 GB) starts downloading in the background now.	El modelo de búsqueda de su memoria (unos 1,2 GB) empieza a descargarse en segundo plano.
+Her memory's search model could not be downloaded right now - she fetches it at her first start.	Ahora no se pudo descargar el modelo de búsqueda de su memoria - lo obtiene en su primer inicio.
+Her memory's search model is in place.	El modelo de búsqueda de su memoria está listo.
+Her new default personality and voice rules are in place. Your previous versions ({1}) are in: {2}	Su nueva personalidad predeterminada y sus reglas de voz están puestas. Tus versiones anteriores ({1}) están en: {2}
+Her personality and voice rules were NOT replaced: this copy could not be updated (see above).	Su personalidad y sus reglas de voz NO se reemplazaron: esta copia no se pudo actualizar (mira arriba).
+Her voice	Su voz
+Her voice files are already in place.	Sus archivos de voz ya están.
+Her voice files are in place.	Sus archivos de voz están listos.
+Her voice files could not be downloaded (Git-LFS).	No se pudieron descargar sus archivos de voz (Git-LFS).
+Her voice runs on the processor on this PC (the voice engine can only use NVIDIA cards) - it works, just a little slower.	En este PC su voz funciona en el procesador (el motor de voz solo usa tarjetas NVIDIA) - funciona, solo un poco más lento.
+Her voice will run on the processor.	Su voz funcionará en el procesador.
+Her voice's model files (about 1.2 GB)	Archivos del modelo de su voz (unos 1,2 GB)
+Her web page's parts were set up with a different Node.js - setting them up again.	Las piezas de su página web se prepararon con otro Node.js - preparándolas de nuevo.
+Here is what to do next:	Esto es lo que toca ahora:
+How should Amadeus think?	¿Cómo debe pensar Amadeus?
+If you choose Y, your current versions are REPLACED by the	Si eliges Y, tus versiones actuales se REEMPLAZAN por los
+Install log also copied to: {1}/logs/install_log.txt	Registro de instalación copiado también a: {1}/logs/install_log.txt
+INSTALL STOPPED:	INSTALACIÓN DETENIDA:
+Install the NVIDIA driver the usual way for your Linux version (on Ubuntu: the 'Additional Drivers' app), restart the PC, then run this installer again to get her built-in model.	Instala el controlador de NVIDIA de la forma habitual en tu Linux (en Ubuntu: la app 'Controladores adicionales'), reinicia el PC y vuelve a ejecutar este instalador para obtener su modelo integrado.
+Installing Amadeus	Instalando Amadeus
+Installing Git-LFS (needed so the voice models download as real files)...	Instalando Git-LFS (para que los modelos de voz se descarguen como archivos reales)...
+Installing llama.cpp, so you can also run a GGUF model of your own on this PC	Instalando llama.cpp, para que también puedas usar un modelo GGUF tuyo en este PC
+Installing PyTorch (Apple-chip build, uses the MPS accelerator) - the biggest download...	Instalando PyTorch (versión para chip Apple, usa el acelerador MPS) - la descarga más grande...
+Installing PyTorch (Intel/CPU build) - the biggest download...	Instalando PyTorch (versión Intel/CPU) - la descarga más grande...
+Installing required programs (only the ones you don't already have)	Instalando los programas necesarios (solo los que no tengas ya)
+Installing the voice engine's remaining packages...	Instalando los paquetes restantes del motor de voz...
+instead (start_linux_no_model.sh; load her model later in Settings -> Connection).	en su lugar (start_linux_no_model.sh; carga su modelo luego en Ajustes -> Conexión).
+It downloads several gigabytes, so give it time. Keep this window open.	Descarga varios gigabytes, así que dale tiempo. Deja esta ventana abierta.
+It has unsaved local changes - not updating, so nothing of yours is lost.	Tiene cambios locales sin guardar - no se actualiza, así no pierdes nada.
+it walks you through connecting your model, step by step.	te guía para conectar tu modelo, paso a paso.
+Keep that choice? Type Y (yes) or N (choose again)	¿Mantener esa elección? Escribe Y (sí) o N (elegir de nuevo)
+Linux version : {1}	Versión de Linux : {1}
+llama.cpp (to run a model of your own later) starts downloading in the background now.	llama.cpp (para usar luego un modelo tuyo) empieza a descargarse en segundo plano.
+llama.cpp {1} ({2}) ready.	llama.cpp {1} ({2}) listo.
+Local model : not offered - it needs a Mac with an Apple chip (option B only)	Modelo local : no disponible - necesita un Mac con chip Apple (solo opción B)
+Local model : not offered - it needs at least {1} GB of memory (option B only)	Modelo local : no disponible - necesita al menos {1} GB de memoria (solo opción B)
+macOS version : {1}	Versión de macOS : {1}
+Making sure the basic tools are present	Comprobando que están las herramientas básicas
+Miniforge installed at {1}.	Miniforge instalado en {1}.
+model (type to search), then press 'Use this model'.	modelo (escribe para buscar) y pulsa 'Usar este modelo'.
+Need help? Ask on our Discord: {1} - and send the file {2}.	¿Necesitas ayuda? Pregunta en nuestro Discord: {1} - y envía el archivo {2}.
+Need help? Ask on our Discord: {1}.	¿Necesitas ayuda? Pregunta en nuestro Discord: {1}.
+new defaults. They are saved first in a new folder inside	nuevos predeterminados. Antes se guardan en una carpeta nueva dentro de
+No answer was given.	No se dio ninguna respuesta.
+no local-model downloads (screens + settings file only)	sin descargas del modelo local (solo pantallas + archivo de ajustes)
+No NVIDIA card found - installing PyTorch's processor build (her voice works, just a little slower).	No hay tarjeta NVIDIA - instalando la versión de PyTorch para procesador (su voz funciona, solo un poco más lenta).
+No working NVIDIA GPU found - installing the CPU version (works, but voice is slower).	No hay GPU NVIDIA que funcione - instalando la versión para CPU (funciona, pero la voz va más lenta).
+Node.js already present (Amadeus' own copy).	Node.js ya está (la copia propia de Amadeus).
+Node.js not found (or older than 18) - installing the official build into your home folder...	Node.js no encontrado (o anterior a 18) - instalando la versión oficial en tu carpeta personal...
+Node.js not found - installing it with Homebrew...	Node.js no encontrado - instalándolo con Homebrew...
+Node.js not found - installing the official build for this Mac (no admin password needed)...	Node.js no encontrado - instalando la versión oficial para este Mac (sin contraseña de administrador)...
+Node.js ready ({1}).	Node.js listo ({1}).
+Node.js ready ({1}, in your home folder).	Node.js listo ({1}, en tu carpeta personal).
+Node.js: found ({1}) - using it.	Node.js: encontrado ({1}) - se usa.
+Node.js: found yours ({1}) - reusing it.	Node.js: encontrado el tuyo ({1}) - se reutiliza.
+Not enough free disk space for the local model: it needs about {1} GB, this disk has {2} GB free.	No hay espacio libre suficiente para el modelo local: necesita unos {1} GB y este disco tiene {2} GB libres.
+NOTE: Amadeus is tested on 64-bit Intel/AMD processors (x86_64). On {1} it should work, but is not tested.	NOTA: Amadeus se prueba en procesadores Intel/AMD de 64 bits (x86_64). En {1} debería funcionar, pero no está probado.
+NOTE: PyTorch is installed but could not see the GPU yet. Update your NVIDIA driver, then re-run this installer once.	NOTA: PyTorch está instalado pero aún no ve la GPU. Actualiza el controlador de NVIDIA y vuelve a ejecutar este instalador una vez.
+NOTE: PyTorch sees your GPU but a test calculation on it failed (details in install_log.txt). If her voice does not work, update your NVIDIA driver and re-run this installer once.	NOTA: PyTorch ve tu GPU pero un cálculo de prueba falló (detalles en install_log.txt). Si su voz no funciona, actualiza el controlador de NVIDIA y vuelve a ejecutar este instalador una vez.
+NOTICE: this graphics card has only {1} GB. Her model then runs partly on the processor - she answers, but slowly.	AVISO: esta tarjeta gráfica solo tiene {1} GB. Su modelo funcionará en parte en el procesador - responde, pero despacio.
+Now {1} GB free - starting her model.	Ahora hay {1} GB libres - iniciando su modelo.
+npm install reported an issue, but this is often harmless. Continuing.	npm install informó de un problema, pero suele ser inofensivo. Continuando.
+NVIDIA card found - installing PyTorch's graphics-card build (CUDA 12.8, about 3 GB)...	Tarjeta NVIDIA encontrada - instalando la versión de PyTorch para tarjeta gráfica (CUDA 12.8, unos 3 GB)...
+NVIDIA GPU found - installing PyTorch CUDA 12.8 (the graphics-card version).	GPU NVIDIA encontrada - instalando PyTorch CUDA 12.8 (la versión para tarjeta gráfica).
+On a Mac, good choices: a cloud service (OpenRouter, OpenAI...)	En un Mac, buenas opciones: un servicio en la nube (OpenRouter, OpenAI...)
+On this PC her voice has to run on the processor, which needs at least {1} GB of normal memory (this PC has {2} GB). So Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server).	En este PC su voz tiene que funcionar en el procesador, lo que necesita al menos {1} GB de memoria normal (este PC tiene {2} GB). Así que Amadeus usará la opción B: conectas tú un modelo (un servicio en la nube como OpenRouter, o tu propio servidor de modelos).
+or a local model server like Ollama, LM Studio or llama.cpp.	o un servidor de modelos local como Ollama, LM Studio o llama.cpp.
+Please type one of: {1}	Escribe una de estas: {1}
+Pre-downloading the voice language model (~130 MB)...	Predescargando el modelo de idioma de voz (~130 MB)...
+Preparing the web page	Preparando la página web
+Press Ctrl+C to shut everything down.	Pulsa Ctrl+C para apagarlo todo.
+Press R to restart her, B to restart only her brain (the backend).	Pulsa R para reiniciarla, B para reiniciar solo su cerebro (el backend).
+Processor : {1}	Procesador : {1}
+Project files ready.	Archivos del proyecto listos.
+PyTorch can use your GPU - voice synthesis will run on it.	PyTorch puede usar tu GPU - la síntesis de voz funcionará en ella.
+PyTorch installed.	PyTorch instalado.
+ready ({1})	listo ({1})
+Ready: {1} (in your home folder).	Listo: {1} (en tu carpeta personal).
+Removed the old full voice-model download from the temp folder (about 13 GB freed).	Se borró la antigua descarga completa del modelo de voz de la carpeta temporal (unos 13 GB liberados).
+Removed the old full voice-model download from the temp folder.	Se borró la antigua descarga completa del modelo de voz de la carpeta temporal.
+Replace them with the new defaults? Type Y (yes) or N (no, keep mine)	¿Reemplazarlos por los nuevos predeterminados? Escribe Y (sí) o N (no, conservar los míos)
+repo already present at {1} - updating it (best effort)...	el repositorio ya está en {1} - actualizándolo (en lo posible)...
+Retrying the voice packages without the optional Japanese text helper...	Reintentando los paquetes de voz sin el ayudante opcional de texto japonés...
+Run this installer again when you can - it continues the download where it stopped.	Vuelve a ejecutar este instalador cuando puedas - continúa la descarga donde se quedó.
+Running in CPU mode (graphics card too old for the voice engine - her voice uses the processor).	Funcionando en modo CPU (la tarjeta gráfica es demasiado antigua para el motor de voz - su voz usa el procesador).
+Running in CPU mode (no GPU detected).	Funcionando en modo CPU (no se detectó GPU).
+server address and API key, press 'Refresh list' and pick your	dirección del servidor y la clave API, pulsa 'Actualizar lista' y elige tu
+Setting up Amadeus's Python toolboxes	Configurando las cajas de herramientas de Python de Amadeus
+Setting up her memory (about 1.3 GB, a few minutes)...	Configurando su memoria (unos 1,3 GB, unos minutos)...
+Setting up the Amadeus Python environments	Configurando los entornos de Python de Amadeus
+Setting up the local-model helper (llama.cpp)	Configurando el ayudante del modelo local (llama.cpp)
+Setting up the voice engine	Configurando el motor de voz
+Setting up the voice engine environment (big download, be patient)	Configurando el entorno del motor de voz (descarga grande, ten paciencia)
+Setting up the voice engine's toolbox (big download, be patient)	Configurando la caja de herramientas del motor de voz (descarga grande, ten paciencia)
+Setting up the web interface (frontend)	Configurando la interfaz web (frontend)
+Setting up what this PC lacks ({1}) from conda-forge - a minute or two...	Configurando lo que le falta a este PC ({1}) desde conda-forge - un minuto o dos...
+Settings -> Connection).	Ajustes -> Conexión).
+Settings : {1} context, {2} memory, voice on the Apple chip's accelerator, Metal build	Ajustes : {1} de contexto, {2} de memoria, voz en el acelerador del chip Apple, versión Metal
+Shutting down Amadeus...	Apagando Amadeus...
+Shutting down from Settings...	Apagando desde Ajustes...
+Something unexpected went wrong.	Algo inesperado salió mal.
+Speech model for videos ready.	Modelo de voz a texto para vídeos listo.
+Start Amadeus now? Type Y (yes) or N (no, I'll start it later)	¿Iniciar Amadeus ahora? Escribe Y (sí) o N (no, la iniciaré luego)
+starting in the background	iniciándose en segundo plano
+Starting without her model (load it in Settings -> Connection).	Iniciando sin su modelo (cárgalo en Ajustes -> Conexión).
+STEP	PASO
+Step	Paso
+Still waiting for Apple's developer tools.	Aún esperando las herramientas de desarrollo de Apple.
+Stopped - nothing was changed. Free up some space, then run the installer again.	Detenido - no se cambió nada. Libera algo de espacio y vuelve a ejecutar el instalador.
+STOPPED:	DETENIDO:
+Switching the voice engine to the tested version ({1})...	Cambiando el motor de voz a la versión probada ({1})...
+The app	La app
+The card has room now - starting her model.	La tarjeta ya tiene sitio - iniciando su modelo.
+The download was interrupted - trying again shortly (it continues where it stopped)...	La descarga se interrumpió - reintentando en breve (continúa donde se quedó)...
+The memory environment's Python was not found: {1}	No se encontró el Python del entorno de memoria: {1}
+The Miniforge install step failed.	Falló el paso de instalación de Miniforge.
+the new defaults later in Settings, with one click.	los nuevos predeterminados más tarde en Ajustes, con un clic.
+The speech model for videos could not be downloaded now - Amadeus downloads it herself later.	Ahora no se pudo descargar el modelo de voz a texto para vídeos - Amadeus lo descarga ella misma luego.
+The voice patch files are missing from the project.	Faltan en el proyecto los archivos de parche de voz.
+The web page	La página web
+The web page changed - preparing it again...	La página web cambió - preparándola de nuevo...
+The web page could not be prepared - using its developer version (a little slower, works the same). Details: {1}	No se pudo preparar la página web - se usa su versión de desarrollo (algo más lenta, funciona igual). Detalles: {1}
+then choose Built-in in Settings -> Connection and press Refresh list.	luego elige Integrado en Ajustes -> Conexión y pulsa Actualizar lista.
+This graphics card is too old for the voice engine's graphics-card build (it needs an RTX 20 / GTX 16 series card or newer). Her voice will run on the processor - it works, just slower.	Esta tarjeta gráfica es demasiado antigua para la versión de tarjeta gráfica del motor de voz (necesita una RTX 20 / GTX 16 o más reciente). Su voz funcionará en el procesador - funciona, solo más lento.
+This graphics card is too old for the voice engine's graphics-card version (it needs an RTX 20 / GTX 16 series card or newer). Her voice will run on the processor instead - it works, just slower.	Esta tarjeta gráfica es demasiado antigua para la versión de tarjeta gráfica del motor de voz (necesita una RTX 20 / GTX 16 o más reciente). Su voz funcionará en el procesador - funciona, solo más lento.
+This installer is for Linux (this machine is: {1}).	Este instalador es para Linux (esta máquina es: {1}).
+This installer is for Mac OS (this machine is: {1}).	Este instalador es para Mac OS (esta máquina es: {1}).
+This PC has an NVIDIA graphics card, but NVIDIA's own driver is not installed (or not working), so her model cannot use the card yet.	Este PC tiene una tarjeta gráfica NVIDIA, pero el controlador propio de NVIDIA no está instalado (o no funciona), así que su modelo aún no puede usar la tarjeta.
+This PC has neither curl nor wget (one of them is needed to download anything).	Este PC no tiene ni curl ni wget (hace falta uno de ellos para descargar nada).
+To run a GGUF model on this Mac instead: put the file in	Para usar un modelo GGUF en este Mac: pon el archivo en
+To run a GGUF model on this PC instead: put the file in	Para usar un modelo GGUF en este PC: pon el archivo en
+To START Amadeus, double-click this file:	Para INICIAR Amadeus, haz doble clic en este archivo:
+To START Amadeus: choose "Amadeus" in your app menu, or run:	Para INICIAR Amadeus: elige "Amadeus" en el menú de apps, o ejecuta:
+toolbox '{1}' already present - reusing it.	la caja de herramientas '{1}' ya existe - se reutiliza.
+Trying llama.cpp's Vulkan build instead...	Probando en su lugar la versión Vulkan de llama.cpp...
+Trying the general (Vulkan) version of llama.cpp instead...	Probando en su lugar la versión general (Vulkan) de llama.cpp...
+Type a number and press Enter (just Enter = English)	Escribe un número y pulsa Intro (solo Intro = inglés)
+Type a number and press Enter (just Enter = English):	Escribe un número y pulsa Intro (solo Intro = inglés):
+Type A or B	Escribe A o B
+Type A to install the local model anyway, or B for option B	Escribe A para instalar el modelo local igualmente, o B para la opción B
+Type B to continue with option B, or Q to stop here (free up space, then run the installer again)	Escribe B para seguir con la opción B, o Q para parar aquí (libera espacio y vuelve a ejecutar el instalador)
+Type R + Enter to restart her, B + Enter to restart only her brain (the backend).	Escribe R + Intro para reiniciarla, B + Intro para reiniciar solo su cerebro (el backend).
+Unpacking llama.cpp ({1})...	Descomprimiendo llama.cpp ({1})...
+Updated to the latest version (now following the main branch).	Actualizado a la última versión (ahora sigue la rama main).
+Updated to the latest version (your own settings and personality were kept).	Actualizado a la última versión (se conservaron tus ajustes y personalidad).
+Updated to the latest version on the {1} branch.	Actualizado a la última versión de la rama {1}.
+Updated to the latest version.	Actualizado a la última versión.
+Vision file not downloaded - she works, but cannot see pictures or videos until you run the installer again: {1}	Archivo de visión no descargado - funciona, pero no puede ver imágenes ni vídeos hasta que vuelvas a ejecutar el instalador: {1}
+Voice engine is on the tested version.	El motor de voz está en la versión probada.
+Voice engine mode: this is an Intel Mac - her voice will run on the CPU (a little slower than on Apple chips).	Modo del motor de voz: este es un Mac Intel - su voz funcionará en la CPU (algo más lenta que en chips Apple).
+Voice engine mode: this Mac has an Apple chip - her voice will use its built-in accelerator (MPS).	Modo del motor de voz: este Mac tiene chip Apple - su voz usará su acelerador integrado (MPS).
+Voice hardware: Apple-chip accelerator (MPS) - her voice will run at full speed.	Hardware de voz: acelerador del chip Apple (MPS) - su voz irá a toda velocidad.
+Voice hardware: CPU mode (PyTorch {1}). On this Mac her voice works but takes a few extra seconds per line.	Hardware de voz: modo CPU (PyTorch {1}). En este Mac su voz funciona, pero tarda unos segundos más por frase.
+Voice language model already present.	El modelo de idioma de voz ya está.
+Voice language model pre-downloaded.	Modelo de idioma de voz predescargado.
+Voice models are in place.	Los modelos de voz están listos.
+Voice packages installed (Japanese text helper skipped - voice still works).	Paquetes de voz instalados (se omitió el ayudante de texto japonés - la voz sigue funcionando).
+Voice patches applied (no C compiler needed for them).	Parches de voz aplicados (no necesitan compilador de C).
+Voice patches applied.	Parches de voz aplicados.
+Voice text data for Western-script words is in place.	Los datos de texto de voz para palabras en escritura occidental están listos.
+WARNING: 'extra-req' install had issues - continuing (see {1}).	AVISO: la instalación de 'extra-req' tuvo problemas - se continúa (mira {1}).
+WARNING: could not pre-download the voice language model right now.	AVISO: ahora no se pudo predescargar el modelo de idioma de voz.
+WARNING: FFmpeg could not be set up - her voice may not work, and videos need it. Run the installer again later.	AVISO: no se pudo configurar FFmpeg - su voz puede no funcionar, y los vídeos lo necesitan. Vuelve a ejecutar el instalador más tarde.
+WARNING: her built-in model cannot start - {1}. Run the installer again to finish setting it up.	AVISO: su modelo integrado no puede arrancar - {1}. Vuelve a ejecutar el instalador para terminar de configurarlo.
+WARNING: her memory could not be set up (details: {1}). She works without long-term memory for now.	AVISO: no se pudo configurar su memoria (detalles: {1}). Por ahora funciona sin memoria a largo plazo.
+WARNING: her memory could not be set up (details: {1}). She works without long-term memory for now; Amadeus tries again at the next start.	AVISO: no se pudo configurar su memoria (detalles: {1}). Por ahora funciona sin memoria a largo plazo; Amadeus lo vuelve a intentar en el próximo inicio.
+WARNING: her memory needs Python {1}.{2}+, and its own '{3}' environment was not found. She works without long-term memory; running the installer again fixes this.	AVISO: su memoria necesita Python {1}.{2}+, y no se encontró su entorno '{3}'. Funciona sin memoria a largo plazo; volver a ejecutar el instalador lo arregla.
+WARNING: her memory stopped (exit {1}) - she works without long-term memory until the next start. Details: {2}	AVISO: su memoria se detuvo (salida {1}) - funciona sin memoria a largo plazo hasta el próximo inicio. Detalles: {2}
+WARNING: macOS {1} is older than macOS 12 - Amadeus is known to work best on macOS 12 or newer. Continuing, but you may hit issues.	AVISO: macOS {1} es anterior a macOS 12 - Amadeus funciona mejor en macOS 12 o posterior. Se continúa, pero puede haber problemas.
+WARNING: PyTorch could not be loaded in the voice toolbox - her voice will not work until this is fixed. Send the log.	AVISO: no se pudo cargar PyTorch en la caja de herramientas de voz - su voz no funcionará hasta arreglarlo. Envía el registro.
+WARNING: the startup smoke test did not pass. If Amadeus fails to start later, send the log.	AVISO: la prueba de arranque no se superó. Si Amadeus no arranca después, envía el registro.
+WARNING: the web page's package download did not finish.	AVISO: la descarga de paquetes de la página web no terminó.
+Web page already prepared - skipping.	Página web ya preparada - se omite.
+Web page ready.	Página web lista.
+When a game needs the graphics memory, start her with 'Start Amadeus without her model.bat' instead (load her model later in Settings -> Connection, or unload it there any time).	Cuando un juego necesite la memoria gráfica, iníciala con 'Start Amadeus without her model.bat' (carga su modelo luego en Ajustes -> Conexión, o descárgalo ahí cuando quieras).
+When another program needs the graphics card, start "Amadeus (without her model)"	Cuando otro programa necesite la tarjeta gráfica, inicia "Amadeus (without her model)"
+When another program needs the memory, start her with start_macos_no_model.command instead	Cuando otro programa necesite la memoria, iníciala con start_macos_no_model.command
+winget could not install Miniconda here - falling back to Anaconda's official download (the same program, just a different door).	winget no pudo instalar Miniconda aquí - se usa la descarga oficial de Anaconda (el mismo programa, solo otra puerta).
+winget was not found. It is built into Windows 10/11. Update Windows, or install 'App Installer' from the Microsoft Store, then run this script again.	No se encontró winget. Viene con Windows 10/11. Actualiza Windows o instala 'Instalador de aplicación' desde Microsoft Store y vuelve a ejecutar este script.
+with lots of improvements.	con muchas mejoras.
+Your existing Amadeus copy has changes of its own and cannot be updated automatically.	Tu copia de Amadeus tiene cambios propios y no se puede actualizar automáticamente.
+Your existing Amadeus copy has diverged and cannot be updated automatically.	Tu copia de Amadeus se ha desviado y no se puede actualizar automáticamente.
+Your graphics card could not run the voice engine's graphics-card build. Switching her voice to the processor (works, just slower)...	Tu tarjeta gráfica no pudo ejecutar la versión de tarjeta gráfica del motor de voz. Cambiando su voz al procesador (funciona, solo más lento)...
+Your graphics card could not run the voice engine's graphics-card version. Switching her voice to the processor (works, just slower)...	Tu tarjeta gráfica no pudo ejecutar la versión de tarjeta gráfica del motor de voz. Cambiando su voz al procesador (funciona, solo más lento)...
+Your graphics card is busy: {1} GB free, her model needs about {2} GB.	Tu tarjeta gráfica está ocupada: {1} GB libres, su modelo necesita unos {2} GB.
+your model. Pick your model from the chips (or type its name)	modelo. Elige tu modelo entre las opciones (o escribe su nombre)
+{1} downloaded and checked.	{1} descargado y comprobado.
+{1}/start_linux.sh	{1}/start_linux.sh
+{1}/start_macos.command	{1}/start_macos.command

@@ -1513,8 +1513,11 @@ def _remember_recall(conv, newest_id, row) -> None:
     old = _recalled_last.get(conv)
     if old and old.get("msg") == newest_id:
         return                       # the same turn asks again (room checks)
+    # "firm": the last message was really about the file (named it / fit it),
+    # not only a vague "look" - only then does a vague "look" next keep it.
     _recalled_last[conv] = {"row": dict(row), "msg": newest_id, "off_topic": 0,
-                            "seen": newest_id, "used_for": None}
+                            "seen": newest_id, "used_for": None,
+                            "firm": not row.get("_look_only")}
 
 
 def _follow_up(conv, newest_id, text):
@@ -1541,9 +1544,14 @@ def _follow_up(conv, newest_id, text):
     # message about the file (MH 2026-11-15: it brought the picture of
     # another chat back into unrelated talk); otherwise the message must be
     # about a file they sent or fit this file's description.
-    refers = ((look is True and last.get("off_topic", 0) == 0)
-              or bool(meaning.shared_file_kind(text))
-              or ((meaning.fits(text, [describe(row)]) or [0.0])[0] >= meaning.PICK_MIN))
+    # MH 2026-11-19: "Hold on, I'll attach the picture now" right after a
+    # recall made by a vague "look" alone ("let me show you now!") kept the
+    # wrong picture of another chat - a vague "look" counts only after a
+    # message that was firmly about the file.
+    firm = (bool(meaning.shared_file_kind(text))
+            or ((meaning.fits(text, [describe(row)]) or [0.0])[0] >= meaning.PICK_MIN))
+    refers = firm or (look is True and last.get("off_topic", 0) == 0
+                      and last.get("firm", True))
     if not refers or meaning.other_media(text) is True:
         last["off_topic"] += 1
         if last["off_topic"] >= meaning.RECALL_OFF_TOPIC_LIMIT:
@@ -1555,6 +1563,7 @@ def _follow_up(conv, newest_id, text):
         if row.get("kind") == "picture" or int(row.get("tokens") or 0) <= cross_files.FILE_DOC_MAX_TOKENS:
             mode = "file"
     last["off_topic"] = 0                          # still about it: it stays
+    last["firm"] = firm
     last["used_for"], last["mode"] = newest_id, mode
     _log_recall(row, f"follow-up on the file recalled before ({mode})")
     return row, mode

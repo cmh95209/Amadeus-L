@@ -56,6 +56,16 @@ CONTEXT_MESSAGES = 2      # the user's messages before, read along when the mess
 HINTS = True
 HINT_MIN = 0.60
 HINT_ONCE_PER_CHAT = True
+# "Look again" with no talk about a file they sent (MH 2026-11-19, option A):
+# "Wait, let me show you now!" (about to send a NEW lunch photo) read as
+# "look again" (0.68 vs 0.55) and the lunch talk fit a food plate of another
+# chat at 0.41 (with the messages before) -> the old plate was sent to her as
+# the real picture. A look-only message is never read with the messages
+# before, and brings the real file only when it fits it at least
+# LOOK_ONLY_MIN; between PICK_MIN and that, only her note line. Measured on
+# the real sidecar: that message 0.40-0.41; "前に送ったハッシュドポテトの写真、
+# もう一回見て" 0.44 (the note); "the wedding dress figurine photo again" 0.68.
+LOOK_ONLY_MIN = 0.50
 
 NOTE_LINE = (
     "[RECALLED FROM ANOTHER CHAT: {item} from your chat \"{title}\", sent {day}. The user did "
@@ -132,13 +142,14 @@ def pick(text, conv, now=None, context=()):
         return None, None
     descs = [attachments.describe(r) for r in rows]
     look = meaning.asks_to_look_again(text) is True
-    talk = bool(meaning.shared_file_kind(text)) or look
+    file_talk = bool(meaning.shared_file_kind(text))
+    talk = file_talk or look
     if not talk and not HINTS:
         return None, None
     i, best = _winner(text, rows, descs, PICK_MIN if talk else HINT_MIN)
     how = ""
     before = [c for c in list(context or [])[-CONTEXT_MESSAGES:] if (c or "").strip()]
-    if i is None and before and talk:
+    if i is None and before and file_talk:
         i, best = _winner(" ".join(before + [text]), rows, descs)
         how = ", with the messages before"
     if i is None:
@@ -156,8 +167,10 @@ def pick(text, conv, now=None, context=()):
         attachments._log_recall(row, f"memory hint from another chat \"{title}\" (fit {best:.2f})")
         return row, "hint"
     row["_note"] = FILE_NOTE.format(title=title, day=day)
+    if not file_talk:
+        row["_look_only"] = True       # a vague "look" next turn does not keep it (attachments._follow_up)
     mode = "note"
-    if look and row.get("kind") in ("picture", "document"):
+    if look and row.get("kind") in ("picture", "document") and (file_talk or best >= LOOK_ONLY_MIN):
         if row.get("kind") == "picture" or int(row.get("tokens") or 0) <= FILE_DOC_MAX_TOKENS:
             mode = "file"
     attachments._log_recall(row, f"from another chat \"{title}\" ({mode}, fit {best:.2f}{how})")

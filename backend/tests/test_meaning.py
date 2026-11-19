@@ -410,6 +410,21 @@ class FollowUpRecallTests(MeaningOn):
         row, mode = self.follow(14, "can you see it right now? look at it again")
         self.assertEqual((row["id"], mode), (41, "file"))
 
+    def test_vague_look_does_not_keep_a_look_only_recall(self):
+        """MH 2026-11-19: "Hold on, I'll attach the picture now" kept the
+        wrong picture that "let me show you now!" had recalled."""
+        attachments._remember_recall(1, 10, {**self.ROW, "_look_only": True})
+        self.assertEqual(self.follow(11, "can you see it right now? look at it again"), (None, None))
+        # talking about the file itself still keeps it, and then a vague look counts
+        self.assertEqual(self.follow(12, "what did she look like in the pic i sent you?")[0]["id"], 41)
+        row, mode = self.follow(13, "can you see it right now? look at it again")
+        self.assertEqual((row["id"], mode), (41, "file"))
+
+    def test_vague_look_twice_in_a_row_lets_go(self):
+        attachments._remember_recall(1, 10, self.ROW)
+        self.assertEqual(self.follow(11, "can you see it right now? look at it again")[1], "file")
+        self.assertEqual(self.follow(12, "can you see it right now? look at it again"), (None, None))
+
     def test_not_in_the_turn_that_recalled_it(self):
         attachments._remember_recall(1, 10, self.ROW)
         self.assertEqual(self.follow(10, "what did she look like in the pic i sent you?"), (None, None))
@@ -520,6 +535,54 @@ class CrossChatFileTests(MeaningOn):
         with patch.object(cross_files, "HINTS", False):
             cross_files._hinted.clear()
             self.assertEqual(self.pick_fit("mochi is getting so round lately", 0.7), (None, None))
+
+    # MH 2026-11-19: about to send a NEW photo, read as "look again" (EN/ZH/JA).
+    SHOW_NOW = ["Wait, let me show you now!", "等一下，我现在给你看", "ちょっと待って、今見せるね"]
+
+    def look_lines(self):
+        for t in self.SHOW_NOW:
+            MEANS[t] = "look"
+            self.addCleanup(MEANS.pop, t)
+        return self.SHOW_NOW
+
+    def test_look_alone_with_a_weak_fit_is_only_the_note(self):
+        """A vague "look" with no talk about a file they sent and a weak fit
+        (the old lunch plate at 0.41) never sends her the real picture."""
+        import cross_files
+        for text in self.look_lines():
+            self.assertEqual(self.pick_fit(text, cross_files.PICK_MIN - 0.01), (None, None), text)
+            for fit in (cross_files.PICK_MIN + 0.01, cross_files.LOOK_ONLY_MIN - 0.01):
+                row, mode = self.pick_fit(text, fit)
+                self.assertEqual((row["id"], mode), (41, "note"), (text, fit))
+
+    def test_look_alone_with_a_clear_fit_still_brings_the_file(self):
+        import cross_files
+        for text in self.look_lines():
+            row, mode = self.pick_fit(text, cross_files.LOOK_ONLY_MIN + 0.01)
+            self.assertEqual((row["id"], mode), (41, "file"), text)
+            self.assertTrue(row.get("_look_only"))
+
+    def test_file_talk_is_not_marked_look_only(self):
+        import cross_files
+        row, _ = self.pick_fit("मेरी भेजी फोटो देखी?", cross_files.PICK_MIN + 0.01)
+        self.assertFalse(row.get("_look_only"))
+
+    def test_look_alone_is_not_read_with_the_messages_before(self):
+        """The 0.40 came from joining the lunch talk before it."""
+        import cross_files
+        text = self.look_lines()[0]
+        before = "I tried to share you the picture of my lunch"
+
+        def fits(t, descs):
+            return [0.9 if before in t else 0.2] * len(descs)
+        with patch.object(cross_files.store, "attachments_where", lambda w, p: [dict(self.CAT)]), \
+                patch.object(cross_files.store, "list_conversations",
+                             lambda: [{"id": 7, "title": "Cats"}]), \
+                patch.object(cross_files.cross_tab, "search_on", lambda: True), \
+                patch.object(cross_files.meaning, "fits", fits), \
+                patch.object(attachments, "_log_recall", lambda r, w: None):
+            got = cross_files.pick(text, 1, now=NOW, context=[before])
+        self.assertEqual(got, (None, None))
 
     def test_tag_names_the_other_chat(self):
         import source_tags

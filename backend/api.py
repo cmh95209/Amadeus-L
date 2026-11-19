@@ -41,6 +41,7 @@ import stats
 import timing
 import voice_gate
 import providers
+import reply_errors
 import vertex_auth
 
 from tts import streamVoiceChunks, renderVoiceToPath
@@ -250,12 +251,44 @@ def _model_server_address() -> str:
     return memory.load_llm_server() or llm._server_url()
 
 
+def _provider_name() -> str:
+    """The active connection's display name for error messages ("Google
+    Vertex AI", "OpenRouter"...); '' for a local auto-detected or custom
+    server (the message then says "the model server")."""
+    try:
+        pid = providers.active_id()
+        if pid in ("auto", "custom"):
+            return ""
+        row = providers.get(pid)
+        label = (row or {}).get("label", "")
+        return _re.sub(r"\s*\([^)]*\)\s*$", "", label).strip()
+    except Exception:
+        return ""
+
+
 def _llm_error_message(exc: Exception) -> str:
-    """Translate a model-server failure into a plain-English message."""
+    """Translate a model-server failure into a plain-English message: what
+    happened, the HTTP code and the provider's own reason (reply_errors)."""
+    if isinstance(exc, reply_errors.ReplyFailed):
+        try:
+            model = getLLMModel().strip()
+        except Exception:
+            model = ""
+        return reply_errors.describe_failure(
+            exc, _provider_name(), model, fallback=_llm_error_message_plain)
+    return _llm_error_message_plain(exc)
+
+
+def _with_code(status: int, label: str, text: str) -> str:
+    who = _provider_name() or reply_errors.GENERIC_SERVER
+    return f"Error {status} ({label}) from {who}: {text}"
+
+
+def _llm_error_message_plain(exc: Exception) -> str:
     try:
         import openai
         if isinstance(exc, openai.NotFoundError):
-            return _model_not_found_message()
+            return _with_code(404, "model not found", _model_not_found_message())
         if isinstance(exc, openai.APIConnectionError):
             if builtin_llm.active():
                 if builtin_llm.model_missing():
@@ -274,12 +307,17 @@ def _llm_error_message(exc: Exception) -> str:
         if isinstance(exc, openai.APITimeoutError):
             return "The model server took too long to respond. Is it busy or overloaded?"
         if isinstance(exc, openai.AuthenticationError):
-            return "The model server rejected the API key. Check it in Settings."
-        if isinstance(exc, openai.APIStatusError) and exc.status_code == 402:
-            return ("Her cloud service says the account is out of credit. Add credit on "
-                    "its website (OpenRouter: Settings -> Credits), then send again.")
+            return _with_code(401, "key rejected",
+                              "the API key was rejected. Check it in Settings.")
     except Exception:
         pass
+    try:
+        model = getLLMModel().strip()
+    except Exception:
+        model = ""
+    coded = reply_errors.describe(exc, _provider_name(), model)
+    if coded and reply_errors.http_status(exc) != 404:
+        return coded
     try:
         # langchain re-raises an OpenAI 404 as its own exception type (it is
         # a subclass of openai.NotFoundError, so the check above usually
@@ -289,9 +327,11 @@ def _llm_error_message(exc: Exception) -> str:
         except ImportError:  # older/newer versions nest it
             from langchain_openai.chat_models.base import OpenAIModelNotFoundError
         if isinstance(exc, OpenAIModelNotFoundError):
-            return _model_not_found_message()
+            return _with_code(404, "model not found", _model_not_found_message())
     except Exception:
         pass
+    if coded:  # a 404 that is not a model-endpoint NotFound (rare)
+        return coded
     return f"The model did not return a usable reply ({type(exc).__name__}). Please try again."
 
 # pre:

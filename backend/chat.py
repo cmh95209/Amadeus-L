@@ -34,6 +34,7 @@ import attachments
 import source_tags
 import live_lookup
 import meaning
+import reply_errors
 
 default_LLM_Model = store.DEFAULT_LLM_MODEL
 API_KEY = store.load_api_key()
@@ -1009,7 +1010,7 @@ def _write_aside(run: "_AsideRun", topic: str, context, conv, emit) -> None:
             pack = write(recent + [pack.assistant_reply_JPS or ""])
         jps = (pack.assistant_reply_JPS or "").strip()
         eng = (pack.assistant_reply_ENG or "").strip() or jps
-        if not jps or pack.assistant_reply_JPS == _honest_plain_failure_pack().assistant_reply_JPS:
+        if not jps or pack.assistant_reply_JPS == _PLAIN_FAILURE_JPS:
             print("[Amadeus] Hold-on line: no usable line - skipped.")
             return
     except Exception as exc:
@@ -2462,7 +2463,7 @@ def _two_step_pack(client, messages, message_context, label) -> "AmadeusPack":
     Japanese line (the guards then try their own translation pass)."""
     jps = _plain_reply(client, messages, label)
     if jps is None:
-        return _honest_plain_failure_pack()
+        return _honest_plain_failure_pack("no usable text")
     en = ""
     try:
         en = _translate_reply_en(_translation_llm(), jps,
@@ -2630,11 +2631,17 @@ def _right_now_note() -> bool:
 # happened. Return this fixed honest line instead: STATIC (no model call - the
 # failure may be quota/network related, so spending another API call on it would
 # be wrong), same idiom as the web-off honesty net.
-def _honest_search_failure_pack(weather: bool = False) -> "AmadeusPack":
+def _honest_search_failure_pack(weather: bool = False, cause=None, detail: str = "") -> "AmadeusPack":
     """STATIC honest line for a web-ON turn whose reply could not be
     completed. When the live weather data WAS fetched and only the final
     packaging call failed, saying 'I couldn't finish the search' would be a
-    lie (no search was involved) - the weather variant says the truth."""
+    lie (no search was involved) - the weather variant says the truth.
+
+    2026-11-19: also notes the failure (reply_errors) - a user-started turn
+    then ends in a plain error message with the HTTP code instead of this
+    line (chat._with_picture_retry); the line itself stays for the internal
+    pipeline."""
+    reply_errors.note_failure("weather" if weather else "search", cause, detail)
     if weather:
         return AmadeusPack(
             assistant_reply_JPS=(
@@ -2702,17 +2709,21 @@ def _usable_source(text) -> bool:
     return len(re.sub(r"[\s\W_0-9]", "", text or "")) >= 2
 
 
-def _honest_plain_failure_pack() -> "AmadeusPack":
+_PLAIN_FAILURE_JPS = (
+    "先ほどうまく言葉がまとまらず、まわり道になってしまったみたい。"
+    "少し待ってから、もう一度言ってもらえる？"
+)
+
+
+def _honest_plain_failure_pack(detail: str = "") -> "AmadeusPack":
     """STATIC honest line for a NON-search turn whose reply degenerated and
     could not be salvaged (e.g. a repetition loop with no clean part). No
     model call - the failure may be model/state related, so spending another
     API call on the apology would be wrong. Same idiom as the search-failure
-    line above."""
+    line above. Also notes the failure (see _honest_search_failure_pack)."""
+    reply_errors.note_failure("unusable", None, detail)
     return AmadeusPack(
-        assistant_reply_JPS=(
-            "先ほどうまく言葉がまとまらず、まわり道になってしまったみたい。"
-            "少し待ってから、もう一度言ってもらえる？"
-        ),
+        assistant_reply_JPS=_PLAIN_FAILURE_JPS,
         assistant_reply_ENG=(
             "I got tangled up in my own words there. Could you give me a "
             "moment and ask me again?"
@@ -3241,10 +3252,10 @@ def _getResponsePackedWithWebSearch(llm, messages) -> "AmadeusPack":
             except Exception as exc2:
                 print("[Amadeus] Web loop: retry after sampling-parameter rejection failed -",
                       "honest fallback:", repr(exc2))
-                return _honest_search_failure_pack()
+                return _honest_search_failure_pack(cause=exc2)
         else:
             print("[Amadeus] Web loop: search turn could not be completed - honest fallback:", repr(exc))
-            return _honest_search_failure_pack()
+            return _honest_search_failure_pack(cause=exc)
     pack = _web_on_false_refusal_net(pack, llm, messages)
     pack = _weather_retry(pack, llm, messages)
     pack = _made_up_weather_net(pack, messages)
@@ -4089,7 +4100,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
         except Exception as exc:
             print("[Amadeus] Web loop: final-answer retry failed - honest "
                   "fallback:", repr(exc))
-            return _honest_search_failure_pack(weather=weather_handled)
+            return _honest_search_failure_pack(weather=weather_handled, cause=exc)
 
     # ---- Phase 3 (last resort): salvage plain text -----------------------
     # The structured AmadeusPack never came through, but she may have said
@@ -4136,10 +4147,10 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
                     print("[Amadeus] Web loop: retry still degenerate - "
                           "honest fallback.")
                     return _honest_search_failure_pack(weather=weather_handled)
-            except Exception:
+            except Exception as exc:
                 print("[Amadeus] Web loop: bounded retry failed - honest "
                       "fallback.")
-                return _honest_search_failure_pack(weather=weather_handled)
+                return _honest_search_failure_pack(weather=weather_handled, cause=exc)
     print("[Amadeus] Web loop: no AmadeusPack; salvaging plain text.")
     return _salvage_plain_text(candidate, llm)
 
@@ -4870,7 +4881,7 @@ def generate_greeting(mode: str = "startup",
                 return _salvage_plain_text(cleaned, client)
             print("[Amadeus] Greeting returned a repetition loop - no "
                   "clean part; honest fallback.")
-            return _honest_plain_failure_pack()
+            return _honest_plain_failure_pack("repetition loop")
         print("[Amadeus] Greeting returned no AmadeusPack; salvaging plain text.")
         return _salvage_plain_text(raw, client)
 
@@ -5177,7 +5188,7 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
                 # Another round would repeat the searches (and the wait);
                 # say plainly that this answer failed.
                 print(f"[Amadeus] Web reply unusable ({why}) - honest fallback.")
-                return _honest_search_failure_pack()
+                return _honest_search_failure_pack(detail=why)
             raise ValueError(f"structured reply unusable ({why})")
         return _out(out)
     except Exception as e:
@@ -5218,7 +5229,7 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
             why = _degenerate_pack(forced)
             if why:
                 print(f"[Amadeus] Forced pack retry unusable ({why}) - honest fallback.")
-                return _honest_plain_failure_pack()
+                return _honest_plain_failure_pack(why)
             return _out(forced)
 
         # The call returned but not as an AmadeusPack (she answered in plain text).
@@ -5237,7 +5248,7 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
                 return _out(_salvage_plain_text(cleaned, llm))
             print("[Amadeus] Forced pack call returned a repetition loop - "
                   "no clean part; honest fallback.")
-            return _honest_plain_failure_pack()
+            return _honest_plain_failure_pack("repetition loop")
         # A reply that stalls on a check promise ("Wait, let me check.") is a
         # mid-action sentence: the model announces a check it cannot perform
         # (no tool round-trip, no second turn in this app). Finish it with
@@ -5356,7 +5367,7 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
     if plain:
         jps = _plain_reply(llm, messages, "Voice-first")
         if jps is None:
-            honest = _honest_plain_failure_pack()
+            honest = _honest_plain_failure_pack("no usable text")
             return AmadeusPack(assistant_reply_JPS=honest.assistant_reply_JPS, assistant_reply_ENG="")
         return _out(jps)
 
@@ -5402,7 +5413,7 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
             why = _degenerate_field(jps)
             if why:
                 print(f"[Amadeus] Voice-first: forced retry unusable ({why}) - honest fallback.")
-                honest = _honest_plain_failure_pack()
+                honest = _honest_plain_failure_pack(why)
                 return AmadeusPack(assistant_reply_JPS=honest.assistant_reply_JPS, assistant_reply_ENG="")
             return _out(jps)
 
@@ -5415,7 +5426,7 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
                 print("[Amadeus] Voice-first: forced call returned a repetition loop - cut out, salvaging the clean part.")
                 return _out(_salvage_jps_plain_text(cleaned, llm))
             print("[Amadeus] Voice-first: repetition loop with no clean part - honest fallback.")
-            honest = _honest_plain_failure_pack()
+            honest = _honest_plain_failure_pack("repetition loop")
             return AmadeusPack(assistant_reply_JPS=honest.assistant_reply_JPS, assistant_reply_ENG="")
         if _is_check_promise(raw):
             # Same bounded finish-the-line follow-up as the single-call path.
@@ -5461,12 +5472,29 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
 # - appends assistant_reply_ENG to memory
 # - returns the pack, both message ids, and the conversation id the turn
 #   was stored in
+def _checked(reply):
+    """reply(), but a turn that ended in one of the static failure lines
+    raises reply_errors.ReplyFailed instead (2026-11-19): the user sees a
+    plain error message with the HTTP code, nothing is spoken or stored."""
+    reply_errors.reset()
+    pack = reply()
+    failure = reply_errors.take()
+    if failure is not None:
+        raise failure
+    return pack
+
+
 def _with_picture_retry(reply, cleanup=None):
     """reply() once; when her server refuses the pictures (a model that
     can't see), remember that and answer once more without them (she then
-    says honestly that she can't see them)."""
+    says honestly that she can't see them). Every user-started reply (send,
+    voice-first, regenerate) passes through here."""
+    original = reply
+    reply = lambda: _checked(original)  # noqa: E731
     try:
         return reply()
+    except reply_errors.ReplyFailed:
+        raise
     except Exception as exc:
         if attachments.took_video() and attachments.is_video_rejection(exc):
             # A cloud model refused the real video (or found it too big):

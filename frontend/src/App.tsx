@@ -2842,15 +2842,16 @@ export default function App() {
 
           <div className="toolbar-actions">
             {/* Reload the page - the installed phone app has no address bar.
-                She does not greet again (amadeusGreeted lives on in this tab);
-                held back while she is replying so the answer is not cut off. */}
+                She does not greet again (amadeusGreeted lives on in this tab).
+                Always clickable (MH 2026-11-19): a reply in progress is not
+                lost - the backend finishes and stores it, and the reloaded
+                page picks it up. */}
             <button
               type="button"
               className="ghost-button refresh-button"
               onClick={() => window.location.reload()}
-              disabled={loading}
               aria-label="Refresh page"
-              title={loading ? "Wait for her reply to finish" : "Refresh page"}
+              title="Refresh page"
             >
               ↻
             </button>
@@ -4284,11 +4285,11 @@ export default function App() {
                   {personalityError && <p className="settings-error" role="alert">{personalityError}</p>}
                   {personalityNotice && <p className="settings-success" role="status">{personalityNotice}</p>}
                   <div className="modal-actions personality-actions">
-                    {!personalityLoaded ? <button className="ghost-button"
                     {/* Close (2026-11-19): every other tab had one; unsaved
                         edits still get closeSettings' "Discard?" question. */}
                     <button className="ghost-button" onClick={closeSettings}
                       disabled={settingsBusy}>Close</button>
+                    {!personalityLoaded ? <button className="ghost-button"
                       onClick={() => setPersonalityReload((value) => value + 1)}>Retry loading</button> : <>
                       <button className="ghost-button" disabled={settingsBusy || !personalityDirty}
                         onClick={() => {

@@ -35,6 +35,7 @@ import source_tags
 import live_lookup
 import meaning
 import reply_errors
+import display_lang
 
 default_LLM_Model = store.DEFAULT_LLM_MODEL
 API_KEY = store.load_api_key()
@@ -120,7 +121,7 @@ class AmadeusPack(BaseModel):
         " Newlines are allowed. Do NOT include: parentheses/brackets/quotes/asterisks/emojis/markdown/ellipses (…)/colons/semicolons."
         " Avoid long dashes and repeated punctuation.")
     )
-    assistant_reply_ENG: str = Field(..., description="English translation of assistant_reply_JPS, shown in the UI for the user to read. May include stage directions.")
+    assistant_reply_ENG: str = Field(..., description="Translation of assistant_reply_JPS into the language the user reads (English unless the instructions name another), shown in the UI for the user to read. May include stage directions.")
 
 
 class AmadeusReply(BaseModel):
@@ -985,7 +986,7 @@ def _aside_messages(topic: str, context, local: bool, avoid=None):
             m["content"] = m["content"] + ASIDE_NOTE.format(
                 topic=topic.strip()[:200], avoid=_aside_avoid_text(avoid))
             break
-    return _ordered_prompt(_PLAIN_RULES_JA if local else _PACK_RULES, PROACTIVE_SEARCH_BLOCK,
+    return _ordered_prompt(_lang_rules(_PLAIN_RULES_JA if local else _PACK_RULES), PROACTIVE_SEARCH_BLOCK,
                            [], ctx, right_now=_right_now_note())
 
 
@@ -1786,6 +1787,76 @@ def _has_japanese_script(text: str) -> bool:
     return False
 
 
+# Her Japanese line, told apart from a reply written in the user's language
+# (multi-language, 2026-11-19): kana, or a few kanji alone ("了解。"). A longer
+# kana-free CJK text is Chinese - the voice must not read it as Japanese.
+JA_KANJI_ONLY_MAX = 6
+
+
+def _speaks_japanese(text: str) -> bool:
+    if _has_japanese(text):
+        return True
+    cjk = sum(1 for ch in (text or "")
+              if 0x4E00 <= ord(ch) <= 0x9FFF or 0x3400 <= ord(ch) <= 0x4DBF)
+    return 0 < cjk <= JA_KANJI_ONLY_MAX
+
+
+def _display_name() -> str:
+    """The English name of the user's display language ("Tamil")."""
+    return display_lang.english_name()
+
+
+def _display_is_japanese() -> bool:
+    """The user reads Japanese: her line itself is the display line, no
+    translation call at all."""
+    return display_lang.get() == "ja"
+
+
+def _display_line_ok(text: str, jps: str = "") -> bool:
+    """A usable translation line in ANY language: real words, no kana (kana =
+    the model echoed her Japanese back), not a copy of her line. With
+    Japanese picked, any non-empty line is fine."""
+    t = (text or "").strip()
+    if not _usable_source(t):
+        return False
+    if _display_is_japanese():
+        return True
+    if _has_japanese(t):
+        return False
+    return not (jps and _is_verbatim_echo(t, jps.strip()))
+
+
+def _lang_rules(msg: dict) -> dict:
+    """The reply rules with the translation line in the user's language.
+    English: the rules unchanged (same text, same prompt cache)."""
+    code = display_lang.get()
+    if code == "en":
+        return msg
+    name = _display_name()
+    c = msg["content"]
+    if code == "ja":
+        c = c.replace(
+            "THEN write assistant_reply_ENG as an English translation of that Japanese dialogue, "
+            "for the user to read. The English belongs only in assistant_reply_ENG, never in "
+            "assistant_reply_JPS. Keep the meaning and tone consistent between both languages. ",
+            "THEN copy that same Japanese dialogue, unchanged, into assistant_reply_ENG (the user "
+            "reads Japanese). ")
+    else:
+        c = c.replace(
+            "THEN write assistant_reply_ENG as an English translation of that Japanese dialogue, "
+            "for the user to read. The English belongs only in assistant_reply_ENG",
+            f"THEN write assistant_reply_ENG as a {name} translation of that Japanese dialogue, "
+            f"for the user to read - the user reads {name}, so this field holds {name}, not "
+            f"English. The {name} belongs only in assistant_reply_ENG")
+    c = c.replace("If the user asks you to answer in English, still write Japanese: the app "
+                  "already shows them your line in English.",
+                  "If the user asks you to answer in another language, still write Japanese: "
+                  f"the app already shows them your line in {name}.")
+    out = dict(msg)
+    out["content"] = c
+    return out
+
+
 def _collapse_runaway(text: str) -> str:
     """Truncate a runaway repeated phrase (a local-model degeneration such as a
     short line x200 or "mount of effort." x500). Fires only when a short phrase
@@ -1914,6 +1985,12 @@ def _clean_tts_text(text: str) -> str:
     t, parked = _park_links(t)
     if parked:
         return _unpark_links(_clean_tts_text(t), parked)
+    # A whole reply in the user's language instead of her Japanese (no kana:
+    # Chinese, Tamil, Thai ...): keep it intact for the caller's translation
+    # pass, like a pure-English one below (multi-language, 2026-11-19).
+    if (not _speaks_japanese(t) and _usable_source(t)
+            and (_OTHER_SCRIPT_RE.search(t) or _has_japanese_script(t))):
+        return _collapse_runaway(t)
     # A stray word in another script (her 12B model, rarely: Korean 들을,
     # Bengali বাইরে - 2026-10-22/24) would be read out as noise: drop it.
     if _OTHER_SCRIPT_RE.search(t):
@@ -1983,7 +2060,7 @@ def _ensure_japanese(pack: "AmadeusPack", llm) -> "AmadeusPack":
     cleaned = _clean_tts_text(pack.assistant_reply_JPS)
     if cleaned != (pack.assistant_reply_JPS or ""):
         pack = AmadeusPack(assistant_reply_JPS=cleaned, assistant_reply_ENG=pack.assistant_reply_ENG)
-    if _has_japanese_script(pack.assistant_reply_JPS):
+    if _speaks_japanese(pack.assistant_reply_JPS):
         return pack
     if not _usable_source(pack.assistant_reply_ENG):
         return pack
@@ -1998,7 +2075,7 @@ def _ensure_japanese(pack: "AmadeusPack", llm) -> "AmadeusPack":
             ),
         }])
         jps = _clean_tts_text(_strip_thinking(trans.content if isinstance(trans.content, str) else str(trans.content)))
-        if _has_japanese_script(jps):
+        if _speaks_japanese(jps):
             print("[Amadeus] JPS was not Japanese - repaired with a translation pass")
             return AmadeusPack(assistant_reply_JPS=jps, assistant_reply_ENG=pack.assistant_reply_ENG)
     except Exception as e:
@@ -2016,8 +2093,13 @@ def _ensure_english(pack: "AmadeusPack", llm) -> "AmadeusPack":
     Japanese line rather than an empty box (her real words, just untranslated).
     """
     eng = (pack.assistant_reply_ENG or "").strip()
-    # Fast path: already English (has Latin letters and no Japanese script).
-    if _has_latin(eng) and not _has_japanese_script(eng):
+    # The user reads Japanese: her line is the display line.
+    if _display_is_japanese():
+        return AmadeusPack(assistant_reply_JPS=pack.assistant_reply_JPS,
+                           assistant_reply_ENG=pack.assistant_reply_JPS or eng)
+    # Fast path: already a translation (any language: words, no kana, not
+    # her line copied).
+    if _display_line_ok(eng, pack.assistant_reply_JPS or ""):
         return pack
     if not _usable_source(pack.assistant_reply_JPS or eng):
         return AmadeusPack(assistant_reply_JPS=pack.assistant_reply_JPS,
@@ -2026,15 +2108,15 @@ def _ensure_english(pack: "AmadeusPack", llm) -> "AmadeusPack":
         trans = llm.invoke([{
             "role": "user",
             "content": (
-                "Translate the following Japanese into natural spoken English. "
+                f"Translate the following Japanese into natural spoken {_display_name()}. "
                 "Copy any web address (https://...) exactly as written. "
-                "Output ONLY the English text - no quotes, no commentary.\n"
+                f"Output ONLY the {_display_name()} text - no quotes, no commentary.\n"
                 + "".join(h + "\n" for h in _user_hint_lines(pack.assistant_reply_JPS or eng)) + "\n"
                 + (pack.assistant_reply_JPS or eng)[:1500]
             ),
         }])
         new_eng = _strip_thinking(trans.content if isinstance(trans.content, str) else str(trans.content)).strip()
-        if _has_latin(new_eng) and not _META_TRANSLATION.search(new_eng):
+        if _display_line_ok(new_eng, pack.assistant_reply_JPS or "") and not _META_TRANSLATION.search(new_eng):
             print("[Amadeus] ENG was not English - repaired with a translation pass")
             return AmadeusPack(assistant_reply_JPS=pack.assistant_reply_JPS, assistant_reply_ENG=new_eng)
     except Exception as e:
@@ -2162,13 +2244,15 @@ def _salvage_plain_text(raw, llm) -> "AmadeusPack":
         # She already spoke Japanese - use it as the TTS line, add English for the UI.
         jps = text
         eng = ""
+        if _display_is_japanese():
+            return AmadeusPack(assistant_reply_JPS=jps, assistant_reply_ENG=jps)
         try:
             trans = llm.invoke([{
                 "role": "user",
                 "content": (
-                    "Translate the following Japanese into natural spoken English. "
+                    f"Translate the following Japanese into natural spoken {_display_name()}. "
                     "Copy any web address (https://...) exactly as written. "
-                    "Output ONLY the English text - no quotes, no commentary.\n"
+                    f"Output ONLY the {_display_name()} text - no quotes, no commentary.\n"
                     + "".join(h + "\n" for h in _user_hint_lines(text)) + "\n"
                     + text[:1500]
                 ),
@@ -2206,7 +2290,7 @@ def _ensure_japanese_jps(jps: str, llm) -> str:
     translation source: it becomes her line, in Japanese.
     """
     cleaned = _clean_tts_text(jps or "")
-    if _has_japanese_script(cleaned):
+    if _speaks_japanese(cleaned):
         return cleaned
     if not _usable_source(cleaned):
         return cleaned
@@ -2231,7 +2315,7 @@ def _translate_to_japanese(llm, text: str) -> str:
             ),
         }])
         jps = _clean_tts_text(_strip_thinking(trans.content if isinstance(trans.content, str) else str(trans.content)))
-        return jps if _has_japanese_script(jps) else ""
+        return jps if _speaks_japanese(jps) else ""
     except Exception as e:
         print("[Amadeus] Voice-first: Japanese repair failed:", repr(e))
         return ""
@@ -2414,7 +2498,7 @@ def _plain_jps(client, messages) -> str:
     # English (2026-10-24, twice in a row -> the honest line). Her words are
     # kept: translated into her Japanese line (the English line shows anyway).
     if (text and not why and meta.get("finish_reason") != "length"
-            and (not _has_japanese_script(text) or _mostly_english(text))):
+            and (not _speaks_japanese(text) or _mostly_english(text))):
         repaired = _translate_to_japanese(_translation_llm(), text)
         if repaired:
             print("[Amadeus] Plain reply was English - translated into her Japanese line")
@@ -3212,7 +3296,7 @@ def _tense_net(pack: "AmadeusPack", llm, messages) -> "AmadeusPack":
              + [{"role": "user", "content": (
                  f"(Internal note: today is {today}. In your last reply: "
                  + "; ".join(problems) + ". Rewrite the reply with the dates right in BOTH the "
-                 "Japanese and the English line, keeping everything else the same. Use the "
+                 "Japanese and the translation line, keeping everything else the same. Use the "
                  "AmadeusPack tool.)"
              )}])
     try:
@@ -4828,7 +4912,7 @@ def generate_greeting(mode: str = "startup",
         # numbers (observed 2026-09-21: handed "about 7 days", still said
         # "yesterday").
         messages = _ordered_prompt(
-            _PLAIN_RULES_JA if _is_local(client) else _PACK_RULES,
+            _lang_rules(_PLAIN_RULES_JA if _is_local(client) else _PACK_RULES),
             NO_WEB_BLOCK,
             [instruction]
             + ([memory_block] if memory_block else [])
@@ -5068,7 +5152,7 @@ def _attach_line(conv, ctx, event_line, instruction):
     client = get_llm(API_KEY, LLM_Model, reasoning="off")
     local = _is_local(client)
     messages = _ordered_prompt(
-        _PLAIN_RULES_JA if local else _PACK_RULES, NO_WEB_BLOCK,
+        _lang_rules(_PLAIN_RULES_JA if local else _PACK_RULES), NO_WEB_BLOCK,
         [instruction, store.load_internal_context()], ctx,
         right_now=_right_now_note())
     if local:
@@ -5100,7 +5184,7 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
     # Local model, web off: her Japanese line as plain text + the English line
     # by the translation call (_two_step_pack); the form only for cloud / web.
     plain = not web_on and _is_local(llm)
-    pack_rules = _PLAIN_RULES_JA if plain else _PACK_RULES
+    pack_rules = _lang_rules(_PLAIN_RULES_JA if plain else _PACK_RULES)
 
     # Character book: her appearance/outfit are NOT in the base prompt (saves ~230
     # tokens every turn). Load them only when the user's latest message asks how
@@ -5327,7 +5411,7 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
     found = cross_tab.search_block(_content_text(last_user), picture_conv)   # cross_tab.py
 
     messages = _ordered_prompt(
-        _PLAIN_RULES_JA if plain else _PACK_RULES_JA_ONLY,
+        _lang_rules(_PLAIN_RULES_JA) if plain else _PACK_RULES_JA_ONLY,
         NO_WEB_BLOCK,
         book_messages
         + ([memory_block] if memory_block else [])
@@ -5742,14 +5826,14 @@ def _user_hint_lines(jps: str = "") -> list:
             lines.append(
                 f"The user's name is {name}"
                 + (f" (written {reading} in Japanese)" if reading else "")
-                + f". Write it as {name} in English and keep any Japanese "
+                + f". Write it as {name} in the translation and keep any Japanese "
                 f"ending she adds ({name}-kun, {name}-san, {name}-chan).")
         pronouns = store.pronoun_sentence()
         if pronouns:
             lines.append(pronouns)
         names = speech_text.names_in(jps)
         if names:
-            lines.append("Names in her line, with their English spelling: "
+            lines.append("Names in her line, with their spelling in the user's language: "
                          + ", ".join(f"{r} = {w}" for w, r in names) + ".")
     except Exception as exc:
         print("[Amadeus] User hints skipped:", repr(exc))
@@ -5767,19 +5851,23 @@ def _translate_reply_en(llm, jps: str, context_lines) -> str:
     through the memory DB."""
     if not _usable_source(jps):
         return ""
+    # The user reads Japanese: her line is the display line, no call.
+    if _display_is_japanese():
+        return (jps or "").strip()
+    name = _display_name()
     lines = [
-        "You are writing the English line shown to the user in the chat UI for "
+        f"You are writing the {name} line shown to the user in the chat UI for "
         "one of Amadeus's replies. Translate her Japanese line into natural, "
-        "spoken English in her voice - keep her tone and meaning exactly. "
+        f"spoken {name} in her voice - keep her tone and meaning exactly. "
         "Copy any web address (https://...) exactly as written. "
-        "Output ONLY the English text - no quotes, no Japanese, no commentary.",
+        f"Output ONLY the {name} text - no quotes, no Japanese, no commentary.",
     ] + _user_hint_lines(jps)
     for line in context_lines or ():
         if line and line.strip():
             lines.append(line.strip()[:300])
     lines.append("Japanese line she spoke:")
     lines.append((jps or "").strip()[:1500])
-    lines.append("English line:")
+    lines.append(f"{name} line:")
     reply = llm.invoke([{"role": "user", "content": "\n".join(lines)}])
     content = reply.content if isinstance(reply.content, str) else str(reply.content)
     en = _strip_thinking(content).strip().strip(chr(34)).strip()
@@ -5792,8 +5880,8 @@ def _translate_reply_en(llm, jps: str, context_lines) -> str:
     # A weaker model can echo the Japanese input back as the "translation";
     # that would put Japanese in the English box - treat it as a failure so
     # the real Japanese line is shown instead.
-    if not _has_latin(en):
-        print(f"[Amadeus] Voice-first: English backfill unusable (no English letters - likely a Japanese echo) - raw: {en[:120]!r}")
+    if _has_japanese(en):
+        print(f"[Amadeus] Voice-first: translation unusable (has kana - likely a Japanese echo) - raw: {en[:120]!r}")
         return ""
     # The echo can still slip past the letter check when her Japanese line
     # happens to contain Latin words ("Alex", "AI", ...): a model that
@@ -6309,9 +6397,9 @@ _BACKFILL_STARTED = False
 def _voice_line_for_reply(llm, english_reply: str, previous_user) -> str:
     lines = [
         "You are Amadeus, an assistant based on the memories and personality of Makise Kurisu. "
-        "Below is one of your earlier replies, stored in English. Write the Japanese line "
+        "Below is one of your earlier replies, as the user reads it (a translation). Write the Japanese line "
         "(assistant_reply_JPS) that you would ACTUALLY have spoken for this reply.",
-        "Rules: natural spoken Japanese, in your own voice. Never mirror English word order. "
+        "Rules: natural spoken Japanese, in your own voice. Never mirror the translation's word order. "
         "Plain spoken Japanese for a voice synthesizer: allowed marks are only 、。！？ "
         "No quotes, markdown, emoji, stage directions, or commentary.",
     ]

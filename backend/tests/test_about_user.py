@@ -187,7 +187,7 @@ class PromptHintTests(_FreshAppTests):
                                or SimpleNamespace(content="Welcome back, Alex-kun."))
         out = self.chat._translate_reply_en(fake, "おかえり、アレックスくん。", [])
         self.assertEqual(out, "Welcome back, Alex-kun.")
-        self.assertIn("Write it as Alex in English", seen[0]["content"])
+        self.assertIn("Write it as Alex in the translation", seen[0]["content"])
 
     def test_summary_prompt_carries_pronouns_only_when_set(self):
         seen = []

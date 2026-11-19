@@ -30,6 +30,7 @@ import builtin_server
 import ceremony
 import concerns
 import cross_tab
+import display_lang
 import defaults_refresh
 import feelings
 import llm
@@ -1127,6 +1128,25 @@ def set_web_reading():
     except ValueError as exc:
         return jsonify({"message": str(exc)}), 400
     return jsonify({"status": "ok", "mode": mode})
+
+
+@application.route("/language", methods=["GET"])
+def get_language():
+    """Settings -> Preferences -> Your language (display_lang.py): the code,
+    whether it is written right to left, and the offered languages."""
+    return jsonify(display_lang.listing())
+
+
+@application.route("/language", methods=["POST"])
+def set_language():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not isinstance(data.get("code"), str):
+        return jsonify({"message": "Send code, e.g. {\"code\": \"zh\"}"}), 400
+    try:
+        display_lang.set(data["code"])
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    return jsonify({"status": "ok", **display_lang.listing()})
 
 
 @application.route("/crossTab", methods=["GET"])

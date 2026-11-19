@@ -7,9 +7,9 @@
     <app python> scripts/lang_fill.py --check  (what is missing where)
     <app python> scripts/lang_fill.py [zh ta ...]   (translate the missing lines)
 
-Two sets of files: frontend/src/lang/<code>.json (sections page / her /
-codes) and scripts/lang/<code>.json (launcher + installer text, one flat
-section "text"). English is the master; a missing line shows in English
+The files: frontend/src/lang/<code>.json (sections page / her / codes).
+The installers and the launcher stay English (they only ask for and save
+the language). English is the master; a missing line shows in English
 until filled, so nothing breaks in between.
 
 It uses the connection saved in Settings (backend llm.get_llm - your cloud
@@ -33,7 +33,6 @@ BATCH = 60              # lines per model call
 PAUSE_S = 4.0           # between calls (cloud rate limits)
 SETS = {
     "page": os.path.join(ROOT, "frontend", "src", "lang"),
-    "scripts": os.path.join(ROOT, "scripts", "lang"),
 }
 # ------------------------------------------------------------------------------
 

@@ -136,18 +136,39 @@ INSTALL_LOG=""   # set once INSTALL_DIR is known; every line is tee'd to it
 DISCORD_URL="https://discord.gg/YxYkZPSVf3"
 tee_to() { if [ -n "$INSTALL_LOG" ]; then tee -a "$INSTALL_LOG"; else cat; fi; }
 
+log()  { printf '%s%s%s\n' "$C_DIM" "$1" "$C_RESET" | tee_to; }
+step() {
+    printf '%s\n' "============================================================" | tee_to
+    printf '%s %sSTEP %s: %s%s\n' "$C_BOLD" "$C_BLU" "$1" "$2" "$C_RESET" | tee_to
+    printf '%s\n' "============================================================" | tee_to
+}
+die() {
+    local extra="${3:-}"
+    printf '%s%s%s\n' "$C_BOLD$C_RED" "STOPPED: $1" "$C_RESET" | tee_to
+    if [ -n "${2:-}" ]; then
+        printf '%s%s%s\n' "$C_DIM" "$2" "$C_RESET" | tee_to
+    fi
+    copy_install_log
+    # Where to get help: the Discord + the exact file to send - the install
+    # log, and voice_pip.log when the voice packages failed.
+    if [ -n "${INSTALL_LOG:-}" ]; then
+        printf '%s\n' "Need help? Ask on our Discord: $DISCORD_URL - and send the file $INSTALL_LOG." | tee_to
+    else
+        printf '%s\n' "Need help? Ask on our Discord: $DISCORD_URL." | tee_to
+    fi
+    if [ -n "$extra" ]; then
+        printf '%s\n' "  (and this one too: $extra)" | tee_to
+    fi
+    exit 1
+}
+
 # ----------------------------------------------------------------------------
-#  The user's language (multi-language, 2026-11-19)
+#  The app's language (multi-language, 2026-11-19): one question, saved as
+#  backend/language.txt (the app's own setting, changeable in Settings).
+#  The installer itself stays English.
 # ----------------------------------------------------------------------------
-# The very first question: which language this window (and Amadeus) uses.
-# The lines come from scripts/lang/<code>.tsv ("English<TAB>translation",
-# the same files the launcher reads); the choice is saved as
-# backend/language.txt, the app's own setting. The log file stays English
-# (it is for support). Any problem: English, never a stop. Plain awk (no
-# bash 4 features), so the Mac's own bash 3.2 runs it too.
-LANG_CODE="en"
-LANG_FILE=""
-INSTALL_LANGUAGES="en|English|English
+APP_LANGUAGE=""
+APP_LANGUAGES="en|English|English
 zh|Simplified Chinese|中文
 ja|Japanese|日本語
 ko|Korean|한국어
@@ -163,110 +184,18 @@ ms|Malay|Bahasa Melayu
 id|Indonesian|Bahasa Indonesia
 th|Thai|ไทย
 vi|Vietnamese|Tiếng Việt"
-
-# One shown line in the user's language (its English when there is none).
-# A {1} {2} slot in the file's English matches any text in that place.
-lang_t() {
-    if [ "$LANG_CODE" = "en" ] || [ -z "$LANG_FILE" ] || [ ! -f "$LANG_FILE" ]; then
-        printf '%s' "$1"; return 0
-    fi
-    LANG_T_TEXT="$1" LC_ALL=C awk -F'\t' '
-    function norm(s) { gsub(/[ \t\r\n]+/, " ", s); sub(/^ /, "", s); sub(/ $/, "", s); return s }
-    function repl(s, from, to,   i, out) {
-        out = ""
-        while ((i = index(s, from)) > 0) { out = out substr(s, 1, i - 1) to; s = substr(s, i + length(from)) }
-        return out s
-    }
-    # Does key fit the template? Fills V[slot] and returns 1.
-    function fits(tpl, key,   n, L, S, rest, i, piece, pos, sub2) {
-        n = 0; delete V
-        while (match(tpl, /\{[0-9]+\}/)) {
-            L[n] = substr(tpl, 1, RSTART - 1); n++
-            S[n] = substr(tpl, RSTART + 1, RLENGTH - 2)
-            tpl = substr(tpl, RSTART + RLENGTH)
-        }
-        L[n] = tpl
-        if (n == 0) return 0
-        if (L[0] != "" && index(key, L[0]) != 1) return 0
-        rest = substr(key, length(L[0]) + 1)
-        for (i = 1; i <= n; i++) {
-            piece = L[i]
-            if (i == n) {
-                if (piece == "") { if (rest == "") return 0; V[S[i]] = rest; return 1 }
-                if (length(rest) <= length(piece)) return 0
-                if (substr(rest, length(rest) - length(piece) + 1) != piece) return 0
-                V[S[i]] = substr(rest, 1, length(rest) - length(piece)); return 1
-            }
-            if (piece == "") return 0
-            sub2 = substr(rest, 2); pos = index(sub2, piece)
-            if (pos == 0) return 0
-            V[S[i]] = substr(rest, 1, pos)
-            rest = substr(sub2, pos + length(piece))
-        }
-        return 0
-    }
-    BEGIN {
-        text = ENVIRON["LANG_T_TEXT"]; key = norm(text); found = ""
-        match(text, /^[ \t\n]*/); lead = substr(text, 1, RLENGTH)
-        match(text, /[ \t\n]*$/); trail = (RSTART > 0 ? substr(text, RSTART) : "")
-    }
-    /^#/ || NF < 2 { next }
-    {
-        en = norm($1); tr = $2; sub(/\r$/, "", tr)
-        if (tr == "" || en == tr) next
-        if (en == key) { exact = tr; exit }
-        # the most specific line (longest English) wins
-        if (index(en, "{") && length(en) > patlen && fits(en, key)) {
-            pat = tr; patlen = length(en)
-            for (s in V) pat = repl(pat, "{" s "}", V[s])
-        }
-    }
-    END {
-        if (key == "") { printf "%s", text; exit }
-        if (exact != "") printf "%s", lead exact trail
-        else if (pat != "") printf "%s", lead pat trail
-        else printf "%s", text
-    }' "$LANG_FILE" 2>/dev/null || printf '%s' "$1"
-}
-
-# The language file: the project's own copy (a re-run), else this branch
-# on GitHub.
-lang_load() {
-    LANG_CODE="$1"; LANG_FILE=""
-    [ "$LANG_CODE" = "en" ] && return 0
-    if [ -f "$PROJ/scripts/lang/$LANG_CODE.tsv" ]; then
-        LANG_FILE="$PROJ/scripts/lang/$LANG_CODE.tsv"; return 0
-    fi
-    mkdir -p "$INSTALL_DIR" 2>/dev/null || true
-    local dest="$INSTALL_DIR/lang-$LANG_CODE.tsv"
-    if fetch "https://raw.githubusercontent.com/cmh95209/Amadeus-Project/$BRANCH/scripts/lang/$LANG_CODE.tsv" "$dest" >/dev/null 2>&1 \
-            && [ -s "$dest" ]; then
-        LANG_FILE="$dest"
-    else
-        rm -f "$dest" 2>/dev/null || true
-        printf '%s\n' "  (This language's installer text could not be downloaded - the installer continues in English. Amadeus herself will use your language.)"
-    fi
-}
-
-choose_install_language() {
-    local saved="$PROJ/backend/language.txt" code="" a i line
-    if [ -f "$saved" ]; then
-        code="$(grep -v '^[[:space:]]*#' "$saved" 2>/dev/null | awk 'NF { print tolower($1); exit }')"
-        if printf '%s\n' "$INSTALL_LANGUAGES" | grep -q "^$code|" 2>/dev/null && [ -n "$code" ]; then
-            lang_load "$code"; return 0
-        fi
-    fi
-    printf '\n%s\n' "  Choose your language:"
-    i=0
+select_app_language() {
+    [ -f "$PROJ/backend/language.txt" ] && return 0   # a re-run keeps it
+    local a="" i=0 _t
+    log ""
+    log "  Which language should Amadeus show (her page and the translation of her replies)?"
     while IFS='|' read -r c en own; do
         i=$((i + 1))
-        if [ "$en" = "$own" ]; then printf '  %2d) %s\n' "$i" "$own"
-        else printf '  %2d) %s  (%s)\n' "$i" "$own" "$en"; fi
+        if [ "$en" = "$own" ]; then printf '  %2d) %s\n' "$i" "$own"; else printf '  %2d) %s  (%s)\n' "$i" "$own" "$en"; fi
     done <<EOF_LANGS
-$INSTALL_LANGUAGES
+$APP_LANGUAGES
 EOF_LANGS
-    a=""
-    for _try in 1 2 3 4 5 6 7 8 9 10; do
+    for _t in 1 2 3 4 5 6 7 8 9 10; do
         read -r -p "  Type a number and press Enter (just Enter = English): " a || a="1"
         a="$(printf '%s' "$a" | tr -d '[:space:]')"
         [ -z "$a" ] && a="1"
@@ -275,59 +204,20 @@ EOF_LANGS
     done
     case "$a" in ''|*[!0-9]*) a=1 ;; esac
     { [ "$a" -ge 1 ] && [ "$a" -le 16 ]; } || a=1
-    code="$(printf '%s\n' "$INSTALL_LANGUAGES" | sed -n "${a}p" | cut -d'|' -f1)"
-    [ -n "$INSTALL_LOG" ] && printf '%s\n' "Language: $code" >> "$INSTALL_LOG"
-    lang_load "${code:-en}"
+    APP_LANGUAGE="$(printf '%s\n' "$APP_LANGUAGES" | sed -n "${a}p" | cut -d'|' -f1)"
+    log "  (language: $APP_LANGUAGE)"
+    return 0
 }
-
-# After the project is downloaded: the app starts in the chosen language.
-save_install_language() {
+save_app_language() {
     local path="$PROJ/backend/language.txt"
-    [ -d "$PROJ/backend" ] || return 0
-    [ -f "$path" ] && return 0
+    [ -n "$APP_LANGUAGE" ] && [ -d "$PROJ/backend" ] && [ ! -f "$path" ] || return 0
     {
-        printf '%s\n' "$LANG_CODE"
+        printf '%s\n' "$APP_LANGUAGE"
         printf '%s\n' "# Amadeus display language: change the code on the first line, save,"
         printf '%s\n' "# then refresh the Amadeus page. Unknown or empty = English."
-        printf '# %s\n' "$(printf '%s\n' "$INSTALL_LANGUAGES" | awk -F'|' '{ printf "%s%s %s", (NR > 1 ? ", " : ""), $1, $2 }')"
+        printf '# %s\n' "$(printf '%s\n' "$APP_LANGUAGES" | awk -F'|' '{ printf "%s%s %s", (NR > 1 ? ", " : ""), $1, $2 }')"
     } > "$path" 2>/dev/null || true
-    # From now on the project's own copy of the language file is used.
-    if [ "$LANG_CODE" != "en" ] && [ -f "$PROJ/scripts/lang/$LANG_CODE.tsv" ]; then
-        LANG_FILE="$PROJ/scripts/lang/$LANG_CODE.tsv"
-    fi
-}
-
-# The screen in the user's language (lang_t, below); the log in English.
-to_log() { if [ -n "$INSTALL_LOG" ]; then printf '%s\n' "$1" >> "$INSTALL_LOG"; fi; return 0; }
-log()  { printf '%s%s%s\n' "$C_DIM" "$(lang_t "$1")" "$C_RESET"; to_log "$1"; }
-step() {
-    printf '%s\n' "============================================================" | tee_to
-    printf '%s %s%s %s: %s%s\n' "$C_BOLD" "$C_BLU" "$(lang_t "STEP")" "$1" "$(lang_t "$2")" "$C_RESET"
-    to_log "STEP $1: $2"
-    printf '%s\n' "============================================================" | tee_to
-}
-die() {
-    local extra="${3:-}"
-    printf '%s%s %s%s\n' "$C_BOLD$C_RED" "$(lang_t "STOPPED:")" "$(lang_t "$1")" "$C_RESET"
-    to_log "STOPPED: $1"
-    if [ -n "${2:-}" ]; then
-        printf '%s%s%s\n' "$C_DIM" "$(lang_t "$2")" "$C_RESET"
-        to_log "$2"
-    fi
-    copy_install_log
-    # Where to get help: the Discord + the exact file to send - the install
-    # log, and voice_pip.log when the voice packages failed.
-    if [ -n "${INSTALL_LOG:-}" ]; then
-        printf '%s\n' "$(lang_t "Need help? Ask on our Discord: $DISCORD_URL - and send the file $INSTALL_LOG.")"
-        to_log "Need help? Ask on our Discord: $DISCORD_URL - and send the file $INSTALL_LOG."
-    else
-        printf '%s\n' "Need help? Ask on our Discord: $DISCORD_URL." | tee_to
-    fi
-    if [ -n "$extra" ]; then
-        printf '%s\n' "$(lang_t "  (and this one too: $extra)")"
-        to_log "  (and this one too: $extra)"
-    fi
-    exit 1
+    return 0
 }
 
 # The installer's log, copied into the app's logs folder so it stays with the
@@ -680,7 +570,7 @@ read_answer() {
     i=0
     while [ $i -lt 20 ]; do
         a=""
-        read -r -p "$(lang_t "$prompt"): " a || a=""
+        read -r -p "$prompt: " a || a=""
         a="$(printf '%s' "$a" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
         for v in "$@"; do
             if [ "$a" = "$v" ]; then ANSWER="$a"; log "  (answer: $a)"; return 0; fi
@@ -723,7 +613,7 @@ confirm_local_model() {
         else
             log "  Her built-in model needs at least $MAC_MIN_RAM_GB GB of memory (this Mac has $HW_RAM_GB GB). The smaller models that would fit don't sound like her, so Amadeus will use option B: you connect a model yourself (a cloud service such as OpenRouter, or your own model server)."
         fi
-        read -r -p "$(lang_t "Press Enter to continue with option B") " _ || true
+        read -r -p "Press Enter to continue with option B " _ || true
         set_choice_custom; return 0
     fi
     need="$(awk -v a="$HW_DL_GB" -v b="$DISK_HEADROOM_GB" 'BEGIN { printf "%.1f", a + b }')"
@@ -732,7 +622,7 @@ confirm_local_model() {
         read_answer "Type B to continue with option B, or Q to stop here (free up space, then run the installer again)" B Q
         if [ "$ANSWER" = "Q" ]; then
             log "Stopped - nothing was changed. Free up some space, then run the installer again."
-            read -r -p "$(lang_t "Press Enter to close this window") " _ || true
+            read -r -p "Press Enter to close this window " _ || true
             exit 0
         fi
         set_choice_custom; return 0
@@ -1301,7 +1191,7 @@ fi
 # ----------------------------------------------------------------------------
 #  STEP 0: how should she think? (before anything is downloaded)
 # ----------------------------------------------------------------------------
-choose_install_language
+select_app_language
 hardware_check
 llm_choice_step
 if [ "$LLM_SCREENS_ONLY" = 1 ]; then
@@ -1316,7 +1206,7 @@ fi
 if xcode-select -p >/dev/null 2>&1; then confirm_new_defaults; fi
 log ""
 log "Everything else installs now. It downloads several gigabytes, so give it time."
-read -r -p "$(lang_t "Press Enter to begin") " _ || true
+read -r -p "Press Enter to begin " _ || true
 start_background_downloads
 
 # ----------------------------------------------------------------------------
@@ -1746,7 +1636,7 @@ fi
 # ----------------------------------------------------------------------------
 #  STEP 4: the voice engine (GPT-SoVITS) + her voice patches
 # ----------------------------------------------------------------------------
-save_install_language
+save_app_language
 step 4 "Setting up the voice engine"
 
 GPT="$PROJ/GPT-SoVITS"
@@ -2091,7 +1981,7 @@ if [ "$CHOICE_MODE" = "builtin" ]; then
     log "(Install log saved to: $INSTALL_LOG)"
     copy_install_log
     printf '%s\n' "" | tee_to
-    read -r -p "$(lang_t "Press Enter to close this window")" _ || true
+    read -r -p "Press Enter to close this window" _ || true
     exit 0
 fi
 log "  Here is what to do next:"
@@ -2115,4 +2005,4 @@ log "(Install log saved to: $INSTALL_LOG)"
 copy_install_log
 
 printf '%s\n' "" | tee_to
-read -r -p "$(lang_t "Press Enter to close this window")" _ || true
+read -r -p "Press Enter to close this window" _ || true

@@ -153,6 +153,37 @@ class TranslationLineTests(_LangFile):
         self.assertIn("natural spoken Spanish", llm.seen[0][0]["content"])
 
 
+class FixedLineTests(_LangFile):
+    def setUp(self):
+        super().setUp()
+        import json
+        self.old_dir = display_lang._LANG_DIR
+        display_lang._LANG_DIR = self.tmp.name
+        display_lang._her_cache.clear()
+        with open(os.path.join(self.tmp.name, "ms.json"), "w", encoding="utf-8") as f:
+            json.dump({"her": {"Try again.": "Cuba lagi."}}, f)
+
+    def tearDown(self):
+        display_lang._LANG_DIR = self.old_dir
+        display_lang._her_cache.clear()
+        super().tearDown()
+
+    def test_translation_japanese_and_english(self):
+        self.write("ms")
+        self.assertEqual(display_lang.fixed("Try again.", "もう一度。"), "Cuba lagi.")
+        self.assertEqual(display_lang.fixed("Not in the file.", "x"), "Not in the file.")
+        self.write("ja")
+        self.assertEqual(display_lang.fixed("Try again.", "もう一度。"), "もう一度。")
+        self.write("en")
+        self.assertEqual(display_lang.fixed("Try again.", "もう一度。"), "Try again.")
+
+    def test_honest_line_reaches_the_user_translated(self):
+        self.write("ms")
+        pack = chat.AmadeusPack(assistant_reply_JPS="もう一度。", assistant_reply_ENG="Try again.")
+        out = chat._ensure_english(pack, _FakeLLM("unused"))
+        self.assertEqual(out.assistant_reply_ENG, "Cuba lagi.")
+
+
 class HerVoiceStaysJapaneseTests(_LangFile):
     def test_chinese_reply_is_not_japanese(self):
         self.assertFalse(chat._speaks_japanese("是啊，今天有点冷。带上外套吧。"))

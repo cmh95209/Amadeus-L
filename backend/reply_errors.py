@@ -56,6 +56,28 @@ WEATHER_PREFIX = "The weather data was fetched, but the reply couldn't be finish
 # ------------------------------------------------------------------------------
 
 
+class Coded(str):
+    """A message that also carries a code for the page (multi-language,
+    2026-11-19): the page shows its own translation of `key` filled with
+    `vars`, and this English text when it has none. Behaves as a plain str
+    everywhere else."""
+
+    def __new__(cls, text: str, key: str, vars: dict | None = None):  # noqa: A002
+        obj = super().__new__(cls, text)
+        obj.key = key
+        obj.vars = dict(vars or {})
+        return obj
+
+
+def coded_fields(message) -> dict:
+    """{"message": ..., plus "message_key"/"message_vars" for a Coded one}."""
+    out = {"message": str(message)}
+    if isinstance(message, Coded):
+        out["message_key"] = message.key
+        out["message_vars"] = message.vars
+    return out
+
+
 class ReplyFailed(Exception):
     """A user-started reply that could not be completed.
 
@@ -171,16 +193,22 @@ def describe(exc, who: str = "", model: str = "") -> str | None:
     model_text = f'"{model}"' if model else "this model"
     if status == 429 and _is_daily_quota(exc):
         label, what = DAILY_QUOTA_TEXT
+        kind = "daily"
     elif status in STATUS_TEXT:
         label, what = STATUS_TEXT[status]
+        kind = str(status)
     elif status >= 500:
         label, what = SERVER_SIDE_TEXT
+        kind = "server"
     else:
         label, what = "request failed", "Please try again."
+        kind = "other"
     what = what.format(who=who, model=model_text)
     reason = provider_reason(exc)
     said = f' It says: "{reason}".' if reason else ""
-    return f"Error {status} ({label}) from {who}: {what}{said}"
+    return Coded(f"Error {status} ({label}) from {who}: {what}{said}", "error.status",
+                 {"status": status, "kind": kind, "who": who, "model": model or "",
+                  "reason": reason})
 
 
 def describe_failure(failure: ReplyFailed, who: str = "", model: str = "",
@@ -194,9 +222,12 @@ def describe_failure(failure: ReplyFailed, who: str = "", model: str = "",
             text = fallback(failure.cause)
     if not text:
         why = f" ({failure.detail})" if failure.detail else ""
-        text = UNUSABLE_TEXT.format(why=why)
-    if failure.kind == "search":
-        return SEARCH_PREFIX + text
-    if failure.kind == "weather":
-        return WEATHER_PREFIX + text
+        text = Coded(UNUSABLE_TEXT.format(why=why), "error.unusable",
+                     {"detail": failure.detail or ""})
+    key = getattr(text, "key", None)
+    vars_ = dict(getattr(text, "vars", {}) or {})
+    if failure.kind in ("search", "weather"):
+        vars_["turn"] = failure.kind
+        prefix = SEARCH_PREFIX if failure.kind == "search" else WEATHER_PREFIX
+        return Coded(prefix + text, key, vars_) if key else prefix + text
     return text

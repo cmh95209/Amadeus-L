@@ -26,7 +26,9 @@ class InteractionAudioTests(unittest.TestCase):
         scope = {'store': SimpleNamespace(
                      append_message=lambda role, text, japanese=None: messages.append((role, text)),
                      set_message_audio=lambda message_id, audio_url: None),
-                 'random': random}
+                 'random': random,
+                 # English reader: her line as written (display_lang.fixed).
+                 'display_lang': SimpleNamespace(fixed=lambda en, ja='': en)}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), 'chat.py', 'exec'), scope)
         for interaction_id, variants in scope['INTERACTION_RESPONSES'].items():
             for variant in variants:

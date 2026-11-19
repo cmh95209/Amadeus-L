@@ -2096,6 +2096,11 @@ def _ensure_english(pack: "AmadeusPack", llm) -> "AmadeusPack":
     Japanese line rather than an empty box (her real words, just untranslated).
     """
     eng = (pack.assistant_reply_ENG or "").strip()
+    # One of her pre-written English lines (an honest apology ...): its
+    # translation from the user's language file, when there is one.
+    fixed = display_lang.fixed(eng, pack.assistant_reply_JPS or "")
+    if fixed != eng:
+        return AmadeusPack(assistant_reply_JPS=pack.assistant_reply_JPS, assistant_reply_ENG=fixed)
     # The user reads Japanese: her line is the display line.
     if _display_is_japanese():
         return AmadeusPack(assistant_reply_JPS=pack.assistant_reply_JPS,
@@ -4659,7 +4664,7 @@ def _greeting_fallback_pack(situation: dict) -> "AmadeusPack":
     claim."""
     en, ja = _GREETING_FALLBACK_LINES.get(
         situation.get("situation"), _GREETING_FALLBACK_LINES["unknown"])
-    return AmadeusPack(assistant_reply_JPS=ja, assistant_reply_ENG=en)
+    return AmadeusPack(assistant_reply_JPS=ja, assistant_reply_ENG=display_lang.fixed(en, ja))
 
 
 def _greeting_timing_log_line(kind: str, conversation_id, situation,
@@ -6154,7 +6159,7 @@ def SpecialInteraction(interaction_value: int) -> dict:
         raise ValueError("Unknown interaction")
     # Select the text AND recording together, never independently.
     variant = random.choice(response_variants)
-    response = variant["text"]
+    response = display_lang.fixed(variant["text"], variant.get("japanese") or "")
     event_id = store.append_message("user", event)
     response_id = store.append_message(
         "assistant", response, japanese=variant.get("japanese")

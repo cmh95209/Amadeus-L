@@ -142,3 +142,44 @@ def listing() -> Dict[str, object]:
         for c, (eng, own) in LANGUAGES.items()
     ]
     return {"code": code, "rtl": code in RTL, "languages": langs}
+
+
+# --- Her fixed lines (ceremony, pokes, honest apologies) --------------------
+# They are pre-written in English + Japanese. Their translations live in the
+# page's own language file (frontend/src/lang/<code>.json, section "her",
+# keyed by the English line), so one file per language holds everything the
+# user reads. A line with no translation stays English.
+_LANG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "frontend", "src", "lang")
+_her_cache: Dict[str, tuple] = {}   # code -> (mtime, {english: translation})
+
+
+def _her_lines(code: str) -> Dict[str, str]:
+    import json
+    path = os.path.join(_LANG_DIR, f"{code}.json")
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return {}
+    cached = _her_cache.get(code)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            her = json.load(f).get("her") or {}
+        her = {k: v for k, v in her.items() if isinstance(v, str) and v.strip()}
+    except (OSError, ValueError, AttributeError):
+        her = {}
+    _her_cache[code] = (mtime, her)
+    return her
+
+
+def fixed(english: str, japanese: str = "") -> str:
+    """One of her pre-written lines as the user reads it: Japanese readers
+    get her Japanese, others the translation in their file, else English."""
+    code = get()
+    if code == "en" or not english:
+        return english
+    if code == "ja":
+        return japanese or english
+    return _her_lines(code).get(english.strip(), english)

@@ -280,9 +280,19 @@ def _llm_error_message(exc: Exception) -> str:
     return _llm_error_message_plain(exc)
 
 
-def _with_code(status: int, label: str, text: str) -> str:
+def _with_code(status: int, label: str, text: str, kind: str = "") -> str:
     who = _provider_name() or reply_errors.GENERIC_SERVER
-    return f"Error {status} ({label}) from {who}: {text}"
+    out = f"Error {status} ({label}) from {who}: {text}"
+    if not kind:
+        return out
+    return reply_errors.Coded(out, "error.status", {"status": status, "kind": kind,
+                                                    "who": who, "model": "", "reason": ""})
+
+
+def _error_json(exc: Exception) -> dict:
+    """The JSON body of a failed reply: the English message plus its code for
+    the page's translation (reply_errors.Coded)."""
+    return reply_errors.coded_fields(_llm_error_message(exc))
 
 
 def _llm_error_message_plain(exc: Exception) -> str:
@@ -293,23 +303,31 @@ def _llm_error_message_plain(exc: Exception) -> str:
         if isinstance(exc, openai.APIConnectionError):
             if builtin_llm.active():
                 if builtin_llm.model_missing():
-                    return ("Her built-in model is not installed yet. Run the installer "
-                            "again - it continues the download where it stopped.")
+                    return reply_errors.Coded(
+                        "Her built-in model is not installed yet. Run the installer "
+                        "again - it continues the download where it stopped.", "error.builtin_missing")
                 state = builtin_server.status()["state"]
                 if state == "unloaded":
-                    return ("Her built-in model is not loaded. Load it in Settings -> "
-                            "Connection.")
+                    return reply_errors.Coded(
+                        "Her built-in model is not loaded. Load it in Settings -> "
+                        "Connection.", "error.builtin_unloaded")
                 if state == "failed":
-                    return ("Her built-in model could not load - see Settings -> "
-                            "Connection for why.")
-                return ("Can't reach her built-in model. It may still be loading - "
-                        "Settings -> Connection shows how it is doing.")
-            return f"Can't reach the model server at {llm._server_url()}. Is it running?"
+                    return reply_errors.Coded(
+                        "Her built-in model could not load - see Settings -> "
+                        "Connection for why.", "error.builtin_failed")
+                return reply_errors.Coded(
+                    "Can't reach her built-in model. It may still be loading - "
+                    "Settings -> Connection shows how it is doing.", "error.builtin_loading")
+            return reply_errors.Coded(
+                f"Can't reach the model server at {llm._server_url()}. Is it running?",
+                "error.unreachable", {"url": llm._server_url()})
         if isinstance(exc, openai.APITimeoutError):
-            return "The model server took too long to respond. Is it busy or overloaded?"
+            return reply_errors.Coded(
+                "The model server took too long to respond. Is it busy or overloaded?",
+                "error.timeout")
         if isinstance(exc, openai.AuthenticationError):
             return _with_code(401, "key rejected",
-                              "the API key was rejected. Check it in Settings.")
+                              "the API key was rejected. Check it in Settings.", kind="401")
     except Exception:
         pass
     try:
@@ -453,7 +471,7 @@ def _web_stream(work, finish, with_aside: bool):
                 yield _sse(payload)
             elif kind == "error":
                 print("[Flask] LLM failure (web stream):", repr(payload))
-                yield _sse({"phase": "error", "message": _llm_error_message(payload)})
+                yield _sse({"phase": "error", **_error_json(payload)})
                 return
             else:
                 yield _sse(finish(payload))
@@ -754,7 +772,7 @@ def attachments_react():
         return jsonify({"message": str(exc)}), 400
     except Exception as exc:
         print("[Flask] Attach reaction failed:", repr(exc))
-        return jsonify({"message": _llm_error_message(exc)}), 502
+        return jsonify(_error_json(exc)), 502
     if result is None:
         return jsonify({"status": "skipped"})
     pack, assistant_id, conv_id = result
@@ -832,7 +850,7 @@ def request_message():
         # switched to streaming yet, so the original JSON error protocol
         # still applies.
         print("[Flask] LLM failure (voice-first call 1):", repr(exc))
-        return jsonify({"message": _llm_error_message(exc)}), 502
+        return jsonify(_error_json(exc)), 502
     timing.line_ready(turn.assistant_id, started)
     print("\n[Flask]: JPS (voice-first call 1):", turn.pack.assistant_reply_JPS)
 
@@ -1296,7 +1314,7 @@ def translate_message(message_id):
         return jsonify({"message": str(exc)}), 400
     except Exception as exc:
         print("[Flask] Translate again failed:", repr(exc))
-        return jsonify({"message": _llm_error_message(exc)}), 502
+        return jsonify(_error_json(exc)), 502
     return jsonify({"assistant_id": message_id, "response": english})
 
 
@@ -1330,7 +1348,7 @@ def regenerate():
         return jsonify({"message": str(exc)}), 400
     except Exception as exc:
         print("[Flask] LLM failure during regenerate:", repr(exc))
-        return jsonify({"message": _llm_error_message(exc)}), 502
+        return jsonify(_error_json(exc)), 502
 
     speech_id = uuid.uuid4().hex
     with _speech_requests_lock:
@@ -2429,7 +2447,7 @@ def greet():
                         "ceremony": memory.CEREMONY_DONE})
     except Exception as exc:
         print("[Flask] Greeting failure:", repr(exc))
-        return jsonify({"message": _llm_error_message(exc)}), 502
+        return jsonify(_error_json(exc)), 502
 
     speech_id = _mint_speech_id(pack, assistant_id)
     return jsonify({
@@ -2498,7 +2516,7 @@ def greet_conversation(conversation_id):
                         "superseded": True})
     except Exception as exc:
         print("[Flask] Switch-greeting failure:", repr(exc))
-        return jsonify({"message": _llm_error_message(exc)}), 502
+        return jsonify(_error_json(exc)), 502
     speech_id = _mint_speech_id(pack, assistant_id)
     return jsonify({
         "ready": True,
@@ -2537,7 +2555,7 @@ def poke_conversation(conversation_id):
                         "superseded": True})
     except Exception as exc:
         print("[Flask] Poke failure:", repr(exc))
-        return jsonify({"message": _llm_error_message(exc)}), 502
+        return jsonify(_error_json(exc)), 502
     speech_id = _mint_speech_id(pack, assistant_id)
     return jsonify({
         "ready": True,
@@ -2575,7 +2593,7 @@ def regenerate_greeting_route(message_id):
                         "superseded": True})
     except Exception as exc:
         print("[Flask] Greeting-regenerate failure:", repr(exc))
-        return jsonify({"message": _llm_error_message(exc)}), 502
+        return jsonify(_error_json(exc)), 502
     speech_id = _mint_speech_id(pack, assistant_id)
     return jsonify({
         "ready": True,

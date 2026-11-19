@@ -49,6 +49,7 @@ import threading
 import time
 from typing import Optional, Tuple
 
+import display_lang
 import memory as store
 
 # --- THE FOUR FIXED LINES ---------------------------------------------------
@@ -266,8 +267,10 @@ def reset_run_tracker() -> None:
 
 
 def line(kind: str) -> Tuple[str, str, str]:
-    """(EN display, JA display, JA spoken) for one of the four fixed lines."""
-    return CEREMONY_LINES[kind]
+    """(display line, JA display, JA spoken) for one of the fixed lines. The
+    display line is in the user's language (display_lang.fixed)."""
+    en, ja_display, ja_voice = CEREMONY_LINES[kind]
+    return display_lang.fixed(en, ja_display), ja_display, ja_voice
 
 
 def reminder_due(now: Optional[float] = None) -> bool:

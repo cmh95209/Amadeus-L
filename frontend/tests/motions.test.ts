@@ -53,12 +53,14 @@ try {
   assert.notEqual(model.getParameterValueById(angle), 0, "idle updates the actual model");
   assert.equal(player.playMotion("TapReaction"), "started");
   assert.equal(player.playMotion("TapReaction"), "busy");
-  advance(4);
+  // Longer than her tap motion (KurisuSpecialTouch, 5.5 s; the old 4 s
+  // assumed a shorter file and failed since 2026-10).
+  advance(6);
   const mouth = CubismFramework.getIdManager().getId("ParamMouthOpenY");
   const mouthIndex = model.getParameterIndex(mouth);
   assert.equal(model.getParameterValueById(mouth), model.getParameterDefaultValue(mouthIndex), "reaction-only parameters return to base pose");
   assert.equal(player.playMotion("TapReaction"), "started", "reaction can replay after idle resumes");
-  advance(4);
+  advance(6);
   assert.equal(player.playMotion("Wave"), "started", "new groups need no player changes");
   advance(4);
   assert.equal(requests, expectedMotionRequests, "clicks never fetch motion files");

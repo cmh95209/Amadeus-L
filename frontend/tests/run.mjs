@@ -12,8 +12,9 @@ globalThis.Live2DCubismCore = runInThisContext(
 )(createRequire(import.meta.url), root);
 const server = await createServer({ root, server: { middlewareMode: true }, appType: "custom" });
 try {
-  // First: it does not depend on the Live2D core, and the pre-existing
-  // motions.test.ts failure stops the run.
+  // First: it does not depend on the Live2D core. (motions.test.ts failed
+  // here from 2026-10 to 2026-11-19 - its tap wait was shorter than the
+  // 5.5 s tap motion - and stopped the run before speech.test.ts.)
   await server.ssrLoadModule("/tests/greeting.test.ts");
   await server.ssrLoadModule("/tests/modelPicker.test.ts");
   await server.ssrLoadModule("/tests/providers.test.ts");

@@ -7,14 +7,15 @@ import { isKnownLink, splitLinks } from "../linkText";
 
 export function LinkedText({ text, known }: { text: string; known?: Set<string> }) {
   const parts = splitLinks(text);
-  if (!parts.some((p) => p.href)) return <>{text}</>;
+  // translate="no": chat text is never swapped by the page translator (i18n.ts).
+  if (!parts.some((p) => p.href)) return <span translate="no">{text}</span>;
   return (
     <>
       {parts.map((part, i) =>
         part.href ? (
           <span key={i} className="chat-link-wrap">
             <a className="chat-link" href={part.href} target="_blank" rel="noopener noreferrer"
-              title={part.href}>
+              title={part.href} translate="no">
               {part.text}
             </a>
             {known && !isKnownLink(part.href, known) && (
@@ -25,7 +26,7 @@ export function LinkedText({ text, known }: { text: string; known?: Set<string> 
             )}
           </span>
         ) : (
-          <span key={i}>{part.text}</span>
+          <span key={i} translate="no">{part.text}</span>
         ),
       )}
     </>

@@ -20,7 +20,7 @@ export const VOICE_PLAYBACK_CHOICES: { value: VoicePlayback; title: string; desc
   {
     value: "smooth",
     title: "Smooth",
-    desc: "Her voice and the English line arrive together. On a slower PC she waits a moment so she speaks without gaps.",
+    desc: "Her voice and the translation arrive together. On a slower PC she waits a moment so she speaks without gaps.",
   },
   {
     value: "early",

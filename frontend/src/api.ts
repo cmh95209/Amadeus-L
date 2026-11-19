@@ -1,4 +1,5 @@
 import { isCeremonyWaitLine } from "./greetingFlow";
+import { codedMessage } from "./i18n";
 import { normalizeSources } from "./sources";
 import type { SourceEntry } from "./sources";
 import type { PictureInfo } from "./attachments";
@@ -124,9 +125,7 @@ async function parseResponse(response: Response) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(
-      data?.message || `Request failed (${response.status})`
-    );
+    throw new Error(codedMessage(data, `Request failed (${response.status})`));
   }
 
   return data;
@@ -253,7 +252,7 @@ export async function readVoiceFirstStream(
 ): Promise<MessageTurn> {
   if (!response.ok) {
     const data = await parseResponse(response);
-    throw new Error(data?.message || `Request failed (${response.status})`);
+    throw new Error(codedMessage(data, `Request failed (${response.status})`));
   }
   const reader = response.body?.getReader();
   if (!reader) {
@@ -337,7 +336,7 @@ export async function readVoiceFirstStream(
               settleReply();
               settleText(full);
             } else if (event.phase === "error") {
-              failure = new Error(event.message || "The reply failed. Please try again.");
+              failure = new Error(codedMessage(event, "The reply failed. Please try again."));
             }
           }
         }

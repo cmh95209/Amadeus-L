@@ -2962,3 +2962,13 @@ button {
 @media (max-width: 520px) {
   .settings-modal .remote-command { flex-wrap: wrap; }
 }
+
+/* Right-to-left languages (Arabic, i18n.ts): each paragraph takes the
+   direction of its own text, so Arabic reads right to left while her
+   Japanese, names and links stay left to right. The layout is not mirrored. */
+html.rtl p, html.rtl label, html.rtl li, html.rtl button, html.rtl h1, html.rtl h2,
+html.rtl h3, html.rtl .settings-help, html.rtl .conn-section-title, html.rtl .bubble,
+html.rtl .message-meta, html.rtl option {
+  unicode-bidi: plaintext;
+  text-align: start;
+}

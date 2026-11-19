@@ -10,6 +10,7 @@ import { ModelPicker } from "./components/ModelPicker";
 import { NameListEditor, nameListProblem } from "./components/NameListEditor";
 import { SourcesBar } from "./components/SourcesBar";
 import { LinkedText } from "./components/LinkedText";
+import { LanguagePicker } from "./components/LanguagePicker";
 import { AttachMenu } from "./components/AttachMenu";
 import { AttachmentTray } from "./components/AttachmentTray";
 import { PictureStrip } from "./components/PictureStrip";
@@ -3068,7 +3069,7 @@ export default function App() {
                       )}
                       {missing === "failed" && (
                         <span className="bubble-translation-note">
-                          The English translation didn't come through.{" "}
+                          The translation didn't come through.{" "}
                           <button type="button" className="translate-again"
                             disabled={retranslatingId === message.id || message.id == null}
                             onClick={() => void handleTranslateAgain(message.id!)}>
@@ -3077,7 +3078,7 @@ export default function App() {
                         </span>
                       )}
                       {message.translating && !message.content && (
-                        <span className="bubble-translating" aria-label="Writing the English line">
+                        <span className="bubble-translating" aria-label="Writing the translation">
                           <i />
                           <i />
                           <i />
@@ -3085,7 +3086,8 @@ export default function App() {
                       )}
                     </>);
                   })()}
-                  {(japaneseShown || untranslatedState(message)) && message.role !== "user" && message.japanese && (
+                  {(japaneseShown || untranslatedState(message)) && message.role !== "user" && message.japanese &&
+                    message.japanese !== message.content && (
                     <span className="bubble-japanese" lang="ja">
                       <LinkedText text={message.japanese} known={knownLinkKeys(message.sources)} />
                     </span>
@@ -3863,7 +3865,7 @@ export default function App() {
                   the built-in model much more on {onMac ? "Macs with less memory" : "smaller graphics cards"}), and
                   cloud services charge for the thinking too. "Her replies"
                   also covers greetings and deciding whether to search the
-                  web; "translations" covers the English line and what her
+                  web; "translations" covers the translation line and what her
                   memory learns. Some cloud models can't turn reasoning off
                   completely - they use their lowest level instead. If her
                   replies look cut off or broken with reasoning on, raise Max
@@ -3900,6 +3902,7 @@ export default function App() {
             </div>
 
             <div hidden={settingsSection !== "preferences"}>
+              <LanguagePicker />
               <div className="conn-section">
                 <span className="conn-section-title">About you</span>
                 <label>
@@ -4023,7 +4026,7 @@ export default function App() {
                 <p className="settings-help" id="address-help">
                   "Let her decide" starts polite (さん) and gets more familiar as
                   trust grows, taking your pronouns into account. The ending also
-                  shows in the English line (e.g. {(userName.trim() || "Alex") + "-kun"}).
+                  shows in the translation line (e.g. {(userName.trim() || "Alex") + "-kun"}).
                 </p>
 
                 <label>
@@ -4054,7 +4057,7 @@ export default function App() {
                 <p className="settings-help" id="names-help">
                   Names she should write and say the same way every time - friends,
                   family, pets, characters (e.g. Ineffa → イネファ). Her Japanese line,
-                  her voice and the English line all follow this list. Press Suggest
+                  her voice and the translation line all follow this list. Press Suggest
                   for a reading, or type it in katakana.
                 </p>
               </div>

@@ -42,9 +42,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import display_lang  # noqa: E402
 import voice_lang  # noqa: E402
-import chat  # noqa: E402
 import source_tags  # noqa: E402
 from test_ceremony import _FreshAppTests  # noqa: E402 - the shared harness
+# NOTE: no module-level `import chat` here on purpose. voice_lang translates
+# through `import chat` AT CALL TIME (sys.modules["chat"]), and other suites
+# (test_sampling) permanently replace that module object. A binding made at
+# import time goes stale in a full discover run; the classes below bind the
+# CURRENT module in setUp instead (self.chat).
 
 JPS = "そうね、今日は少し寒いわ。上着を持っていきなさい。"
 EN = "Yeah, it's a bit cold today. Take a jacket."
@@ -119,6 +123,11 @@ class _VoiceFile(unittest.TestCase):
         voice_lang.set_path_for_tests(self.path)
         display_lang.set_path_for_tests(self.display_path)
         voice_lang.clear_cache()
+        # The exact lookup voice_lang relies on: `import chat` at call time
+        # resolves sys.modules["chat"], which other suites may have replaced
+        # (test_sampling pops and re-imports it without restoring). Bind that
+        # same object so every patch below reaches the code under test.
+        self.chat = importlib.import_module("chat")
         self.addCleanup(voice_lang.set_path_for_tests, None)
         self.addCleanup(display_lang.set_path_for_tests, None)
         self.addCleanup(voice_lang.clear_cache)
@@ -287,12 +296,12 @@ class VoiceTextTests(_VoiceFile):
     def setUp(self):
         super().setUp()
         # No data-dir reads from the user-hint lines in these pure tests.
-        p = patch.object(chat, "_user_hint_lines", return_value=[])
+        p = patch.object(self.chat, "_user_hint_lines", return_value=[])
         p.start()
         self.addCleanup(p.stop)
 
     def no_model(self):
-        return patch.object(chat, "_translation_llm",
+        return patch.object(self.chat, "_translation_llm",
                             side_effect=AssertionError("a model call was made"))
 
     def test_ja_is_the_old_path(self):
@@ -332,7 +341,7 @@ class VoiceTextTests(_VoiceFile):
                 voice_lang.set(voice)
                 voice_lang.clear_cache()
                 llm = _FakeLLM(answer)
-                with patch.object(chat, "_translation_llm", return_value=llm):
+                with patch.object(self.chat, "_translation_llm", return_value=llm):
                     text, lang = voice_lang.voice_text(JPS, "")
                 self.assertEqual((text, lang), (answer, voice))
                 self.assertEqual(len(llm.seen), 1)             # ONE call
@@ -343,7 +352,7 @@ class VoiceTextTests(_VoiceFile):
         self.display("zh")
         voice_lang.set("yue")
         llm = _FakeLLM(YUE)
-        with patch.object(chat, "_translation_llm", return_value=llm):
+        with patch.object(self.chat, "_translation_llm", return_value=llm):
             voice_lang.voice_text(JPS, "")
         self.assertIn("written in Cantonese's own script", llm.seen[0][0]["content"])
 
@@ -351,22 +360,22 @@ class VoiceTextTests(_VoiceFile):
         self.display("en")
         voice_lang.set("zh")
         llm = _FakeLLM(EN)          # the model wrote English for a zh voice
-        with patch.object(chat, "_translation_llm", return_value=llm):
+        with patch.object(self.chat, "_translation_llm", return_value=llm):
             self.assertEqual(voice_lang.voice_text(JPS, ""), (JPS, "ja"))
 
     def test_model_error_falls_back_to_japanese(self):
         self.display("en")
         voice_lang.set("en")
-        with patch.object(chat, "_translation_llm", side_effect=RuntimeError("no model")):
+        with patch.object(self.chat, "_translation_llm", side_effect=RuntimeError("no model")):
             self.assertEqual(voice_lang.voice_text(JPS, ""), (JPS, "ja"))
         llm = _FakeLLM(RuntimeError("429"))
-        with patch.object(chat, "_translation_llm", return_value=llm):
+        with patch.object(self.chat, "_translation_llm", return_value=llm):
             self.assertEqual(voice_lang.voice_text(JPS, ""), (JPS, "ja"))
 
     def test_empty_translation_falls_back_to_japanese(self):
         self.display("en")
         voice_lang.set("ko")
-        with patch.object(chat, "_translation_llm", return_value=_FakeLLM("")):
+        with patch.object(self.chat, "_translation_llm", return_value=_FakeLLM("")):
             self.assertEqual(voice_lang.voice_text(JPS, ""), (JPS, "ja"))
 
     def test_wrong_display_line_translates_instead(self):
@@ -375,7 +384,7 @@ class VoiceTextTests(_VoiceFile):
         self.display("zh")
         voice_lang.set("zh")
         llm = _FakeLLM(ZH)
-        with patch.object(chat, "_translation_llm", return_value=llm):
+        with patch.object(self.chat, "_translation_llm", return_value=llm):
             self.assertEqual(voice_lang.voice_text(JPS, EN), (ZH, "zh"))
         self.assertEqual(len(llm.seen), 1)
 
@@ -385,11 +394,11 @@ class VoiceTextTests(_VoiceFile):
         self.display("ja")
         voice_lang.set("en")
         llm = _FakeLLM(EN)
-        with patch.object(chat, "_translation_llm", return_value=llm):
+        with patch.object(self.chat, "_translation_llm", return_value=llm):
             text, lang = voice_lang.voice_text(JPS, "")
         self.assertEqual((text, lang), (EN, "en"))
         guard_llm = _FakeLLM(JPS)
-        self.assertEqual(chat._ensure_japanese_jps(EN, guard_llm), JPS)  # the guard WOULD change it
+        self.assertEqual(self.chat._ensure_japanese_jps(EN, guard_llm), JPS)  # the guard WOULD change it
 
     def test_empty_jps_falls_back(self):
         self.display("ja")
@@ -401,7 +410,7 @@ class VoiceTextTests(_VoiceFile):
         self.display("ja")
         voice_lang.set("en")
         llm = _FakeLLM(EN)
-        with patch.object(chat, "_translation_llm", return_value=llm):
+        with patch.object(self.chat, "_translation_llm", return_value=llm):
             first = voice_lang.voice_text(JPS, "", message_id=7)
             second = voice_lang.voice_text(JPS, "", message_id=7)
         self.assertEqual(first, second)
@@ -409,19 +418,19 @@ class VoiceTextTests(_VoiceFile):
         # Another voice language is another cache entry.
         voice_lang.set("zh")
         llm_zh = _FakeLLM(ZH)
-        with patch.object(chat, "_translation_llm", return_value=llm_zh):
+        with patch.object(self.chat, "_translation_llm", return_value=llm_zh):
             self.assertEqual(voice_lang.voice_text(JPS, "", message_id=7), (ZH, "zh"))
         self.assertEqual(len(llm_zh.seen), 1)
         # An edited Japanese line invalidates the entry.
         voice_lang.set("en")
-        with patch.object(chat, "_translation_llm", return_value=llm):
+        with patch.object(self.chat, "_translation_llm", return_value=llm):
             voice_lang.voice_text(JPS + "うん。", "", message_id=7)
         self.assertEqual(len(llm.seen), 2)
 
     def test_cache_is_capped(self):
         self.display("ja")
         voice_lang.set("en")
-        with patch.object(chat, "_translation_llm", return_value=_FakeLLM(EN)):
+        with patch.object(self.chat, "_translation_llm", return_value=_FakeLLM(EN)):
             for i in range(voice_lang.CACHE_MAX + 50):
                 voice_lang.voice_text(JPS, "", message_id=i)
         self.assertLessEqual(len(voice_lang._cache), voice_lang.CACHE_MAX)
@@ -448,7 +457,7 @@ class VoiceTextTests(_VoiceFile):
             # A key with no translation falls back to the translation call.
             voice_lang.set("zh")
             llm = _FakeLLM(ZH)
-            with patch.object(chat, "_translation_llm", return_value=llm):
+            with patch.object(self.chat, "_translation_llm", return_value=llm):
                 self.assertEqual(
                     voice_lang.voice_text(JPS, "", fixed_english="Not in the file."),
                     (ZH, "zh"))
@@ -838,22 +847,22 @@ class TranslateLanguageTests(_VoiceFile):
     def test_language_parameter_names_the_voice_language(self):
         self.display("ja")     # the reader's language is NOT the target
         llm = _FakeLLM(EN)
-        with patch.object(chat, "_user_hint_lines", return_value=[]):
-            out = chat._translate_reply_en(llm, JPS, [], language="en")
+        with patch.object(self.chat, "_user_hint_lines", return_value=[]):
+            out = self.chat._translate_reply_en(llm, JPS, [], language="en")
         self.assertEqual(out, EN)
         self.assertIn("English", llm.seen[0][0]["content"])
 
     def test_japanese_target_needs_no_call(self):
         self.display("en")
         llm = _FakeLLM("unused")
-        self.assertEqual(chat._translate_reply_en(llm, JPS, [], language="ja"), JPS)
+        self.assertEqual(self.chat._translate_reply_en(llm, JPS, [], language="ja"), JPS)
         self.assertEqual(llm.seen, [])
 
     def test_none_is_the_display_language_as_before(self):
         self.display("zh")
         llm = _FakeLLM(ZH)
-        with patch.object(chat, "_user_hint_lines", return_value=[]):
-            out = chat._translate_reply_en(llm, JPS, [])
+        with patch.object(self.chat, "_user_hint_lines", return_value=[]):
+            out = self.chat._translate_reply_en(llm, JPS, [])
         self.assertEqual(out, ZH)
         self.assertIn("Simplified Chinese", llm.seen[0][0]["content"])
 

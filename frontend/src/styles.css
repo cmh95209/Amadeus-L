@@ -1125,11 +1125,43 @@ button {
 .modal-heading-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap; /* narrow phone screens: wrap, never scroll sideways */
 }
 
 .ghost-button.quit-button {
   height: 36px;
   padding: 0 12px;
+}
+
+/* The Discord links beside Quit (2026-11-21): same height as Quit; the
+   join button's face is the Discord banner image, width auto. */
+.ghost-button.discord-report-button {
+  height: 36px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.discord-join-button {
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.025);
+  overflow: hidden;
+  transition: 150ms ease;
+}
+
+.discord-join-button:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.discord-join-image {
+  height: 36px;
+  width: auto;
+  display: block;
 }
 
 .quit-panel {

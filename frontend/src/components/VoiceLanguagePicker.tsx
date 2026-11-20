@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { getVoiceLanguage, setVoiceLanguage, type VoiceLanguageInfo } from "../api";
+import { currentLanguage, subscribe } from "../i18n";
 
 // Settings -> Preferences -> Voice language (2026-11-21): the language her
 // VOICE speaks; the text on the screen is unchanged. Saved at once
@@ -8,6 +9,7 @@ import { getVoiceLanguage, setVoiceLanguage, type VoiceLanguageInfo } from "../a
 // Older backends have no /voice_language route: the section stays hidden
 // (her voice stays Japanese, exactly as before).
 export function VoiceLanguagePicker() {
+  const pageLang = useSyncExternalStore(subscribe, currentLanguage);
   const [info, setInfo] = useState<VoiceLanguageInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -42,6 +44,19 @@ export function VoiceLanguagePicker() {
     }
   }
 
+  // The option names in the page's language (the browser's own language
+  // names, so no per-language code). English page: the backend's spelling.
+  function optionName(code: string, backendName: string): string {
+    if (pageLang === "en") return backendName;
+    try {
+      const name = new Intl.DisplayNames([pageLang], { type: "language", fallback: "none" }).of(code);
+      if (name) return name;
+    } catch {
+      // Unknown code or no ICU data for it: the backend's name.
+    }
+    return backendName;
+  }
+
   return (
     <div className="conn-section">
       <span className="conn-section-title">Voice language</span>
@@ -50,9 +65,9 @@ export function VoiceLanguagePicker() {
         <select value={info.code} disabled={busy} onChange={(e) => void choose(e.target.value)}
           aria-describedby="voice-language-help">
           {info.choices.map((c) => (
-            // The names as the backend spells them.
+            // Re-translated on a language change (pageLang re-renders it).
             <option key={c.code} value={c.code} translate="no">
-              {c.name}
+              {optionName(c.code, c.name)}
             </option>
           ))}
         </select>

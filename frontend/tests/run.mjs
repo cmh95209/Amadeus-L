@@ -29,6 +29,7 @@ try {
   await server.ssrLoadModule("/tests/pagePerf.test.ts");
   await server.ssrLoadModule("/tests/motions.test.ts");
   await server.ssrLoadModule("/tests/speech.test.ts");
+  await server.ssrLoadModule("/tests/languageRetry.test.ts");
 } finally {
   await server.close();
 }

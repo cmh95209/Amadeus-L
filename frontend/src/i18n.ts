@@ -48,6 +48,11 @@ const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "TEXTAREA", "CODE", "PRE", "NOSCRI
 // Their text is never touched, but their placeholder / title are.
 const ATTRS_ONLY = new Set(["TEXTAREA"]);
 const FALLBACK_LANGUAGES: LanguageInfo[] = [{ code: "en", name: "English", english: "English", rtl: false }];
+// The backend was unreachable when the page loaded (the language is not
+// confirmed yet): first re-ask 3 s after load, then every 10 s - and the
+// moment the browser reports it is back online.
+const LANGUAGE_RETRY_FIRST_MS = 3000;
+const LANGUAGE_RETRY_EVERY_MS = 10000;
 // ---------------------------------------------------------------------------
 
 let code = "en";
@@ -266,27 +271,85 @@ async function load(next: string) {
   listeners.forEach((fn) => fn());
 }
 
-async function fetchChoice(): Promise<string> {
+// null = the backend did not answer: the page keeps its current language.
+async function fetchChoice(): Promise<string | null> {
   try {
     const res = await fetch(`${API_BASE}/language`);
-    if (!res.ok) return code;
+    if (!res.ok) return null;
     const data = await res.json();
     if (Array.isArray(data.languages) && data.languages.length) languages = data.languages;
-    return typeof data.code === "string" ? data.code : code;
+    return typeof data.code === "string" ? data.code : null;
   } catch {
-    return code;
+    return null;
   }
+}
+
+// Whether the backend has confirmed the user's language. Until it does (the
+// page loaded while the backend was down), the page stays on its current
+// language and keeps asking: a timer, the "online" event, and the app's
+// refreshLanguage() when it sees the backend back.
+let confirmed = false;
+let retryInFlight = false;
+let retryTimer: number | null = null;
+
+function stopRetry() {
+  if (retryTimer !== null) {
+    window.clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+}
+
+function armRetry(first: boolean) {
+  if (confirmed) return;
+  stopRetry();
+  retryTimer = window.setTimeout(() => {
+    retryTimer = null;
+    void confirmLanguage().then((ok) => { if (!ok) armRetry(false); });
+  }, first ? LANGUAGE_RETRY_FIRST_MS : LANGUAGE_RETRY_EVERY_MS);
+}
+
+/** One confirm attempt; on success loads the language (only if it differs). */
+async function confirmLanguage(): Promise<boolean> {
+  if (confirmed || retryInFlight) return confirmed;
+  retryInFlight = true;
+  try {
+    const next = await fetchChoice();
+    if (next === null) return false;
+    confirmed = true;
+    stopRetry();
+    if (next !== code) await load(next);
+    return true;
+  } finally {
+    retryInFlight = false;
+  }
+}
+
+/** One confirm attempt (the app calls it when the backend comes back). */
+export function refreshLanguage(): Promise<boolean> {
+  if (confirmed) return Promise.resolve(true);
+  stopRetry();
+  return confirmLanguage().then((ok) => { if (!ok) armRetry(false); return ok; });
 }
 
 /** At start: read the user's language, translate the page, keep watching. */
 export async function initLanguage(): Promise<void> {
   patchDialogs();
   startObserver();
-  await load(await fetchChoice());
+  const next = await fetchChoice();
+  if (next === null) {
+    // The backend is down: stay put (English) and keep asking until it
+    // confirms the language (timer / "online" / refreshLanguage()).
+    await load(code);
+    armRetry(true);
+  } else {
+    confirmed = true;
+    if (next !== code) await load(next);
+  }
   // A hand edit of backend/language.txt applies when the page gets focus.
   window.addEventListener("focus", () => {
-    void fetchChoice().then((next) => { if (next !== code) void load(next); });
+    void fetchChoice().then((choice) => { if (choice !== null && choice !== code) void load(choice); });
   });
+  window.addEventListener("online", () => { if (!confirmed) void refreshLanguage(); });
 }
 
 /** Settings -> Preferences -> Your language. */

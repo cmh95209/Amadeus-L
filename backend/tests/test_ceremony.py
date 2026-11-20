@@ -459,7 +459,7 @@ class GreetRouteTests(_FreshAppTests):
         self.assertEqual(japanese, self.ceremony.line("intro")[1])
         self.assertEqual(greeting, 1)
         _created, voice_text, speech_assistant_id = \
-            self.api._speech_requests[body["speech_id"]]
+            self.api._speech_requests[body["speech_id"]][:3]
         self.assertEqual(voice_text, self.ceremony.line("intro")[2])
         self.assertEqual(voice_text, self.ceremony.line("intro")[2])
         self.assertNotEqual(voice_text, japanese)
@@ -533,7 +533,7 @@ class GreetRouteTests(_FreshAppTests):
         self.assertEqual(body["response"], "I'm awake.")
         self.assertEqual(self.state(), "done")
         _created, voice_text, assistant_id = \
-            self.api._speech_requests[body["speech_id"]]
+            self.api._speech_requests[body["speech_id"]][:3]
         self.assertEqual(voice_text, "もう、起きているの。")
         self.assertEqual(assistant_id, 99)
 
@@ -551,7 +551,7 @@ class GreetRouteTests(_FreshAppTests):
         self.assertEqual(body["response"], self.ceremony.line("fallback")[0])
         self.assertEqual(self.state(), "done")
         # The voice minted for the fallback is its (phonetically fine) JA.
-        _created, voice_text, _ = self.api._speech_requests[body["speech_id"]]
+        _created, voice_text, _ = self.api._speech_requests[body["speech_id"]][:3]
         self.assertEqual(voice_text, self.ceremony.line("fallback")[2])
 
     def test_first_launch_model_already_running(self):
@@ -696,7 +696,7 @@ class GreetRouteTests(_FreshAppTests):
             self.assertEqual(res.json["kind"], "intro")
             res = self.greet(just_saved=True)
             self.assertEqual((res.json["kind"], res.json["wait"]), ("need_name", True))
-            _c, voice, _a = self.api._speech_requests[res.json["speech_id"]]
+            _c, voice, _a = self.api._speech_requests[res.json["speech_id"]][:3]
             self.assertEqual(voice, self.ceremony.line("need_name")[2])
             self.assertNotIn("kind", self.greet().json)
             self.assertNotEqual(self.state(), "done")

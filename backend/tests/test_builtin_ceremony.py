@@ -125,7 +125,7 @@ class RouteTests(_BuiltinApp):
             body = self.greet().json
         self.assertEqual((body["kind"], body["ceremony"], body["wait"]),
                          ("builtin_intro", "intro", True))
-        _c, voice, _a = self.api._speech_requests[body["speech_id"]]
+        _c, voice, _a = self.api._speech_requests[body["speech_id"]][:3]
         self.assertEqual(voice, self.ceremony.line("builtin_intro")[2])
         # 2. The model is ready, but no name yet: she stays quiet.
         with self.model(True):

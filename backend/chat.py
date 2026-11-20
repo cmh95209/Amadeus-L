@@ -5867,7 +5867,7 @@ def _user_hint_lines(jps: str = "") -> list:
     return lines
 
 
-def _translate_reply_en(llm, jps: str, context_lines) -> str:
+def _translate_reply_en(llm, jps: str, context_lines, language: str = None) -> str:
     """Voice-first call 2: the English display line for the Japanese line call
     1 already spoke. One short, fast call (JA line + a few context lines, not
     the full prompt). Returns "" when nothing usable comes back - the caller
@@ -5875,17 +5875,29 @@ def _translate_reply_en(llm, jps: str, context_lines) -> str:
     uses when its translation pass fails. Every unusable result is logged
     with a short snippet of what the model actually returned, so a silent
     backfill failure is visible in the log instead of found only by digging
-    through the memory DB."""
+    through the memory DB.
+
+    `language` aims the SAME call at another language (the voice-language
+    setting, voice_lang.py): its English name and script hint replace the
+    display language's. None = the reader's language, exactly as before."""
     if not _usable_source(jps):
         return ""
-    # The user reads Japanese: her line is the display line, no call.
-    if _display_is_japanese():
-        return (jps or "").strip()
-    name = _display_name()
+    if language is None:
+        # The user reads Japanese: her line is the display line, no call.
+        if _display_is_japanese():
+            return (jps or "").strip()
+        name = _display_name()
+        hint = _script_hint()
+    else:
+        if language == "ja":
+            return (jps or "").strip()
+        import voice_lang
+        name = voice_lang.english_name(language)
+        hint = voice_lang.script_hint(language)
     lines = [
         f"You are writing the {name} line shown to the user in the chat UI for "
         "one of Amadeus's replies. Translate her Japanese line into natural, "
-        f"spoken {name}{_script_hint()} in her voice - keep her tone and meaning exactly. "
+        f"spoken {name}{hint} in her voice - keep her tone and meaning exactly. "
         "Copy any web address (https://...) exactly as written. "
         f"Output ONLY the {name} text - no quotes, no Japanese, no commentary.",
     ] + _user_hint_lines(jps)

@@ -30,6 +30,8 @@ backend/unused_files/
 backend/data/api_key.txt
 # The user's display language (display_lang.py), hand-editable
 backend/language.txt
+# The user's voice language (voice_lang.py), hand-editable
+backend/voice_language.txt
 # LLM provider picker (feature/provider-picker): per-provider keys, the
 # active provider, and Google Vertex sign-in (all personal, like api_key.txt)
 backend/data/api_keys.json

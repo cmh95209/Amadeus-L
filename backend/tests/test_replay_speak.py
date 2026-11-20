@@ -36,7 +36,7 @@ class SpeakRouteTests(_FreshAppTests):
         self.assertEqual(res.status_code, 200)
         speech_id = res.json["speech_id"]
         self.assertNotIn("audio_url", res.json)
-        _created, text, assistant_id = self.api._speech_requests[speech_id]
+        _created, text, assistant_id = self.api._speech_requests[speech_id][:3]
         self.assertEqual((text, assistant_id), ("こんにちは。", self.line_id))
 
     def test_saved_clip_is_played_as_is(self):

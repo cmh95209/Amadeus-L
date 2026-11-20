@@ -2787,7 +2787,11 @@ def _message_item(row) -> Dict[str, str]:
         item["is_greeting"] = True
         item["greeting_regenerable"] = kind not in (GREETING_KIND_SCRIPTED, GREETING_KIND_ATTACH)
     if audio:
-        item["audio_url"] = "/message_audio/" + audio
+        # A saved clip is offered only in the CURRENT voice language: a
+        # Japanese clip must not replay for an English voice (voice_lang).
+        import voice_lang
+        if voice_lang.clip_language(audio) == voice_lang.get():
+            item["audio_url"] = "/message_audio/" + audio
     if role == "assistant":
         item["japanese"] = (japanese or "").strip()
         if item["japanese"]:
@@ -4129,6 +4133,10 @@ def get_reply_edit_context(message_id: int) -> Dict[str, str] | None:
 
 # ---------- VOICE FILE RETENTION (SQL + disk) ----------
 
+# The generated-voice folder (clips are voice_<id>.wav, or voice_<id>_<lang>.wav
+# for a non-Japanese voice language - voice_lang.clip_name).
+_GENERATED_DIR = Path(__file__).resolve().parent / "generated"
+
 # pre: keep_n is 0 (unlimited) or a positive cap; None reads the saved setting
 # post: the oldest voice files beyond the cap are deleted and the rows that
 #       linked them are cleared; returns the deleted paths (backend-relative)
@@ -4138,14 +4146,16 @@ def prune_voice_files(keep_n: int | None = None) -> List[str]:
     keep_n = max(0, int(keep_n))
     if keep_n == 0:
         return []
-    generated = Path(__file__).resolve().parent / "generated"
+    generated = _GENERATED_DIR
     if not generated.is_dir():
         return []
+    import voice_lang
     found = []
     for f in generated.glob("voice_*.wav"):
         stem = f.name[6:-4]  # strip "voice_" and ".wav"
-        if stem.isdigit():
-            found.append((int(stem), f))
+        mid, _, lang = stem.partition("_")   # "12" or "12_en" (voice language)
+        if mid.isdigit() and (not lang or lang in voice_lang.VOICES):
+            found.append((int(mid), f))
     found.sort(key=lambda t: t[0], reverse=True)  # newest first
     to_delete = found[keep_n:]
     if not to_delete:
@@ -4168,17 +4178,22 @@ def prune_voice_files(keep_n: int | None = None) -> List[str]:
 
 
 # pre: message_id may or may not exist
-# post: its voice file (if any) is removed from disk; returns the relative
-#       path that was deleted or None
+# post: its voice files (the Japanese clip and any voice-language variants)
+#       are removed from disk; returns the first relative path deleted or None
 def delete_voice_file(message_id: int) -> str | None:
-    path = Path(__file__).resolve().parent / "generated" / f"voice_{int(message_id)}.wav"
-    if not path.exists():
-        return None
-    try:
-        path.unlink()
-    except OSError:
-        return None
-    return "generated/" + path.name
+    mid = int(message_id)
+    deleted = None
+    for path in [_GENERATED_DIR / f"voice_{mid}.wav",
+                 *_GENERATED_DIR.glob(f"voice_{mid}_*.wav")]:
+        if not path.exists():
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        if deleted is None:
+            deleted = "generated/" + path.name
+    return deleted
 
 
 # pre: message_id may or may not exist
@@ -4190,6 +4205,24 @@ def get_message_japanese(message_id: int) -> str | None:
     _ensure_messages_table(c)
     row = c.execute(
         "SELECT role, japanese FROM messages WHERE id = ?", (int(message_id),)
+    ).fetchone()
+    conn.close()
+    if row is None or row[0] != "assistant":
+        return None
+    text = (row[1] or "").strip()
+    return text or None
+
+
+# pre: message_id may or may not exist
+# post: the saved display line (the ENG field, in the reader's language) of an
+#       assistant row, or None when the row is missing, is not an assistant,
+#       or the line is not written yet (voice-first call 2 still running)
+def get_message_content(message_id: int) -> str | None:
+    conn = _connect_db()
+    c = conn.cursor()
+    _ensure_messages_table(c)
+    row = c.execute(
+        "SELECT role, content FROM messages WHERE id = ?", (int(message_id),)
     ).fetchone()
     conn.close()
     if row is None or row[0] != "assistant":

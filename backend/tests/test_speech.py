@@ -49,7 +49,7 @@ class SpeechTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             tts = _load_tts(requests)
             tts.OUT_WAV = Path(directory) / 'generated.wav'
-            tts._request_payload = lambda text: {'text': text}
+            tts._request_payload = lambda text, lang='ja': {'text': text}
             chunks = tts.streamVoiceChunks('test')
             first = next(chunks)
             # Firefox: the browser gets "length unknown", not "0 bytes".
@@ -117,6 +117,7 @@ class SpeechTests(unittest.TestCase):
                      voice_gate=voice_gate,
                      _speech_requests_lock=threading.Lock(), time=time, chain=chain,
                      jsonify=lambda data: data, Response=Response,
+                     _voice_for_speech=lambda jps, mid, fixed='': (jps, 'ja'),
                      streamVoiceChunks=lambda text, save_path=None: (chunk for chunk in (b'header', b'pcm')))
         exec(compile(ast.Module(body=[function], type_ignores=[]), 'api.py', 'exec'), scope)
         response = scope['speech']('one')

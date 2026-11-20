@@ -31,6 +31,7 @@ import ceremony
 import concerns
 import cross_tab
 import display_lang
+import voice_lang
 import defaults_refresh
 import feelings
 import llm
@@ -208,11 +209,15 @@ _reaction_audio_dir = Path(__file__).resolve().parent / "assets" / "reaction_aud
 
 
 def _unlink_voice(assistant_id) -> None:
-    """Best-effort removal of a message's saved voice file."""
+    """Best-effort removal of a message's saved voice files (the Japanese
+    clip and any voice-language variants, voice_lang.clip_name)."""
     try:
-        path = Path(__file__).resolve().parent / "generated" / f"voice_{int(assistant_id)}.wav"
-        if path.exists():
-            path.unlink()
+        generated = Path(__file__).resolve().parent / "generated"
+        mid = int(assistant_id)
+        for path in [generated / f"voice_{mid}.wav",
+                     *generated.glob(f"voice_{mid}_*.wav")]:
+            if path.exists():
+                path.unlink()
     except (OSError, ValueError, TypeError):
         pass
 
@@ -382,19 +387,46 @@ def api_key_status():
     response.headers["Cache-Control"] = "no-store"
     return response
 
-def _register_speech(speech_id, jps_text, assistant_id) -> None:
+def _register_speech(speech_id, jps_text, assistant_id, fixed_english="") -> None:
     """Give the browser a single-use speech id. The browser then opens the
     streaming WAV endpoint, so the same sound that reaches the speakers also
     drives the Live2D analyser/lip sync. Entries expire after 5 minutes and
-    the table never grows past 20 pending speeches."""
+    the table never grows past 20 pending speeches. `fixed_english` is the
+    English key of one of her pre-written lines (ceremony), so /speech can
+    speak its translation in the voice language; "" for a generated reply
+    (its display line is looked up in the store at /speech time)."""
     with _speech_requests_lock:
         now = time.monotonic()
-        for expired in [key for key, (created, _, _) in _speech_requests.items() if now - created > 300]:
+        for expired in [key for key, item in _speech_requests.items() if now - item[0] > 300]:
             _speech_requests.pop(expired, None)
-        _speech_requests[speech_id] = (now, jps_text, assistant_id)
+        _speech_requests[speech_id] = (now, jps_text, assistant_id, fixed_english)
         while len(_speech_requests) > 20:
             _speech_requests.pop(next(iter(_speech_requests)))
     voice_gate.expect(speech_id)
+
+
+def _voice_for_speech(jps_text, assistant_id, fixed_english=""):
+    """(the text her voice speaks, the engine language), decided AT REQUEST
+    TIME through voice_lang: the voice language may have changed since the
+    speech id was minted. ja is today's path byte-for-byte; another language
+    uses the reply's saved display line when it exists yet, else translates
+    the Japanese line itself (the "start voice early" mode). Any failure
+    speaks her Japanese - her voice never goes silent because of this."""
+    if voice_lang.get() == "ja":
+        return jps_text, "ja"
+    display_line = ""
+    if assistant_id and not fixed_english:
+        try:
+            display_line = memory.get_message_content(assistant_id) or ""
+        except Exception:
+            display_line = ""
+    try:
+        return voice_lang.voice_text(jps_text, display_line,
+                                     message_id=assistant_id,
+                                     fixed_english=fixed_english)
+    except Exception as exc:
+        print(f"[Flask] Voice language failed, speaking Japanese: {exc!r}")
+        return jps_text, "ja"
 
 
 # pre:
@@ -916,13 +948,25 @@ def speech(speech_id):
     if item is None or time.monotonic() - item[0] > 300:
         return jsonify({"message": "Speech request not found"}), 404
 
-    _, jps_text, assistant_id = item
+    _, jps_text, assistant_id = item[:3]
+    fixed_english = item[3] if len(item) > 3 else ""
+    # What she speaks is decided HERE, at request time (voice_lang): the
+    # voice language may have changed since the id was minted, and the
+    # display line may not be written yet ("start voice early").
+    text, lang = _voice_for_speech(jps_text, assistant_id, fixed_english)
     save_path = None
+    rel = None
     if assistant_id:
-        save_path = Path(__file__).resolve().parent / "generated" / f"voice_{assistant_id}.wav"
+        # A non-ja clip carries its language in the name, so a Japanese
+        # clip is never replayed for an English request (voice_lang).
+        rel = "generated/" + voice_lang.clip_name(assistant_id, lang)
+        save_path = Path(__file__).resolve().parent / rel
     voice_gate.started(speech_id)
     watch = timing.VoiceWatch(assistant_id)
-    chunks = streamVoiceChunks(jps_text, save_path=save_path)
+    if lang == "ja":
+        chunks = streamVoiceChunks(text, save_path=save_path)
+    else:
+        chunks = streamVoiceChunks(text, save_path=save_path, lang=lang)
     try:
         first = next(chunks)
     except Exception:
@@ -942,7 +986,7 @@ def speech(speech_id):
             voice_gate.finished(speech_id)
             # Keep the line for replay only if it was actually generated.
             if assistant_id and save_path is not None and save_path.exists():
-                memory.set_message_audio(assistant_id, f"generated/voice_{assistant_id}.wav")
+                memory.set_message_audio(assistant_id, rel)
                 try:
                     # Enforce the "keep last N recordings" cap from Settings.
                     memory.prune_voice_files()
@@ -953,8 +997,12 @@ def speech(speech_id):
     response.headers["Cache-Control"] = "no-store"
     # How long her line is (characters): the page estimates the clip's
     # length from it (smooth start + the "preparing her voice" bar).
-    response.headers["X-Amadeus-Voice-Chars"] = str(len((jps_text or "").strip()))
-    response.headers["Access-Control-Expose-Headers"] = "X-Amadeus-Voice-Chars"
+    response.headers["X-Amadeus-Voice-Chars"] = str(len((text or "").strip()))
+    # The engine language of THIS clip: the page keeps its timing guesses
+    # per language.
+    response.headers["X-Amadeus-Voice-Lang"] = lang
+    response.headers["Access-Control-Expose-Headers"] = (
+        "X-Amadeus-Voice-Chars, X-Amadeus-Voice-Lang")
     def closed():
         chunks.close()
         voice_gate.finished(speech_id)
@@ -1167,6 +1215,26 @@ def set_language():
     return jsonify({"status": "ok", **display_lang.listing()})
 
 
+@application.route("/voice_language", methods=["GET"])
+def get_voice_language():
+    """Settings -> Preferences -> Voice language (voice_lang.py): the code,
+    the offered languages, the display language, and whether her voice needs
+    a translation call of its own."""
+    return jsonify(voice_lang.listing())
+
+
+@application.route("/voice_language", methods=["POST"])
+def set_voice_language():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not isinstance(data.get("code"), str):
+        return jsonify({"message": "Send code, e.g. {\"code\": \"en\"}"}), 400
+    try:
+        voice_lang.set(data["code"])
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    return jsonify({"status": "ok", **voice_lang.listing()})
+
+
 @application.route("/crossTab", methods=["GET"])
 def get_cross_tab():
     """Settings -> Preferences: "Remember my other chats" (catch_up) and
@@ -1335,7 +1403,7 @@ def regenerate():
             pack, new_id = result
             speech_id = uuid.uuid4().hex
             with _speech_requests_lock:
-                _speech_requests[speech_id] = (time.monotonic(), pack.assistant_reply_JPS, new_id)
+                _speech_requests[speech_id] = (time.monotonic(), pack.assistant_reply_JPS, new_id, "")
             voice_gate.expect(speech_id)
             return {"phase": "reply", "response": pack.assistant_reply_ENG,
                     "japanese": pack.assistant_reply_JPS, "speech_id": speech_id,
@@ -1352,7 +1420,7 @@ def regenerate():
 
     speech_id = uuid.uuid4().hex
     with _speech_requests_lock:
-        _speech_requests[speech_id] = (time.monotonic(), pack.assistant_reply_JPS, new_id)
+        _speech_requests[speech_id] = (time.monotonic(), pack.assistant_reply_JPS, new_id, "")
     voice_gate.expect(speech_id)
 
     return jsonify({
@@ -1384,10 +1452,14 @@ def regenerate_voice(message_id):
     japanese = memory.get_message_japanese(message_id)
     if japanese is None:
         return jsonify({"message": "This reply has no saved voice line to re-speak."}), 400
-    rel = f"generated/voice_{message_id}.wav"
+    # The CURRENT voice language decides the text and the clip's name.
+    text, lang = _voice_for_speech(japanese, message_id)
+    rel = "generated/" + voice_lang.clip_name(message_id, lang)
     path = Path(__file__).resolve().parent / rel
     if not path.exists():
-        if not renderVoiceToPath(japanese, path):
+        ok = (renderVoiceToPath(text, path) if lang == "ja"
+              else renderVoiceToPath(text, path, lang=lang))
+        if not ok:
             return jsonify({"message": "Voice generation failed. Is GPT-SoVITS running?"}), 502
     memory.set_message_audio(message_id, rel)
     return jsonify({"status": "ok", "audio_url": "/message_audio/" + rel})
@@ -1408,8 +1480,11 @@ def speak_message(message_id):
     japanese = memory.get_message_japanese(message_id)
     if japanese is None:
         return jsonify({"message": "This reply has no saved voice line to re-speak."}), 400
-    rel = f"generated/voice_{message_id}.wav"
-    if (_GENERATED_DIR / f"voice_{message_id}.wav").exists():
+    # Only the clip for the CURRENT voice language counts as saved: a
+    # Japanese clip is never replayed for an English request (voice_lang).
+    name = voice_lang.clip_name(message_id, voice_lang.engine_lang())
+    rel = "generated/" + name
+    if (_GENERATED_DIR / name).exists():
         memory.set_message_audio(message_id, rel)
         return jsonify({"status": "ok", "audio_url": "/message_audio/" + rel})
     return jsonify({"status": "ok",
@@ -2265,16 +2340,18 @@ def model_ready() -> Dict[str, object]:
     return {"ready": True, "reason": ""}
 
 
-def _mint_speech_id_text(ja_text, assistant_id) -> str:
+def _mint_speech_id_text(ja_text, assistant_id, fixed_english="") -> str:
     """Register a single-use speech id for an EXPLICIT Japanese text (the
-    same table the /speech/<id> streaming endpoint reads)."""
+    same table the /speech/<id> streaming endpoint reads). `fixed_english`:
+    the English key when the text is one of her pre-written lines, so the
+    voice language can speak its stored translation (voice_lang)."""
     speech_id = uuid.uuid4().hex
     with _speech_requests_lock:
         now = time.monotonic()
-        for key in [k for k, (created, _, _) in _speech_requests.items()
-                    if now - created > 300]:
+        for key in [k for k, item in _speech_requests.items()
+                    if now - item[0] > 300]:
             _speech_requests.pop(key, None)
-        _speech_requests[speech_id] = (now, ja_text, assistant_id)
+        _speech_requests[speech_id] = (now, ja_text, assistant_id, fixed_english)
         while len(_speech_requests) > 20:
             _speech_requests.pop(next(iter(_speech_requests)))
     voice_gate.expect(speech_id)
@@ -2309,7 +2386,7 @@ def _serve_ceremony_line(kind: str, ready: Dict[str, object],
     pack = AmadeusPack(assistant_reply_ENG=en, assistant_reply_JPS=ja_display)
     assistant_id, conv_id = _store_greeting_line(pack)
     ceremony.note(kind, new_state)
-    speech_id = _mint_speech_id_text(ja_voice, assistant_id)
+    speech_id = _mint_speech_id_text(ja_voice, assistant_id, fixed_english=en)
     return jsonify({
         "ready": bool(ready["ready"]),
         "response": en,
@@ -2341,6 +2418,7 @@ def _serve_wake_up():
                         "ceremony": memory.load_ceremony_state()})
     try:
         kind = "wake"
+        fixed_en = ""
         try:
             pack, assistant_id, conv_id = generate_greeting(mode="wake")
             voice = pack.assistant_reply_JPS
@@ -2351,8 +2429,9 @@ def _serve_wake_up():
             pack = AmadeusPack(assistant_reply_ENG=en, assistant_reply_JPS=ja_display)
             assistant_id, conv_id = _store_greeting_line(pack)
             voice = ja_voice
+            fixed_en = en
         ceremony.note(kind, memory.CEREMONY_DONE)
-        speech_id = _mint_speech_id_text(voice, assistant_id)
+        speech_id = _mint_speech_id_text(voice, assistant_id, fixed_english=fixed_en)
         return jsonify({
             "ready": True,
             "response": pack.assistant_reply_ENG,

@@ -42,12 +42,17 @@ def _spoken(text: str) -> str:
         return text
 
 
-def _request_payload(text: str) -> dict:
+def _request_payload(text: str, lang: str = "ja") -> dict:
+    """The engine request for one line. `lang` is the VOICE language
+    (voice_lang.py): text_lang carries it; the Japanese name/number
+    rewriting (_spoken) runs only for ja. The reference audio stays the
+    Japanese kurisu10s.wav with prompt_lang "ja" for every language
+    (verified by ear 2026-11-20) - do not change it."""
     if not REF_WAV.exists():
         raise FileNotFoundError(f"Reference audio not found: {REF_WAV}")
     return {
-        "text": _spoken(text),
-        "text_lang": "ja",
+        "text": _spoken(text) if lang == "ja" else (text or ""),
+        "text_lang": lang,
         "ref_audio_path": str(REF_WAV),
         "prompt_text": REF_TXT,
         "prompt_lang": "ja",
@@ -177,7 +182,7 @@ def _finish_stream_player(player):
             pass
 
 
-def _stream_audio(text: str, play: bool):
+def _stream_audio(text: str, play: bool, lang: str = "ja"):
     OUT_WAV.parent.mkdir(parents=True, exist_ok=True)
     temp_path = OUT_WAV.with_suffix(".streaming.tmp")
     player = _start_stream_player() if play else None
@@ -185,7 +190,7 @@ def _stream_audio(text: str, play: bool):
     try:
         with requests.post(
             f"{GPTSOVITS_API_URL}/tts",
-            json=_request_payload(text),
+            json=_request_payload(text, lang),
             stream=True,
             timeout=None,
         ) as response:
@@ -210,11 +215,12 @@ def _stream_audio(text: str, play: bool):
             temp_path.unlink()
 
 
-def streamVoiceChunks(text: str, save_path=None):
+def streamVoiceChunks(text: str, save_path=None, lang: str = "ja"):
     """Yield GPT-SoVITS WAV chunks for browser playback while saving a copy.
 
     When save_path is given, the finished line is also kept there so the
-    message it belongs to can be replayed later.
+    message it belongs to can be replayed later. `lang` is the voice
+    language (voice_lang.py); "ja" is the unchanged original path.
     """
     with _speech_lock:
         OUT_WAV.parent.mkdir(parents=True, exist_ok=True)
@@ -223,7 +229,7 @@ def streamVoiceChunks(text: str, save_path=None):
         try:
             with requests.post(
                 f"{GPTSOVITS_API_URL}/tts",
-                json=_request_payload(text),
+                json=_request_payload(text, lang),
                 stream=True,
                 timeout=(10, 120),
             ) as response:
@@ -245,16 +251,16 @@ def streamVoiceChunks(text: str, save_path=None):
                 temp_path.unlink()
 
 
-def streamVoice(text: str):
+def streamVoice(text: str, lang: str = "ja"):
     """Stream native GPT-SoVITS audio directly to one continuous player."""
     with _speech_lock:
-        _stream_audio(text, play=True)
+        _stream_audio(text, play=True, lang=lang)
 
 
-def generateVoice(text: str):
+def generateVoice(text: str, lang: str = "ja"):
     """Generate a complete WAV without starting playback."""
     with _speech_lock:
-        _stream_audio(text, play=False)
+        _stream_audio(text, play=False, lang=lang)
 
 
 WARM_UP_LINE = "うん、準備できたわ。"
@@ -286,11 +292,12 @@ def warm_up(wait_s: float = 600.0) -> None:
         print(f"[Timing] voice warm-up took {time.monotonic() - started:.1f} s", flush=True)
 
 
-def renderVoiceToPath(text: str, path) -> bool:
+def renderVoiceToPath(text: str, path, lang: str = "ja") -> bool:
     """Synthesize a line straight into a specific WAV file (no playback).
 
     Used to re-voice an old reply on demand when its file was deleted by the
-    retention cap. Returns True when the file was written.
+    retention cap. Returns True when the file was written. `lang` is the
+    voice language (voice_lang.py); "ja" is the unchanged original path.
     """
     from pathlib import Path
     path = Path(path)
@@ -300,7 +307,7 @@ def renderVoiceToPath(text: str, path) -> bool:
         try:
             with requests.post(
                 f"{GPTSOVITS_API_URL}/tts",
-                json=_request_payload(text),
+                json=_request_payload(text, lang),
                 stream=True,
                 timeout=(10, 120),
             ) as response:

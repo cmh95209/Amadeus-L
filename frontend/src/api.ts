@@ -882,6 +882,60 @@ export async function setContextBudget(budget: number): Promise<number> {
   return typeof data.budget === "number" ? data.budget : budget;
 }
 
+// ---- Voice language (Settings -> Preferences, 2026-11-21) -------------------
+// The language her VOICE speaks - the text on the screen is unchanged. The
+// backend keeps the choice (GET/POST /voice_language, e.g. "ja", "en",
+// "zh", "yue", "ko"). OLDER backends have no such route: the page then hides
+// the setting (her voice stays Japanese, exactly as before).
+export type VoiceLanguageChoice = { code: string; name: string };
+
+export type VoiceLanguageInfo = {
+  /** The voice language in use ("ja" until changed). */
+  code: string;
+  /** What the picker offers, in the backend's order. */
+  choices: VoiceLanguageChoice[];
+  /** The page's display language code (the screen text - unaffected). */
+  display: string;
+  /** Her voice speaks another language than her screen line: each reply
+   *  needs an extra translation pass. */
+  extra_translation: boolean;
+};
+
+function voiceLanguageFrom(data: Record<string, unknown>): VoiceLanguageInfo | null {
+  if (typeof data.code !== "string") return null;
+  const choices = (Array.isArray(data.choices) ? (data.choices as unknown[]) : [])
+    .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
+    .map((c) => ({
+      code: typeof c.code === "string" ? c.code : "",
+      name: typeof c.name === "string" ? c.name : "",
+    }))
+    .filter((c) => c.code && c.name);
+  return {
+    code: data.code,
+    choices,
+    display: typeof data.display === "string" ? data.display : "",
+    extra_translation: data.extra_translation === true,
+  };
+}
+
+export async function getVoiceLanguage(): Promise<VoiceLanguageInfo> {
+  const data = await parseResponse(await fetch(`${API_BASE}/voice_language`, { cache: "no-store" }));
+  const info = voiceLanguageFrom(data);
+  if (!info) throw new Error("Could not read the voice language setting");
+  return info;
+}
+
+export async function setVoiceLanguage(code: string): Promise<VoiceLanguageInfo> {
+  const data = await parseResponse(await fetch(`${API_BASE}/voice_language`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  }));
+  const info = voiceLanguageFrom(data);
+  if (!info) throw new Error("Could not confirm the voice language");
+  return info;
+}
+
 // ---- Model sampling settings ------------------------------------------------
 export type SamplingEntry = { enabled: boolean; value: number | null };
 export type SamplingSettings = Record<string, SamplingEntry>;

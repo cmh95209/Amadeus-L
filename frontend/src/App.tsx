@@ -11,6 +11,7 @@ import { NameListEditor, nameListProblem } from "./components/NameListEditor";
 import { SourcesBar } from "./components/SourcesBar";
 import { LinkedText } from "./components/LinkedText";
 import { LanguagePicker } from "./components/LanguagePicker";
+import { VoiceLanguagePicker } from "./components/VoiceLanguagePicker";
 import { AttachMenu } from "./components/AttachMenu";
 import { AttachmentTray } from "./components/AttachmentTray";
 import { PictureStrip } from "./components/PictureStrip";
@@ -3903,6 +3904,8 @@ export default function App() {
 
             <div hidden={settingsSection !== "preferences"}>
               <LanguagePicker />
+              {/* Hidden on backends without the /voice_language route. */}
+              <VoiceLanguagePicker />
               <div className="conn-section">
                 <span className="conn-section-title">About you</span>
                 <label>

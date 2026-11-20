@@ -71,10 +71,11 @@ Amadeus-Project/
 
 ## 2. Apply the voice patches
 
-This project ships five voice-engine patches (a prebuilt Japanese text
-helper and pure-Python text segmentation) that make the voice engine work
-without a C compiler. Copy them onto the GPT-SoVITS clone, preserving the
-folder structure:
+This project ships six voice-engine patches (a prebuilt Japanese text
+helper, pure-Python text segmentation, and a small Windows stand-in for the
+Korean `eunjeon` package) that make the voice engine work without a C
+compiler. Copy them onto the GPT-SoVITS clone, preserving the folder
+structure:
 
 ```bash
 # macOS / Linux
@@ -83,6 +84,11 @@ cp -R scripts/voice-patch/* GPT-SoVITS/
 # Windows (PowerShell)
 Copy-Item -Recurse -Force scripts\voice-patch\* GPT-SoVITS\
 ```
+
+On Windows her Korean voice reads text through `python_mecab_ko` (which has
+a Windows build) wrapped by that `eunjeon` stand-in, because the real
+`eunjeon` package cannot be built on Windows; on macOS and Linux the module
+is never imported.
 
 ## 3. Create the Amadeus backend environment
 

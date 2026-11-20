@@ -71,11 +71,33 @@ const original = {
   AudioContext: globals.AudioContext, fetch: globals.fetch,
   raf: globals.requestAnimationFrame, caf: globals.cancelAnimationFrame,
   performance: Object.getOwnPropertyDescriptor(globalThis, "performance"),
+  localStorage: Object.getOwnPropertyDescriptor(globalThis, "localStorage"),
 };
 globals.AudioContext = FakeContext;
+// The response headers of the fake /speech endpoint (the tests add the
+// X-Amadeus-Voice-Lang one to check the per-language learned keys).
+let fetchHeaders: Record<string, string> = { "X-Amadeus-Voice-Chars": "25" };
 globals.fetch = async () => {
   const body = new ReadableStream<Uint8Array>({ start(c) { feed = c; } });
-  return new Response(body, { status: fetchStatus, headers: { "X-Amadeus-Voice-Chars": "25" } });
+  return new Response(body, { status: fetchStatus, headers: fetchHeaders });
+};
+// A localStorage stand-in: the values the player learns per line.
+class MemStorage {
+  private items = new Map<string, string>();
+  getItem(name: string) { return this.items.get(name) ?? null; }
+  setItem(name: string, value: string) { this.items.set(name, value); }
+  removeItem(name: string) { this.items.delete(name); }
+  clear() { this.items.clear(); }
+  key(i: number) { return [...this.items.keys()][i] ?? null; }
+  get length() { return this.items.size; }
+}
+const storage = new MemStorage();
+// Installed right before the per-language section below: if it stood there
+// from the start, the lines of the earlier sections would LEARN values that
+// change how the "slow PC" section behaves.
+const learned = (key: string) => {
+  const value = storage.getItem(key);
+  return value === null ? null : Number(value);
 };
 let frame: (() => void) | undefined;
 globals.requestAnimationFrame = (callback: () => void) => { frame = callback; return 1; };
@@ -175,6 +197,61 @@ try {
   assert.equal(player.isBusy(), false);
   fetchStatus = 200;
 
+  // -- per voice language: the /speech header picks the learned keys --------
+  Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+  // A line voiced in English (the header says so) learns into the ".en"
+  // keys, and the ORIGINAL Japanese keys stay untouched...
+  player.setPlayback("smooth");
+  preparing.length = 0;
+  FakeContext.instance.currentTime = 0;
+  now = 0;
+  fetchHeaders["X-Amadeus-Voice-Lang"] = "en";
+  started = player.play("http://speech/en-line");
+  await tick(); await tick();
+  feed.enqueue(wavHeader());
+  // 8 x 0.25 s of speech made over 1.75 s: enough of a line to learn from.
+  for (let i = 0; i < 8; i++) {
+    feed.enqueue(pcm(0.25));
+    await tick();
+    now += 250;
+  }
+  feed.close();
+  await tick();
+  await started;
+  assert.ok((learned("amadeusVoiceRate.en") ?? 0) > 0, "an English line learns into its own keys");
+  assert.ok((learned("amadeusVoiceSecPerChar.en") ?? 0) > 0);
+  assert.ok((learned("amadeusVoiceLead.en") ?? 0) > 0);
+  assert.equal(learned("amadeusVoiceRate"), null, "...the Japanese keys stay untouched");
+  assert.equal(learned("amadeusVoiceSecPerChar"), null);
+  assert.equal(learned("amadeusVoiceLead"), null);
+  player.stop();
+  storage.clear();
+
+  // ...and a line without the header (old backend / Japanese) learns into
+  // the ORIGINAL keys, leaving every suffixed one alone.
+  delete fetchHeaders["X-Amadeus-Voice-Lang"];
+  player.setPlayback("whole");
+  FakeContext.instance.currentTime = 0;
+  now = 0;
+  started = player.play("http://speech/ja-line");
+  await tick(); await tick();
+  feed.enqueue(wavHeader());
+  for (let i = 0; i < 8; i++) {
+    now += 250;
+    feed.enqueue(pcm(0.25));
+    await tick();
+  }
+  feed.close();
+  await tick();
+  await started;
+  assert.ok((learned("amadeusVoiceRate") ?? 0) > 0, "a header-less line learns into the original keys");
+  assert.ok((learned("amadeusVoiceSecPerChar") ?? 0) > 0);
+  assert.ok((learned("amadeusVoiceLead") ?? 0) > 0);
+  for (const code of ["en", "zh", "yue", "ko"]) {
+    assert.equal(learned(`amadeusVoiceRate.${code}`), null, `no ${code} keys from a header-less line`);
+  }
+  player.stop();
+
   player.destroy();
   player.destroy();
 
@@ -189,11 +266,13 @@ try {
   resume?.();
   await playing;
   assert.equal(fetched, false, "destroy prevents delayed playback from starting");
-  console.log("PASS: speech pacing (right away / whole / smooth), dry spells, bar, stop, failure, destruction during audio unlock");
+  console.log("PASS: speech pacing (right away / whole / smooth), dry spells, bar, stop, failure, destruction during audio unlock, per-voice-language learned keys (header / missing header)");
 } finally {
   globals.AudioContext = original.AudioContext;
   globals.fetch = original.fetch;
   globals.requestAnimationFrame = original.raf;
   globals.cancelAnimationFrame = original.caf;
   if (original.performance) Object.defineProperty(globalThis, "performance", original.performance);
+  if (original.localStorage) Object.defineProperty(globalThis, "localStorage", original.localStorage);
+  else delete (globalThis as any).localStorage;
 }

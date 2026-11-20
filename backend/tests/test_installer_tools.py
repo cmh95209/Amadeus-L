@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """The installer's outside-program runner (Invoke-Tool) and pip wrapper.
 
-Windows only (skipped elsewhere). The functions are taken out of the real
+The PowerShell parts are Windows only (skipped elsewhere); the voice-patch
+checks run on every platform. The functions are taken out of the real
 installer and run in Windows PowerShell against small fake programs (Python
 one-liners) - nothing is installed or downloaded. Covers:
   1. arguments arrive exactly as given (spaces, quotes, backslashes, empty);
@@ -15,10 +16,17 @@ one-liners) - nothing is installed or downloaded. Covers:
      failure (9009), not a crash;
   5. Invoke-PipInEnv adds pip's raw progress mode to install/download only,
      and retries without it only when pip says it does not know the option;
-  6. the real installer's log is UTF-8 with the "STEP n of 11" headings.
+  6. the real installer's log is UTF-8 with the "STEP n of 11" headings;
+  7. the voice patch keeps Korean working on Windows: python_mecab_ko is in
+     the voice requirements with no win32 exclusion, the eunjeon stand-in
+     module defines Mecab.pos(), and re-running an installer (the update)
+     re-copies the whole voice-patch folder and re-runs the voice pip
+     install on every platform.
 """
+import ast
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -179,6 +187,75 @@ class InstallerLogTests(unittest.TestCase):
             self.assertIn("I'll do it myself", text)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+class VoiceKoreanPatchTests(unittest.TestCase):
+    """Korean voice on Windows: python_mecab_ko + the eunjeon stand-in.
+
+    GPT-SoVITS's Korean reader (g2pk2) asks for a package named eunjeon on
+    Windows, and eunjeon has no Windows build (it needs a C++ compiler), so
+    without the fix Korean speech fails there. The voice patch therefore
+    installs python_mecab_ko on every platform (its wheel exists for
+    Windows) and ships a small eunjeon stand-in module that wraps
+    python-mecab-ko's MeCab. g2pk2 only imports eunjeon on Windows (on
+    Linux/Mac it uses the mecab package directly), so the stand-in is never
+    imported there. Plain text checks: run on every platform.
+    """
+
+    _ROOT = Path(__file__).resolve().parents[2]
+    _WIN_PS1 = _ROOT / "scripts" / "install_windows.ps1"
+    _LIN_SH = _ROOT / "scripts" / "install_linux.sh"
+    _MAC_SH = _ROOT / "scripts" / "install_macos.sh"
+
+    @classmethod
+    def _req_lines(cls):
+        text = (cls._ROOT / "scripts" / "voice-patch" / "requirements.txt").read_text(encoding="utf-8")
+        return [l.strip() for l in text.replace("\r\n", "\n").splitlines()
+                if l.strip() and not l.lstrip().startswith("#")]
+
+    @staticmethod
+    def _package_name(line):
+        m = re.match(r"^([A-Za-z0-9._\-]+)", line)
+        return m.group(1).lower().replace("-", "_") if m else None
+
+    def test_python_mecab_ko_installs_on_windows(self):
+        mecab = [l for l in self._req_lines() if self._package_name(l) == "python_mecab_ko"]
+        self.assertTrue(mecab, "python_mecab_ko must be in the voice requirements")
+        for l in mecab:
+            self.assertNotIn("win32", l, "python_mecab_ko must install on Windows too: " + l)
+            self.assertNotIn("sys_platform", l, l)
+
+    def test_eunjeon_standin_module(self):
+        mod = self._ROOT / "scripts" / "voice-patch" / "eunjeon" / "__init__.py"
+        self.assertTrue(mod.is_file(), "scripts/voice-patch/eunjeon/__init__.py is missing")
+        text = mod.read_text(encoding="utf-8")
+        tree = ast.parse(text)
+        cls = next((n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Mecab"), None)
+        self.assertIsNotNone(cls, "the stand-in must define a Mecab class")
+        methods = {n.name for n in cls.body if isinstance(n, ast.FunctionDef)}
+        self.assertIn("pos", methods, "Mecab must provide pos(text)")
+        self.assertIn("from mecab import", text,
+                      "the stand-in must wrap python-mecab-ko's MeCab")
+
+    def test_windows_update_reapplies_patch_and_reinstalls(self):
+        # A re-run of the installer is the update: it must re-copy the whole
+        # voice-patch folder (requirements.txt AND the eunjeon module) ...
+        text = self._WIN_PS1.read_text(encoding="utf-8").replace("\r\n", "\n")
+        self.assertIn("Get-ChildItem -Path $voicePatch -Recurse -File", text,
+                      "the update must re-copy the whole voice-patch folder")
+        # ... and re-run the voice pip install from the patched list, so an
+        # existing Windows install gets python_mecab_ko on its next update.
+        self.assertRegex(text, r'Invoke-PipInEnv \$EnvVoice @\("install", "-r", "requirements\.txt"\)',
+                         "the update must re-run the voice pip install")
+
+    def test_linux_macos_update_reapply_patch_and_reinstall(self):
+        for script in (self._LIN_SH, self._MAC_SH):
+            text = script.read_bytes().decode("utf-8").replace("\r\n", "\n")
+            with self.subTest(script=script.name):
+                self.assertIn('cp -R "$VOICE_PATCH/." "$GPT/"', text,
+                              "the update must re-copy the whole voice-patch folder")
+                self.assertIn('install -r "$GPT/requirements.txt"', text,
+                              "the update must re-run the voice pip install")
 
 
 if __name__ == "__main__":

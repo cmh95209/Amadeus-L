@@ -1,9 +1,18 @@
-# Latest features (v3.1)
+# Latest features (v3.2)
 
 Everything Amadeus can do today.
 
 
-The current version (v3.1) includes:
+The current version (v3.2) includes:
+
+- **Your language** (v3.2): the page, Settings and her translation line in one of 16
+  languages (English, Chinese, Japanese, Korean, Spanish, French, German, Portuguese,
+  Russian, Arabic, Hindi, Tamil, Malay, Indonesian, Thai, Vietnamese)
+- **Voice language** (v3.2): her voice in Japanese, English, Mandarin, Cantonese or Korean
+- **Live weather lookups and honest sources** (v3.2): she checks the weather herself
+  when it fits, and the sources chip only shows what she really looked up
+- **Smarter recall** (v3.2): memories and files from other chats are matched by meaning,
+  in any language
 
 - **Provider list + Test button** (v3.1): OpenRouter, Google Gemini, Google Vertex AI,
   OpenAI, DeepSeek, Groq and more, or a local server - each with its own key; Test sends

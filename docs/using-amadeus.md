@@ -57,6 +57,20 @@ conversation memory. Intel Macs and Macs with less memory use option B.
 With both off she only knows the open tab, plus her long-term memory and what
 she knows about you. More in [Long-term memory](long-term-memory.md).
 
+### Your Language and Voice Language (v3.2)
+
+**Settings → Preferences** has two separate choices:
+
+- **Your language** — the language of the page, Settings and the translation
+  line under her replies (16 languages; the installer asks for it first).
+  With Japanese picked, the translation line is hidden. A switch applies to new
+  replies at once; earlier replies keep the translation they already have.
+  The setting is the first line of `backend/language.txt`, in case you picked
+  a language you can't read.
+- **Voice language** — the language her voice speaks: Japanese (default),
+  English, Mandarin, Cantonese or Korean. It is independent of Your language.
+  If a line can't be prepared in that language, she says it in Japanese.
+
 ### Reasoning
 
 **Settings → Connection → Reasoning** sets how much she thinks before she
@@ -76,7 +90,9 @@ through Tailscale - step by step in [Remote access](remote-access.md).
   content (she also reads links you send her). A **sources** chip under her
   reply opens the
   pages she used. Disabled by default on fresh installs.
-- **Live weather & air quality** — keyless, from public feeds.
+- **Live weather & air quality** — keyless, from public feeds. She looks the
+  weather up herself when the talk calls for it (never a made-up forecast);
+  set **Your town** in Settings → About you for "the weather here".
 - **Voice retention** — keep the last N generated voice recordings, freeing
   disk space automatically.
 

@@ -1,5 +1,28 @@
 # Changelog
 
+## v3.2.0 — Your Language, Her Voice in Five Languages, Live Weather — November 2026
+
+**Re-run the installers (or double-click Update Amadeus.bat) to update your app.**
+
+**NEW:**
+- **Your language** (Settings → Preferences): the page, Settings and the translation of her
+  replies in one of 16 languages. The installer asks for it first.
+- **Voice language** (Settings → Preferences): her voice in Japanese, English, Mandarin,
+  Cantonese or Korean.
+- **Live weather:** she looks it up herself when the talk calls for it, never a made-up
+  forecast. New **Your town** field in Settings → About you.
+- **Honest sources:** the sources chip only shows what she really looked up.
+- **Smarter recall:** memories and files from your other chats are matched by meaning, in any
+  language; "let me show you" no longer brings up an old picture from another chat.
+- Launcher window: press **R** to restart her, **B** to restart only her brain (Mac / Linux:
+  then Enter).
+
+**Fixes:**
+- A failed reply shows a plain error with the code and the reason.
+- A busy cloud service no longer leaves her translation line in Japanese: it retries.
+- A regenerated reply is written as of the moment you first asked.
+- The Personality tab has a Close button; the refresh button stays clickable while she replies.
+
 ## v3.1.1 — Easier First Setup, One Version Number, Installers for Every Release — November 2026
 
 **NEW:**

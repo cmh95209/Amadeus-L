@@ -1,9 +1,15 @@
 # ============================================================================
-#  AMADEUS - ONE-SHOT INSTALLER FOR WINDOWS   v3.1.1  (resumable / safe to re-run)
+#  AMADEUS - ONE-SHOT INSTALLER FOR WINDOWS   v3.2.0  (resumable / safe to re-run)
 #  Installs everything Amadeus needs to run.
 #
 #  This is the official installer for this fork. It is also attached to the
 #  latest release on GitHub, if you prefer downloading it from there.
+#
+#  WHAT'S NEW IN v3.2.0 (November 2026):
+#   - The first question asks which language Amadeus shows (her page and
+#     the translation of her replies). The answer is saved as
+#     backend/language.txt; a re-run keeps it. Changeable in Settings.
+#   - Korean for her voice works on Windows too (patched word splitter).
 #
 #  WHAT'S NEW IN v3.1.1 (November 2026):
 #   - Installers now carry the app's version number (this file was
@@ -284,7 +290,7 @@ param(
     # -SkipLlmDownload): no programs, environments or project download.
     [switch]$LlmScreensOnly
 )
-$InstallerVersion = "v3.1.1"
+$InstallerVersion = "v3.2.0"
 # Set in step 2 when the PC's own Node.js could not run her web page and
 # Amadeus' own copy is used instead (step 9 then sets the web page's parts up
 # again with it).

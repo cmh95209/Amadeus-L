@@ -2657,38 +2657,50 @@ def _time_note(created_at, prev_created_at, now: datetime | None = None):
 
 
 # pre: rows is a list of (id, role) tuples in ascending id order for one conversation
-# post: ids grouped into "reply turns" - a user message is its own turn, and a
-#       consecutive run of assistant messages (all regenerations of one reply)
-#       forms one turn. Powers the version arrows in the UI.
+# post: ids grouped into "reply turns" - a user message is its own turn, a
+#       consecutive run of ordinary assistant messages (all regenerations of
+#       one reply) is one turn, and every version of one greeting (or aside)
+#       line is one turn, sitting at the position of that line's oldest row.
+#       Powers the version arrows in the UI.
 def _group_reply_turns(rows) -> List[List[int]]:
-    """Group a session's rows (ascending id, each a (id, role, greeting) tuple)
-    into "reply turns". A user message is its own turn, and a consecutive run
-    of ordinary assistant messages (all regenerations of one reply) forms one
-    turn. A greeting is never lumped into the version stack of a neighboring
-    reply (it has no user turn of its own): it is its own turn, together
-    with its OWN regenerated versions only - consecutive greeting rows that
-    share a greeting_group (the optional 4th tuple item; NULL = the row's
-    own id). Returns the ids of each turn, in order."""
+    """Group a session's rows (ascending id, each a (id, role, greeting[,
+    greeting_group]) tuple) into "reply turns". A user message is its own
+    turn, and a consecutive run of ordinary assistant messages (all
+    regenerations of one reply) forms one turn. A greeting is never lumped
+    into the version stack of a neighboring reply (it has no user turn of its
+    own): ALL of its versions belong to one turn - by greeting_group (the
+    optional 4th tuple item; NULL = the row's own id), not by adjacency, so
+    versions that are separated by other rows (a deleted-and-remade version,
+    another greeting in between) still stay together - and that turn sits at
+    the position of the group's oldest row (the first row seen in id order).
+    Her "hold on" aside rows are such groups of one. Returns the ids of each
+    turn, in order."""
     def greeting_key(row):
         group = row[3] if len(row) > 3 else None
         return group if group else row[0]
 
+    # Every version of one greeting (or aside) line, wherever it sits in the
+    # conversation, ascending id.
+    members: Dict[int, List[int]] = {}
+    for row in rows:
+        if row[1] == "assistant" and row[2]:
+            members.setdefault(greeting_key(row), []).append(row[0])
+
     groups: List[List[int]] = []
+    emitted = set()
     i, n = 0, len(rows)
     while i < n:
-        if rows[i][1] == "user":
-            groups.append([rows[i][0]])
+        row = rows[i]
+        if row[1] == "user":
+            groups.append([row[0]])
+            i += 1
+        elif row[2]:
+            key = greeting_key(row)
+            if key not in emitted:
+                groups.append(members[key])
+                emitted.add(key)
             i += 1
         else:
-            if rows[i][2]:
-                key = greeting_key(rows[i])
-                j = i + 1
-                while (j < n and rows[j][1] == "assistant" and rows[j][2]
-                       and greeting_key(rows[j]) == key):
-                    j += 1
-                groups.append([r[0] for r in rows[i:j]])
-                i = j
-                continue
             j = i
             while j < n and not rows[j][2] and rows[j][1] == "assistant":
                 j += 1
@@ -2812,10 +2824,15 @@ def _message_item(row) -> Dict[str, str]:
 
 #pre:
 #post: Return the messages the UI should display, in a LIST of Jsons.
-#      Only the ACTIVE version of each assistant reply is listed (the other
-#      regenerations stay saved in the database); each assistant row carries
-#      version metadata (version, total_versions, version_ids) so the UI can
-#      offer version navigation. If file does not exist, make one and return []
+#      Exactly ONE version of each turn is listed (the other regenerations
+#      stay saved in the database): the active one (the newest active row
+#      when several are active); a turn where NO row is active shows its
+#      newest row instead, so a version set whose shown version was deleted
+#      (or whose flags were never written) still shows its newest version
+#      instead of vanishing - read-only, the database is not touched. Each
+#      listed multi-version row carries version metadata (version,
+#      total_versions, version_ids) so the UI can offer version navigation.
+#      If file does not exist, make one and return []
 def load_memory_raw(conversation_id=None) -> List[Dict[str, str]]:
     # conversation_id None means "the active session"
     conv = _active_conv_id(None) if conversation_id is None else int(conversation_id)
@@ -2841,22 +2858,29 @@ def load_memory_raw(conversation_id=None) -> List[Dict[str, str]]:
     out = []
     for turn in _group_reply_turns(
             [(r[0], r[1], 1 if (r[8] or r[12]) else 0, r[9]) for r in rows]):
-        for pos, mid in enumerate(turn):
-            row = by_id[mid]
-            if len(turn) > 1 and (row[6] if row[6] is not None else 1) != 1:
-                continue  # hidden version; only the viewed one is listed
-            item = _message_item(row)
-            if shown.get(mid):
-                item["attachments"] = attachments_for_ui(shown[mid])
-            if len(turn) > 1:
-                item["version"] = pos + 1
-                item["total_versions"] = len(turn)
-                item["version_ids"] = turn
-            elif (row[8] if row[8] else 0):
-                # A lone greeting row: flagged (it is its own turn by
-                # construction - the grouping rule never merges greetings).
-                item["is_greeting"] = True
-            out.append(item)
+        # The one version shown for this turn: the newest ACTIVE row of it;
+        # a turn where no row is active shows its newest row (the database is
+        # not repaired here - the same rule the version-aware undo/activate
+        # code applies, so the list always agrees with them).
+        if len(turn) > 1:
+            actives = [mid for mid in turn
+                       if (by_id[mid][6] if by_id[mid][6] is not None else 1) == 1]
+            mid = actives[-1] if actives else turn[-1]
+        else:
+            mid = turn[0]
+        row = by_id[mid]
+        item = _message_item(row)
+        if shown.get(mid):
+            item["attachments"] = attachments_for_ui(shown[mid])
+        if len(turn) > 1:
+            item["version"] = turn.index(mid) + 1
+            item["total_versions"] = len(turn)
+            item["version_ids"] = turn
+        elif (row[8] if row[8] else 0):
+            # A lone greeting row: flagged (it is its own turn by
+            # construction - the grouping rule never merges greetings).
+            item["is_greeting"] = True
+        out.append(item)
     return out
 
 
@@ -3602,20 +3626,73 @@ def update_message_content(message_id: int, content: str, japanese: str | None =
     return ok
 
 
+# ---------- TUNABLES: how delete / undo treat a line's versions ----------
+# UNDO_DELETES_VERSION: when Undo is pressed on a line that has several
+#   versions, is the shown version DELETED for good (True) - the version
+#   before it then becomes the shown one - or only stepped back to (False,
+#   the old behaviour: nothing is deleted). "greeting" = her own lines
+#   (versions belong together by greeting_group); "reply" = an answer to one
+#   of your messages (versions by adjacency). With one version left, Undo
+#   always removes the whole line (and her "hold on" line before it) - both
+#   kinds, switch or not.
+UNDO_DELETES_VERSION = {"greeting": True, "reply": True}
+
+# DELETE_REMOVES_ALL_VERSIONS: when the user deletes a line, are ALL its
+#   versions removed at once (True) - the greeting's whole group, wherever
+#   the rows sit, or the reply's whole turn - or the single clicked row only
+#   (False, the old behaviour)? User messages are never versioned: one row
+#   either way.
+DELETE_REMOVES_ALL_VERSIONS = {"greeting": True, "reply": True}
+
+
 # pre: message_id may or may not exist
-# post: the row is deleted; returns True when a row was removed
+# post: the row is deleted - and, with DELETE_REMOVES_ALL_VERSIONS, so are
+#       the other versions of the same line; their lookups and attachments
+#       go with them (as a single-row delete already did). Returns True when
+#       a row was removed
 def delete_message(message_id: int) -> bool:
+    message_id = int(message_id)
     conn = _connect_db()
     c = conn.cursor()
     _ensure_messages_table(c)
-    c.execute("DELETE FROM messages WHERE id = ?", (message_id,))
-    ok = c.rowcount > 0
-    _delete_lookups(c, "message_id = ?", (message_id,))
-    files = _delete_attachments(c, "message_id = ?", (message_id,))
+    row = c.execute(
+        "SELECT id, role, conversation_id, " + _OWN_TURN_SQL + ", greeting_group "
+        "FROM messages WHERE id = ?", (message_id,)
+    ).fetchone()
+    if row is None:
+        conn.close()
+        return False
+    _mid, role, conv, own_turn, group = row
+    if role == "assistant" and own_turn and DELETE_REMOVES_ALL_VERSIONS.get("greeting"):
+        # A greeting (or aside) row. Every version of the line carries the
+        # group's id in greeting_group; the FIRST version carries its own id
+        # with a NULL group. The rows may sit anywhere in the conversation.
+        # Aside rows are groups of one, so this removes exactly that row.
+        key = group if group else message_id
+        ids = [r[0] for r in c.execute(
+            "SELECT id FROM messages WHERE conversation_id = ? AND "
+            "(greeting_group = ? OR (greeting_group IS NULL AND id = ?))",
+            (conv, key, key)).fetchall()]
+    elif role == "assistant" and DELETE_REMOVES_ALL_VERSIONS.get("reply"):
+        # An ordinary reply: the whole adjacent turn it belongs to.
+        cids = c.execute(
+            "SELECT id, role, " + _OWN_TURN_SQL + ", greeting_group FROM messages "
+            "WHERE conversation_id = ? ORDER BY id ASC", (conv,)
+        ).fetchall()
+        ids = next((g for g in _group_reply_turns(
+            [(i, r, (1 if g else 0), gg) for i, r, g, gg in cids]) if message_id in g),
+            [message_id])
+    else:
+        ids = [message_id]
+    files = []
+    for mid in ids:
+        c.execute("DELETE FROM messages WHERE id = ?", (mid,))
+        _delete_lookups(c, "message_id = ?", (mid,))
+        files += _delete_attachments(c, "message_id = ?", (mid,))
     conn.commit()
     conn.close()
     remove_attachment_files(files)
-    return ok
+    return True
 
 
 # pre: messages table exists (possibly empty); conversation_id None = active session
@@ -3680,9 +3757,9 @@ def activate_version(message_id: int):
 
 
 # pre: conversation_id None = active session
-# post: ids (ascending) of the trailing run of assistant rows - i.e. every
-#       version of the reply the session currently ends with; [] when the
-#       session is empty or ends with a user message
+# post: ids (ascending) of the line the session currently ends with - for an
+#       assistant line, every version of it (a greeting group, wherever its
+#       rows sit); [] when the session is empty
 def get_trailing_turn(conversation_id=None) -> List[int]:
     conv = _active_conv_id(None) if conversation_id is None else int(conversation_id)
     conn = _connect_db()
@@ -3693,8 +3770,14 @@ def get_trailing_turn(conversation_id=None) -> List[int]:
         "WHERE conversation_id = ? ORDER BY id ASC", (conv,)
     ).fetchall()
     conn.close()
+    if not cids:
+        return []
     turns = _group_reply_turns([(i, r, g if g else 0, gg) for i, r, g, gg in cids])
-    return turns[-1] if turns else []
+    # The turn the session ends with - for a line whose versions are not
+    # adjacent (a greeting group), it sits EARLIER in the turn list than the
+    # last row, so it is looked up instead of assumed to be the last turn.
+    last_id = cids[-1][0]
+    return next((g for g in turns if last_id in g), [])
 
 
 # pre: message_id may or may not exist
@@ -3738,11 +3821,19 @@ def get_message_before(exclude_ids, conversation_id=None):
 
 
 # pre: there may or may not be an assistant row; conversation_id None = active session
-# post: version-aware undo. Steps the viewed version back one when an earlier
-#       version exists (nothing is deleted); when the FIRST version is viewed,
-#       the whole reply turn is removed so the user can rephrase.
+# post: version-aware undo of the line the session ends with. With
+#       UNDO_DELETES_VERSION set for that kind of line ("greeting" = her own
+#       lines, "reply" = an answer to your message), the SHOWN version of a
+#       multi-version line is deleted for good and the version before it
+#       becomes the active one. With the switch off, or with one version
+#       left, undo works as before: it steps the shown version back one
+#       (nothing is deleted), or - when the first version is shown - removes
+#       the whole turn (and her "hold on" line before it) so the user can
+#       rephrase.
 #       Returns None when there is nothing to undo, else a dict:
-#       {"action": "switch",  "deleted_id": None, "activated_id": <id>} or
+#       {"action": "switch",         "deleted_id": None, "activated_id": <id>} or
+#       {"action": "deleted_version","deleted_id": <id>, "deleted_ids": [<id>],
+#        "activated_id": <id>} or
 #       {"action": "deleted", "deleted_id": <newest id>, "deleted_ids": [...]}
 def undo_last_assistant(conversation_id=None):
     conv = _active_conv_id(None) if conversation_id is None else int(conversation_id)
@@ -3750,29 +3841,53 @@ def undo_last_assistant(conversation_id=None):
     c = conn.cursor()
     _ensure_messages_table(c)
     last = c.execute(
-        "SELECT id, role FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 1",
+        "SELECT id, role, COALESCE(greeting, 0) FROM messages WHERE conversation_id = ? "
+        "ORDER BY id DESC LIMIT 1",
         (conv,),
     ).fetchone()
     if last is None or last[1] != "assistant":
         conn.close()
         return None
+    kind = "greeting" if last[2] else "reply"
     cids = c.execute(
-        "SELECT id, role, " + _OWN_TURN_SQL + ", greeting_group FROM messages "
+        "SELECT id, role, active, " + _OWN_TURN_SQL + ", greeting_group FROM messages "
         "WHERE conversation_id = ? ORDER BY id ASC", (conv,)
     ).fetchall()
-    turns = _group_reply_turns([(i, r, g if g else 0, gg) for i, r, g, gg in cids])
-    turn = turns[-1] if turns else []
+    turns = _group_reply_turns([(i, r, (1 if g else 0), gg) for i, r, _a, g, gg in cids])
+    # The turn the session ends with - for a greeting group whose versions
+    # are not adjacent, it sits earlier in the turn list than the last row.
+    turn = next((g for g in turns if last[0] in g), None)
     if not turn:
         conn.close()
         return None
-    ph = ",".join("?" * len(turn))
-    active_row = c.execute(
-        "SELECT id FROM messages WHERE id IN (" + ph + ") AND active = 1 LIMIT 1", turn
-    ).fetchone()
-    active_id = active_row[0] if active_row else turn[-1]
-    if len(turn) > 1 and active_id != turn[0]:
-        prev_id = turn[turn.index(active_id) - 1]
-        c.execute("UPDATE messages SET active = 0 WHERE id = ?", (active_id,))
+    # The version shown for this turn: the newest ACTIVE row of it; a turn
+    # where no row is active shows its newest row (the same rule as the UI
+    # list, so undo and the list never disagree on what is being viewed).
+    active = {i: (a if a is not None else 1) == 1 for i, _r, a, _g, _gg in cids}
+    actives = [mid for mid in turn if active.get(mid)]
+    shown_id = actives[-1] if actives else turn[-1]
+
+    if len(turn) > 1 and UNDO_DELETES_VERSION.get(kind):
+        # The shown version is removed for good; the version before it
+        # (the shown row of what is left) becomes active.
+        survivors = [mid for mid in turn if mid != shown_id]
+        c.execute("DELETE FROM messages WHERE id = ?", (shown_id,))
+        _delete_lookups(c, "message_id = ?", (shown_id,))
+        files = _delete_attachments(c, "message_id = ?", (shown_id,))
+        next_shown = next((mid for mid in reversed(survivors) if active.get(mid)),
+                          survivors[-1])
+        ph = ",".join("?" * len(survivors))
+        c.execute("UPDATE messages SET active = 0 WHERE id IN (" + ph + ")", survivors)
+        c.execute("UPDATE messages SET active = 1 WHERE id = ?", (next_shown,))
+        conn.commit()
+        conn.close()
+        remove_attachment_files(files)
+        return {"action": "deleted_version", "deleted_id": shown_id,
+                "deleted_ids": [shown_id], "activated_id": next_shown}
+
+    if len(turn) > 1 and shown_id != turn[0]:
+        prev_id = turn[turn.index(shown_id) - 1]
+        c.execute("UPDATE messages SET active = 0 WHERE id = ?", (shown_id,))
         c.execute("UPDATE messages SET active = 1 WHERE id = ?", (prev_id,))
         conn.commit()
         conn.close()

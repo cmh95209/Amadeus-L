@@ -1351,13 +1351,14 @@ def delete_message(message_id):
 
 
 # pre: at least one assistant reply exists in memory
-# post: her newest reply is removed so the user can rephrase and retry
+# post: her newest reply (or, with UNDO_DELETES_VERSION, the viewed version
+#       of it) is removed so the user can rephrase and retry
 @application.route("/memory/undo", methods=["POST"])
 def undo_last_reply():
     result = memory.undo_last_assistant()
     if result is None:
         return jsonify({"message": "No reply to undo"}), 404
-    if result["action"] == "deleted":
+    if result["action"] in ("deleted", "deleted_version"):
         for message_id in result["deleted_ids"]:
             _unlink_voice(message_id)
     return jsonify({

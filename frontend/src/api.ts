@@ -764,7 +764,9 @@ export async function deleteMessage(id: number): Promise<void> {
 }
 
 export type UndoResult = {
-  action: "switch" | "deleted";
+  /** "deleted_version" = a version of a multi-version line was removed for
+   *  good and the version before it is now shown (UNDO_DELETES_VERSION). */
+  action: "switch" | "deleted" | "deleted_version";
   deleted_id: number | null;
   activated_id?: number;
 };
@@ -773,7 +775,7 @@ export async function undoLastReply(): Promise<UndoResult | null> {
   const data = await parseResponse(await fetch(`${API_BASE}/memory/undo`, { method: "POST" }));
   if (typeof data.action !== "string") return null;
   return {
-    action: data.action as "switch" | "deleted",
+    action: data.action as UndoResult["action"],
     deleted_id: typeof data.deleted_id === "number" ? data.deleted_id : null,
     activated_id: typeof data.activated_id === "number" ? data.activated_id : undefined,
   };

@@ -13,6 +13,8 @@ The current version (v3.2) includes:
   when it fits, and the sources chip only shows what she really looked up
 - **Smarter recall** (v3.2): memories and files from other chats are matched by meaning,
   in any language
+- **Greeting cooldown** (v3.2): reopening or refreshing the app right after her greeting
+  keeps that greeting instead of a new one (Settings -> Preferences)
 
 - **Provider list + Test button** (v3.1): OpenRouter, Google Gemini, Google Vertex AI,
   OpenAI, DeepSeek, Groq and more, or a local server - each with its own key; Test sends

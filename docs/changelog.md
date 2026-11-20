@@ -16,12 +16,20 @@
   language; "let me show you" no longer brings up an old picture from another chat.
 - Launcher window: press **R** to restart her, **B** to restart only her brain (Mac / Linux:
   then Enter).
+- **Greeting cooldown** (Settings → Preferences): reopening or refreshing within 15 seconds of
+  her last greeting keeps that greeting instead of a new one (adjustable, or off).
+- **Report bugs** and **Join Discord** buttons next to Quit in Settings.
 
 **Fixes:**
 - A failed reply shows a plain error with the code and the reason.
 - A busy cloud service no longer leaves her translation line in Japanese: it retries.
 - A regenerated reply is written as of the moment you first asked.
 - The Personality tab has a Close button; the refresh button stays clickable while she replies.
+- Regenerated greetings no longer come back as extra greetings or vanish. Delete removes a
+  message with all its versions; Undo removes the newest version.
+- Updating with "Keep that choice? Y" keeps the model you picked in Settings (cloud users were
+  switched back to the built-in model).
+- Settings is fully translated; a page started offline switches to your language once connected.
 
 ## v3.1.1 — Easier First Setup, One Version Number, Installers for Every Release — November 2026
 

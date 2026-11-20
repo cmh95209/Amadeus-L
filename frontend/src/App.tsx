@@ -63,6 +63,8 @@ import {
   resetMemory,
   sendMessage,
   getGreeting,
+  getGreetingCooldown,
+  setGreetingCooldown as saveGreetingCooldown,
   getConversationGreeting,
   pokeConversation,
   getWebAccess,
@@ -171,6 +173,19 @@ function baseName(path: string): string {
 
 // Settings choices for the "about you" section.
 const PRONOUN_PRESETS = ["he/him", "she/her", "they/them"];
+
+// Settings -> Preferences: how long after her last startup greeting a
+// reopen, refresh, or reconnect of the app keeps it instead of a new one
+// (mirrors the backend's greeting_cooldown choices; 0 = always greet).
+const GREETING_COOLDOWN_CHOICES: { value: number; label: string }[] = [
+  { value: 0, label: "Every time" },
+  { value: 15, label: "After 15 seconds" },
+  { value: 30, label: "After 30 seconds" },
+  { value: 60, label: "After 1 minute" },
+  { value: 120, label: "After 2 minutes" },
+  { value: 300, label: "After 5 minutes" },
+];
+
 // [value, label]; labels show the user's own name ("Alex" until one is set).
 function addressOptions(name: string): [string, string][] {
   const n = name.trim() || "Alex";
@@ -502,6 +517,9 @@ export default function App() {
   const [dropGlow, setDropGlow] = useState(false);
   const [attachNote, setAttachNote] = useState("");
   const [reactionChoice, setReactionChoice] = useState<ReactionChoice>("always");
+  // Greeting cooldown: null until the backend reports the setting (an older
+  // backend has no such route - the settings row stays hidden).
+  const [greetingCooldown, setGreetingCooldown] = useState<number | null>(null);
   const pictures = useAttachments({
     conversationId: () => displayedConvIdRef.current,
     mayReact: () => !loadingRef.current && !ceremonyPendingRef.current && hasApiKey === true,
@@ -583,6 +601,11 @@ export default function App() {
     void getReactionSetting().then(setReactionChoice).catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    // The row stays hidden when this fails (older backend, no route).
+    void getGreetingCooldown().then(setGreetingCooldown).catch(() => setGreetingCooldown(null));
+  }, []);
+
   async function changeReactionChoice(value: ReactionChoice) {
     const previous = reactionChoice;
     setReactionChoice(value);
@@ -590,6 +613,17 @@ export default function App() {
       setReactionChoice(await setReactionSetting(value));
     } catch (error) {
       setReactionChoice(previous);
+      setSettingsError(error instanceof Error ? error.message : "Could not save that setting");
+    }
+  }
+
+  async function changeGreetingCooldown(seconds: number) {
+    const previous = greetingCooldown;
+    setGreetingCooldown(seconds);
+    try {
+      setGreetingCooldown(await saveGreetingCooldown(seconds));
+    } catch (error) {
+      setGreetingCooldown(previous);
       setSettingsError(error instanceof Error ? error.message : "Could not save that setting");
     }
   }
@@ -4193,6 +4227,28 @@ export default function App() {
                     send it (she hasn't seen it yet). Saved at once.
                   </p>
                 </div>
+
+                {greetingCooldown !== null && (
+                  <div className="settings-reasoning" aria-label="New greeting when you reopen the app">
+                    <label>
+                      New greeting when you reopen the app
+                      <select
+                        value={greetingCooldown}
+                        onChange={(event) => void changeGreetingCooldown(Number(event.target.value))}
+                        aria-describedby="greeting-cooldown-help"
+                      >
+                        {GREETING_COOLDOWN_CHOICES.map((choice) => (
+                          <option key={choice.value} value={choice.value}>{choice.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <p className="settings-help" id="greeting-cooldown-help">
+                      Opening, refreshing or reconnecting the app sooner than
+                      this keeps her last greeting instead of a new one.
+                      Saved at once.
+                    </p>
+                  </div>
+                )}
 
                 <div className="settings-toggle-row" aria-label="Remember my other chats">
                   <div className="settings-toggle-text">

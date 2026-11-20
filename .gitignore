@@ -52,6 +52,8 @@ backend/data/voice_ja.txt
 # Pictures the user attached (user data) + how often she reacts to them
 backend/data/attachments/
 backend/data/attach_reaction.txt
+# The greeting cooldown choice (Settings -> Preferences, user setting)
+backend/data/greeting_cooldown.txt
 # Character memory sidecar data (user data)
 backend/data/character_memory/
 backend/generated/

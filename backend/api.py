@@ -31,6 +31,7 @@ import ceremony
 import concerns
 import cross_tab
 import display_lang
+import greeting_cooldown
 import voice_lang
 import defaults_refresh
 import feelings
@@ -826,6 +827,24 @@ def set_attach_reaction_setting():
     data = request.get_json(silent=True) or {}
     try:
         value = attachments.save_reaction_setting(data.get("value"))
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    return jsonify({"status": "ok", "value": value})
+
+
+# How long after her last startup greeting a reopen / refresh / reconnect
+# keeps it instead of a new one (0 = off). Settings -> Preferences.
+@application.route("/greetingCooldown", methods=["GET"])
+def get_greeting_cooldown():
+    return jsonify({"status": "ok", "value": greeting_cooldown.load_seconds(),
+                    "choices": list(greeting_cooldown.CHOICES)})
+
+
+@application.route("/greetingCooldown", methods=["POST"])
+def set_greeting_cooldown():
+    data = request.get_json(silent=True) or {}
+    try:
+        value = greeting_cooldown.save_seconds(data.get("value"))
     except ValueError as exc:
         return jsonify({"message": str(exc)}), 400
     return jsonify({"status": "ok", "value": value})
@@ -2515,18 +2534,34 @@ def greet():
     if not ready["ready"]:
         return jsonify({"ready": False, "reason": ready["reason"],
                         "ceremony": memory.CEREMONY_DONE})
-    try:
-        pack, assistant_id, conv_id = generate_greeting(
-            mode="restart" if restarted else "startup")
-    except GreetingSuperseded:
-        # The user spoke first while the line was being written: no line,
-        # not an error - the conversation is already going.
-        return jsonify({"ready": False, "reason": "user spoke first",
-                        "superseded": True,
-                        "ceremony": memory.CEREMONY_DONE})
-    except Exception as exc:
-        print("[Flask] Greeting failure:", repr(exc))
-        return jsonify(_error_json(exc)), 502
+    # Greeting cooldown: the app was opened, refreshed or reconnected within
+    # the configured window of her last startup greeting in this tab, and
+    # the user wrote nothing since - keep that greeting instead of a new
+    # one. The gate holds across the whole check -> generate -> note, so two
+    # /greet requests arriving at the same moment (two tabs, a phone, a
+    # reconnect) generate at most once: the second waits for the first, then
+    # sees the cooldown. The page treats "superseded" as "greeted, no line,
+    # no retry". Applies to startup AND restart mode; the first-launch
+    # ceremony lines above and the tab-switch route are untouched.
+    conv = memory.load_active_conversation()
+    with greeting_cooldown.gate:
+        if greeting_cooldown.recent_greeting(conv) is not None:
+            return jsonify({"ready": False, "reason": "recent greeting",
+                            "superseded": True, "cooldown": True,
+                            "ceremony": memory.CEREMONY_DONE})
+        try:
+            pack, assistant_id, conv_id = generate_greeting(
+                mode="restart" if restarted else "startup")
+        except GreetingSuperseded:
+            # The user spoke first while the line was being written: no line,
+            # not an error - the conversation is already going.
+            return jsonify({"ready": False, "reason": "user spoke first",
+                            "superseded": True,
+                            "ceremony": memory.CEREMONY_DONE})
+        except Exception as exc:
+            print("[Flask] Greeting failure:", repr(exc))
+            return jsonify(_error_json(exc)), 502
+        greeting_cooldown.note_greeting(conv_id, assistant_id)
 
     speech_id = _mint_speech_id(pack, assistant_id)
     return jsonify({

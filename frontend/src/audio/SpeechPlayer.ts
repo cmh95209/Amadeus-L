@@ -1,9 +1,12 @@
 import {
-  DEFAULT_SECONDS_PER_CHAR,
   MARGIN_S,
   blend,
   decide,
+  lineLengthGuess,
   neededLead,
+  pacingKeys,
+  voiceLangFromHeader,
+  type VoiceLang,
   type VoicePlayback,
 } from "./voicePacing";
 
@@ -16,13 +19,12 @@ export type SpeechPlayerCallbacks = {
 };
 
 const PLAYBACK_FAILED = "Speech playback failed. Check the TTS server and try again.";
-// Learned per PC (this browser): how fast her voice is made, and how long a
-// character of her Japanese line takes to say.
-const RATE_KEY = "amadeusVoiceRate";
-const SECONDS_PER_CHAR_KEY = "amadeusVoiceSecPerChar";
-// Head start a line needed (seconds after the first sound, per second of
-// audio) so no sentence break ran dry - see voicePacing.neededLead.
-const LEAD_KEY = "amadeusVoiceLead";
+// Learned per PC (this browser), per voice language
+// (voicePacing.pacingKeys): how fast her voice is made, how long a character
+// of her line takes to say, and the head start a line needed so no sentence
+// break ran dry (see voicePacing.neededLead). Japanese uses the original
+// keys, so values learned before the voice-language setting exists keep
+// working.
 // A wait shorter than this shows no "preparing" bar (no flicker on a fast PC).
 const SHOW_PREPARING_MS = 400;
 // Scheduling slack when (re)starting: the first piece plays this far ahead.
@@ -32,6 +34,8 @@ type WavFormat = { channels: number; sampleRate: number; frameBytes: number; dat
 
 type Line = {
   generation: number;
+  /** The line's voice language (X-Amadeus-Voice-Lang header; missing = "ja"). */
+  lang: VoiceLang;
   format: WavFormat | null;
   /** Raw bytes until the WAV header is understood (or the whole file, if it never is). */
   head: Uint8Array;
@@ -147,6 +151,9 @@ export class SpeechPlayer {
       throw new Error(PLAYBACK_FAILED);
     }
 
+    // Which voice language this line was made in. Older backends send no
+    // header - Japanese, and the learned values apply as before.
+    const lang = voiceLangFromHeader(response.headers.get("X-Amadeus-Voice-Lang"));
     const chars = Number(response.headers.get("X-Amadeus-Voice-Chars"));
     const length = Number(response.headers.get("Content-Length"));
     const reader = response.body.getReader();
@@ -154,6 +161,7 @@ export class SpeechPlayer {
     return new Promise<void>((resolve, reject) => {
       const line: Line = {
         generation,
+        lang,
         format: null,
         head: new Uint8Array(0),
         wholeFile: false,
@@ -307,7 +315,8 @@ export class SpeechPlayer {
     const rate = line.format.sampleRate;
     const ahead = Math.max(0, this.nextTime - this.context.currentTime) + line.pendingFrames / rate;
     const total = this.estimateTotal(line);
-    const leadRatio = readNumber(LEAD_KEY);
+    const keys = pacingKeys(line.lang);
+    const leadRatio = readNumber(keys.lead);
     const decision = decide({
       mode: this.mode,
       received: line.receivedFrames / rate,
@@ -315,7 +324,7 @@ export class SpeechPlayer {
       elapsed: line.firstAt === null ? 0 : (performance.now() - line.firstAt) / 1000,
       total,
       ended: line.ended,
-      priorRate: readNumber(RATE_KEY),
+      priorRate: readNumber(keys.rate),
       // Only at the start of a line (a dry spell mid-line uses the speed).
       // A fast PC needs (almost) none: no wait at all below 0.15 s.
       lead: !line.ranDry ? leadFor(leadRatio, total ?? line.receivedFrames / rate) : null,
@@ -413,8 +422,11 @@ export class SpeechPlayer {
     if (line.contentLength !== null) {
       return Math.max(0, line.contentLength - format.dataOffset) / (format.frameBytes * format.sampleRate);
     }
+    // A fresh browser (or a voice language it has not heard yet) falls back
+    // to that language's TUNABLES start value (voicePacing).
+    const keys = pacingKeys(line.lang);
     let guess = line.chars !== null
-      ? line.chars * (readNumber(SECONDS_PER_CHAR_KEY) ?? DEFAULT_SECONDS_PER_CHAR)
+      ? lineLengthGuess(line.lang, line.chars, readNumber(keys.secPerChar))
       : null;
     if (line.ranDry) {
       // The guess was too short: count on at least half as much again as
@@ -428,22 +440,24 @@ export class SpeechPlayer {
   /** Remember this PC's voice speed and speech length (streamed lines only). */
   private learn(line: Line): void {
     if (line.contentLength !== null || !line.format || line.firstAt === null || line.lastAt === null) return;
+    // Each voice language learns into its own keys (Japanese: the originals).
+    const keys = pacingKeys(line.lang);
     const seconds = line.receivedFrames / line.format.sampleRate;
     const making = (line.lastAt - line.firstAt) / 1000;
     if (seconds >= 1.5 && making > 0.2) {
-      writeNumber(RATE_KEY, blend(readNumber(RATE_KEY), seconds / making));
+      writeNumber(keys.rate, blend(readNumber(keys.rate), seconds / making));
     }
     if (seconds >= 1 && line.chars) {
-      writeNumber(SECONDS_PER_CHAR_KEY, blend(readNumber(SECONDS_PER_CHAR_KEY), seconds / line.chars));
+      writeNumber(keys.secPerChar, blend(readNumber(keys.secPerChar), seconds / line.chars));
     }
     if (seconds >= 1.5) {
       // Careful on purpose: a bigger head start wins at once, a smaller one
       // only half way (one lucky line must not bring the gaps back).
       const ratio = neededLead(line.arrivals) / seconds;
-      const before = readNumber(LEAD_KEY);
+      const before = readNumber(keys.lead);
       const next = before === null ? ratio : Math.max(ratio, blend(before, ratio, 0.5));
       // 0 is never stored (readNumber ignores it): keep a tiny value instead.
-      writeNumber(LEAD_KEY, Math.max(next, 0.0001));
+      writeNumber(keys.lead, Math.max(next, 0.0001));
     }
   }
 

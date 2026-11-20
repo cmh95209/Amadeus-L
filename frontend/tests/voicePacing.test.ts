@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import {
   decide,
+  lineLengthGuess,
   neededLead,
   loadVoicePlayback,
+  pacingKeys,
+  voiceLangFromHeader,
   voiceStartsEarly,
+  SECONDS_PER_CHAR_START,
   type PacingInput,
 } from "../src/audio/voicePacing";
 
@@ -65,4 +69,54 @@ assert.equal(decide({ ...quick, elapsed: 3.5, received: 7, ahead: 7 }).go, true)
 assert.equal(decide({ ...quick, mode: "instant" }).go, true, "Right away ignores it");
 assert.equal(decide({ ...quick, lead: null }).go, true);
 
-console.log("PASS: voice pacing - fast PCs start at once, slow PCs wait just enough, sentence-break head start, saved choice + old switch");
+// -- per voice language (the /speech header X-Amadeus-Voice-Lang) ------------
+// The header names the line's voice language; none (old backend) = Japanese.
+assert.equal(voiceLangFromHeader(null), "ja", "a missing header is Japanese");
+assert.equal(voiceLangFromHeader("ja"), "ja");
+assert.equal(voiceLangFromHeader("en"), "en");
+assert.equal(voiceLangFromHeader("zh"), "zh");
+assert.equal(voiceLangFromHeader("yue"), "yue");
+assert.equal(voiceLangFromHeader("ko"), "ko");
+assert.equal(voiceLangFromHeader("xx"), "ja", "an unknown code counts as Japanese");
+
+// Japanese keeps the ORIGINAL localStorage keys (what a browser learned
+// before the setting exists keeps working); the others get a ".<code>" suffix.
+assert.deepEqual(pacingKeys("ja"), {
+  rate: "amadeusVoiceRate",
+  secPerChar: "amadeusVoiceSecPerChar",
+  lead: "amadeusVoiceLead",
+}, "ja: the original keys, unchanged");
+assert.deepEqual(pacingKeys("en"), {
+  rate: "amadeusVoiceRate.en",
+  secPerChar: "amadeusVoiceSecPerChar.en",
+  lead: "amadeusVoiceLead.en",
+});
+assert.deepEqual(pacingKeys("zh"), {
+  rate: "amadeusVoiceRate.zh",
+  secPerChar: "amadeusVoiceSecPerChar.zh",
+  lead: "amadeusVoiceLead.zh",
+});
+assert.deepEqual(pacingKeys("yue"), {
+  rate: "amadeusVoiceRate.yue",
+  secPerChar: "amadeusVoiceSecPerChar.yue",
+  lead: "amadeusVoiceLead.yue",
+});
+assert.deepEqual(pacingKeys("ko"), {
+  rate: "amadeusVoiceRate.ko",
+  secPerChar: "amadeusVoiceSecPerChar.ko",
+  lead: "amadeusVoiceLead.ko",
+});
+
+// A fresh browser (nothing learned) guesses a line's length from the
+// language's START value (deliberately on the slow side).
+assert.equal(lineLengthGuess("ja", 100, null), 16, "ja: today's default 0.16 s/char");
+assert.equal(lineLengthGuess("ja", 100, null), 100 * SECONDS_PER_CHAR_START.ja);
+assert.equal(lineLengthGuess("en", 100, null), 7.5);
+assert.equal(lineLengthGuess("zh", 100, null), 22);
+assert.equal(lineLengthGuess("yue", 100, null), 22);
+assert.ok(Math.abs(lineLengthGuess("ko", 100, null) - 14) < 1e-9);
+// ...but what the browser learned for that language always wins.
+assert.equal(lineLengthGuess("en", 100, 0.1), 10);
+assert.equal(lineLengthGuess("ja", 100, 0.2), 20);
+
+console.log("PASS: voice pacing - fast PCs start at once, slow PCs wait just enough, sentence-break head start, saved choice + old switch, per-voice-language keys + start values");

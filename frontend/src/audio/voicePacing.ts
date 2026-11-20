@@ -14,6 +14,64 @@
  *             once (gaps on a slow PC; the old "Start her voice early")
  *   whole   - voice and English line together, the whole line made first
  */
+
+// --- TUNABLES: what a fresh voice language starts with -----------------------
+// This browser LEARNS how fast her voice is made and how long one character
+// of her line takes (localStorage: amadeusVoiceRate / amadeusVoiceSecPerChar
+// / amadeusVoiceLead) - but those values were learned on JAPANESE lines.
+// Another voice language starts from the START values below, exactly like a
+// brand-new browser today (its rate and lead are "nothing learned" too).
+// They are deliberately on the slow side: the player waits a bit longer
+// rather than stutter.
+export const VOICE_LANGUAGES = ["ja", "en", "zh", "yue", "ko"] as const;
+export type VoiceLang = (typeof VOICE_LANGUAGES)[number];
+/** Seconds of speech per character, per voice language (fresh start). */
+export const SECONDS_PER_CHAR_START: Record<VoiceLang, number> = {
+  ja: 0.16,   // today's default
+  zh: 0.22,
+  yue: 0.22,
+  ko: 0.14,
+  en: 0.075,
+};
+
+/**
+ * The voice language of one /speech line: its X-Amadeus-Voice-Lang header.
+ * Older backends send no header (and nothing else is a known voice
+ * language): Japanese, so the values this browser already learned keep
+ * applying.
+ */
+export function voiceLangFromHeader(header: string | null): VoiceLang {
+  if (typeof header === "string" && (VOICE_LANGUAGES as readonly string[]).includes(header)) {
+    return header as VoiceLang;
+  }
+  return "ja";
+}
+
+/**
+ * The localStorage keys this voice language reads and writes. Japanese keeps
+ * the ORIGINAL keys: what a browser learned before the voice-language setting
+ * exists still works. Every other language gets a ".<code>" suffix - a fresh
+ * start.
+ */
+export function pacingKeys(lang: VoiceLang): { rate: string; secPerChar: string; lead: string } {
+  const suffix = lang === "ja" ? "" : `.${lang}`;
+  return {
+    rate: `amadeusVoiceRate${suffix}`,
+    secPerChar: `amadeusVoiceSecPerChar${suffix}`,
+    lead: `amadeusVoiceLead${suffix}`,
+  };
+}
+
+/**
+ * The line's length in seconds when the engine gives no length of its own
+ * (no Content-Length): the spoken characters x her seconds per character -
+ * what this browser learned for this voice language, or the language's START
+ * value in a fresh browser.
+ */
+export function lineLengthGuess(lang: VoiceLang, chars: number, learned: number | null): number {
+  return chars * (learned ?? SECONDS_PER_CHAR_START[lang]);
+}
+
 export type VoicePlayback = "smooth" | "early" | "instant" | "whole";
 
 export const VOICE_PLAYBACK_CHOICES: { value: VoicePlayback; title: string; desc: string }[] = [
@@ -80,7 +138,7 @@ function safeStorage(): Storage | null {
 }
 
 /** Seconds of speech per character of her Japanese line (learned per PC). */
-export const DEFAULT_SECONDS_PER_CHAR = 0.16;
+export const DEFAULT_SECONDS_PER_CHAR = SECONDS_PER_CHAR_START.ja;
 /** A rate at least this fast never waits (more than real time + headroom). */
 export const FAST_ENOUGH = 1.15;
 /** Seconds to watch the engine before trusting its measured speed. */

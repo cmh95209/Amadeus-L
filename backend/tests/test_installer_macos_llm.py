@@ -33,6 +33,10 @@ from pathlib import Path
 
 _MAC = Path(__file__).resolve().parents[2] / "scripts" / "install_macos.sh"
 
+# The "what the app uses now" lines of the "keep that choice?" screen.
+SWITCHED_CUSTOM = "In the app you switched to your own model since - that stays"
+SWITCHED_BUILTIN = "In the app you switched to her built-in model since - that stays"
+
 
 def _find_bash():
     git = shutil.which("git")
@@ -205,6 +209,67 @@ class ScreenTests(_Base):
         self.screens(["Y"], ram=24)
         self.assertNotIn("selected_file", self.settings())
         self.assertEqual(self.settings()["history_budget"], 9000)
+
+    def set_app_mode(self, mode):
+        # What the app's own Settings screen saves (json.dump, indent=4)
+        # without the installer knowing: the user switched the mode in-app.
+        s = self.settings()
+        s["mode"] = mode
+        self.settings_path().write_text(json.dumps(s, indent=4, ensure_ascii=False), encoding="utf-8")
+
+    def test_kept_a_keeps_the_apps_custom_mode(self):
+        # The user switched to a cloud model in Settings after the first
+        # install: keeping the remembered "A" must not switch her back.
+        self.screens(["A", "Y"], ram=24)
+        self.set_app_mode("custom")
+        out = self.screens(["Y"], ram=24)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn(SWITCHED_CUSTOM, out.stdout)
+        s = self.settings()
+        self.assertEqual(s["mode"], "custom")
+        # The model files and the other settings are still updated.
+        self.assertEqual(s["model"], "12B")
+        self.assertEqual(s["context"], 24576)
+        self.assertFalse(s["model_ok"])
+
+    def test_kept_a_keeps_the_apps_builtin_mode(self):
+        self.screens(["A", "Y"], ram=24)
+        self.set_app_mode("builtin")
+        out = self.screens(["Y"], ram=24)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertNotIn("In the app you switched", out.stdout)
+        self.assertEqual(self.settings()["mode"], "builtin")
+
+    def test_fresh_a_over_the_apps_custom_mode_sets_builtin(self):
+        # A fresh choice (N, then A) sets the mode from the answer, even
+        # though the app is on a cloud model now.
+        self.screens(["A", "Y"], ram=24)
+        self.set_app_mode("custom")
+        out = self.screens(["N", "A", "Y"], ram=24)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn(SWITCHED_CUSTOM, out.stdout)   # step 0 still says what the app uses now
+        self.assertEqual(self.settings()["mode"], "builtin")
+
+    def test_kept_b_keeps_the_apps_builtin_mode(self):
+        # Option B remembered, but the user switched back to her built-in
+        # model in Settings since: keeping B keeps that too.
+        self.screens(["B"], ram=32)
+        self.set_app_mode("builtin")
+        out = self.screens(["Y"], ram=32)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn(SWITCHED_BUILTIN, out.stdout)
+        s = self.settings()
+        self.assertEqual(s["mode"], "builtin")
+        self.assertEqual(s["model"], "12B")
+
+    def test_kept_a_without_the_settings_file_writes_builtin(self):
+        # No app settings file (yet): nothing to win, the answer applies.
+        self.screens(["A", "Y"], ram=24)
+        self.settings_path().unlink()
+        out = self.screens(["Y"], ram=24)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertNotIn("In the app you switched", out.stdout)
+        self.assertEqual(self.settings()["mode"], "builtin")
 
     def test_no_answer_stops_instead_of_looping(self):
         out = subprocess.run([_BASH, str(self.script), _posix(self.inst), "--llm-screens-only",

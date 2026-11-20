@@ -455,6 +455,7 @@ MAC_MODELS="12B|Gemma 4 12B (QAT)|unsloth/gemma-4-12b-it-qat-GGUF|980b060c40a853
 # downloaded again, which must never take a 6-7 GB model with it).
 MODELS_DIR="$INSTALL_DIR/models"
 LLM_CHOICE_FILE="$MODELS_DIR/local_llm_choice.json"
+CHOICE_KEPT=0   # 1 = the user answered Y to "keep that choice?" on a re-run
 DOWNLOAD_RETRY_DELAY=15
 LLM_PORT=8091
 
@@ -575,6 +576,17 @@ json_get() {
         | sed -e 's/,[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e 's/\\"/"/g' -e 's/\\\\/\\/g'
 }
 
+# What mode the app uses NOW: its own setting (backend/data/local_llm.json
+# of the project this installer updates), which the user can change in
+# Settings at any time. "" when the project or the file is not there yet
+# (a first install) or the file is unreadable.
+app_llm_mode() {
+    local cfg="$1/backend/data/local_llm.json" m
+    [ -f "$cfg" ] || return 0
+    m="$(json_get "$cfg" mode)"
+    case "$m" in builtin|custom) printf '%s' "$m" ;; esac
+}
+
 # Ask until the answer is one of the valid ones (upper-cased): sets ANSWER.
 # Gives up after many empty / wrong answers, so a closed input never loops.
 read_answer() {
@@ -656,8 +668,20 @@ llm_choice_step() {
         if [ "$prev_mode" = "custom" ] || { [ "$prev_mode" = "builtin" ] && [ -n "$(model_field "$prev_model" 1)" ]; }; then
             if [ "$prev_mode" = "builtin" ]; then log "  Last time you chose: A) her built-in local model - $(model_field "$prev_model" 2)"
             else log "  Last time you chose: B) you connect a model yourself"; fi
+            # What the app uses NOW: if the user switched the mode in
+            # Settings since the last install, say so (the app's mode wins).
+            local app_mode
+            app_mode="$(app_llm_mode "$PROJ")"
+            if [ -n "$app_mode" ] && [ "$app_mode" != "$prev_mode" ]; then
+                if [ "$app_mode" = "custom" ]; then
+                    log "  In the app you switched to your own model since - that stays. (The built-in model is still kept up to date, so you can switch back in Settings.)"
+                else
+                    log "  In the app you switched to her built-in model since - that stays."
+                fi
+            fi
             read_answer "Keep that choice? Type Y (yes) or N (choose again)" Y N
             if [ "$ANSWER" = "Y" ]; then
+                CHOICE_KEPT=1   # the app's current mode wins over this answer
                 if [ "$prev_mode" = "builtin" ] && [ "$CH_OFFERED" = 1 ] && [ "$CH_MODEL" = "$prev_model" ]; then
                     # A kept choice takes this installer's settings for the
                     # same model (a newer table can change them).
@@ -680,6 +704,7 @@ llm_choice_step() {
     log "  How should Amadeus think?"
     log "    A) Install and set up a local model automatically (private, runs on this Mac, no account needed)"
     log "    B) I'll do it myself (choose this if using a cloud model or your own local model)"
+    CHOICE_KEPT=0   # a fresh choice sets the mode from the answer
     read_answer "Type A or B" A B
     if [ "$ANSWER" = "A" ]; then confirm_local_model; else set_choice_custom; fi
     write_choice_file
@@ -810,11 +835,14 @@ install_llama_build() {
 # B elsewhere: an old file is kept, but switched to "custom". What the user
 # changed in the app survives a re-run: the model file picked in Settings
 # (selected_file, while it still exists) and the conversation memory number
-# for the built-in model (history_budget).
+# for the built-in model (history_budget). A KEPT choice (CHOICE_KEPT=1):
+# the mode the app uses NOW wins over the remembered answer - the user may
+# have switched it in Settings since the last install (all other fields
+# are still updated). A fresh choice always sets the mode from the answer.
 # $1 project  $2 mode  $3 llama-server path  $4 server ok (1/0)  $5 model path  $6 model ok (1/0)
 write_local_llm_config() {
     local proj="$1" mode="$2" exe="$3" server_ok="$4" model_path="$5" model_ok="$6"
-    local cfg="$proj/backend/data/local_llm.json" sel="" budget="" extra=""
+    local cfg="$proj/backend/data/local_llm.json" sel="" budget="" extra="" app_mode=""
     mkdir -p "$proj/backend/data"
     if [ "$mode" = "custom" ] && [ -z "$CHOICE_MODEL" ]; then
         if [ -f "$cfg" ]; then
@@ -825,6 +853,10 @@ write_local_llm_config() {
     if [ -f "$cfg" ]; then
         sel="$(json_get "$cfg" selected_file)"
         budget="$(json_get "$cfg" history_budget)"
+    fi
+    if [ "${CHOICE_KEPT:-0}" = 1 ] && [ -f "$cfg" ]; then
+        app_mode="$(json_get "$cfg" mode)"
+        case "$app_mode" in builtin|custom) mode="$app_mode" ;; esac
     fi
     if [ -n "$sel" ] && [ -f "$sel" ]; then extra="$extra,
     \"selected_file\": $(json_str "$sel")"; fi

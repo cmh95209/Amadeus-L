@@ -1527,15 +1527,45 @@ function Confirm-LocalModel($hw){
 
 # A kept option-A choice takes this installer's settings for the same model
 # on this PC (context, memory, ...): a newer tier table can change them.
+# Every result carries kept = $true, so the settings writer knows the mode
+# the app uses now wins over this remembered answer. (A new object in every
+# branch: locked-down PowerShell cannot add a property to an existing one.)
 function Update-KeptChoice($prev, $hw){
-    if ($prev.mode -ne "builtin" -or -not $hw.choice.offered -or $hw.choice.model -ne $prev.model) { return $prev }
-    $c = $hw.choice
-    return [pscustomobject]@{
-        mode = "builtin"; model = $c.model; tier = $c.tier; build = $c.build
-        context = $c.context; kv_cache = $c.kv_cache; voice_device = $c.voice_device
-        history_default = $c.history_default; vram_need_gb = $c.vram_need_gb
-        simulated = [bool]$hw.simulated; chosen = $prev.chosen
+    if ($prev.mode -eq "builtin" -and $hw.choice.offered -and $hw.choice.model -eq $prev.model) {
+        $c = $hw.choice
+        return [pscustomobject]@{
+            mode = "builtin"; model = $c.model; tier = $c.tier; build = $c.build
+            context = $c.context; kv_cache = $c.kv_cache; voice_device = $c.voice_device
+            history_default = $c.history_default; vram_need_gb = $c.vram_need_gb
+            simulated = [bool]$hw.simulated; chosen = $prev.chosen; kept = $true
+        }
     }
+    if ($prev.mode -eq "builtin") {
+        # A model this PC no longer runs (or that is gone from the table):
+        # the settings the user picked, recorded in the saved choice.
+        return [pscustomobject]@{
+            mode = "builtin"; model = $prev.model; tier = $prev.tier; build = $prev.build
+            context = $prev.context; kv_cache = $prev.kv_cache; voice_device = $prev.voice_device
+            history_default = $prev.history_default; vram_need_gb = $prev.vram_need_gb
+            simulated = [bool]$prev.simulated; chosen = $prev.chosen; kept = $true
+        }
+    }
+    # Option B: nothing to refresh.
+    return [pscustomobject]@{ mode = "custom"; chosen = $prev.chosen; kept = $true }
+}
+
+# What mode the app uses NOW: its own setting (backend\data\local_llm.json
+# of the project this installer updates), which the user can change in
+# Settings at any time. "" when the project or the file is not there yet
+# (a first install) or the file is unreadable.
+function Get-AppLlmMode($proj){
+    $cfg = Join-Path $proj "backend\data\local_llm.json"
+    if (-not (Test-Path $cfg)) { return "" }
+    try {
+        $m = (Get-Content $cfg -Raw | ConvertFrom-Json).mode
+        if ($m -eq "builtin" -or $m -eq "custom") { return $m }
+    } catch {}
+    return ""
 }
 
 # STEP 0: the very first question, before anything is downloaded. The
@@ -1549,6 +1579,16 @@ function Invoke-LlmChoice($hw){
             if ($prev.mode -eq "builtin") { $desc = "A) her built-in local model - " + $TierTable.models.($prev.model).label }
             else { $desc = "B) you connect a model yourself" }
             Log ("  Last time you chose: " + $desc)
+            # What the app uses NOW: if the user switched the mode in
+            # Settings since the last install, say so (the app's mode wins).
+            $appMode = Get-AppLlmMode (Join-Path $InstallDir "Amadeus-Project")
+            if ($appMode -and $appMode -ne $prev.mode) {
+                if ($appMode -eq "custom") {
+                    Log "  In the app you switched to your own model since - that stays. (The built-in model is still kept up to date, so you can switch back in Settings.)"
+                } else {
+                    Log "  In the app you switched to her built-in model since - that stays."
+                }
+            }
             if ((Read-Answer "Keep that choice? Type Y (yes) or N (choose again)" @("Y","N")) -eq "Y") {
                 $kept = Update-KeptChoice $prev $hw
                 Write-Utf8File $LlmChoiceFile ($kept | ConvertTo-Json -Depth 4)
@@ -1706,6 +1746,10 @@ function Get-HfUrl($m, $file){ return ("https://huggingface.co/" + $m.repo + "/r
 # What the user changed in the app survives a re-run: the model file they
 # picked in Settings (selected_file, while it still exists) and their
 # conversation memory number for the built-in model (history_budget).
+# A KEPT choice (the user answered Y to "keep it?"): the mode the app
+# uses NOW wins over the remembered answer - the user may have switched
+# it in Settings since the last install (all other fields are still
+# updated). A fresh choice always sets the mode from the answer.
 function Write-LocalLlmConfig($proj, $choice, $exe, $serverOk, $modelPath, $modelOk){
     $cfg = Join-Path $proj "backend\data\local_llm.json"
     $old = $null
@@ -1715,8 +1759,10 @@ function Write-LocalLlmConfig($proj, $choice, $exe, $serverOk, $modelPath, $mode
         return
     }
     $m = $TierTable.models.($choice.model)
+    $mode = if ($choice.mode -eq "builtin") { "builtin" } else { "custom" }
+    if ($choice.kept -and $old -and ($old.mode -eq "builtin" -or $old.mode -eq "custom")) { $mode = $old.mode }
     $data = [ordered]@{
-        mode = $(if ($choice.mode -eq "builtin") { "builtin" } else { "custom" })
+        mode = $mode
         model = $choice.model; model_label = $m.label
         model_file = $modelPath; model_ok = [bool]$modelOk
         server_exe = $exe; server_ok = [bool]$serverOk
@@ -1785,13 +1831,13 @@ function Install-BuiltinLlm($proj, $choice){
 # too (no model), so the user can run a GGUF of their own later - Settings
 # -> Connection -> Built-in, with this PC's tier settings. Her intro tells
 # DIY users they can. A cloud-only user pays ~0.6 GB (NVIDIA) / 33 MB.
-function Install-LocalModelRunner($proj, $hw){
+function Install-LocalModelRunner($proj, $choice, $hw){
     $c = $hw.choice
     $run = [pscustomobject]@{
         mode = "custom"; model = $c.model; tier = $c.tier; build = $c.build
         context = $c.context; kv_cache = $c.kv_cache; voice_device = $c.voice_device
         history_default = $c.history_default; vram_need_gb = $c.vram_need_gb
-        simulated = [bool]$hw.simulated
+        simulated = [bool]$hw.simulated; kept = [bool]$choice.kept
     }
     $m = $TierTable.models.($c.model)
     $modelPath = Join-Path $ModelsDir $m.file
@@ -2040,7 +2086,7 @@ function Wait-EmbedModelDownload {
 function Install-LocalLlm($proj, $choice, $hw){
     Wait-Background "model" @(Get-LocalLlmFiles $choice $hw) "Downloading her model"
     if ($choice.mode -eq "builtin") { return (Install-BuiltinLlm $proj $choice) }
-    if ($hw.choice.offered) { return (Install-LocalModelRunner $proj $hw) }
+    if ($hw.choice.offered) { return (Install-LocalModelRunner $proj $choice $hw) }
     Write-LocalLlmConfig $proj $choice "" $false "" $false   # switches an earlier option-A install off
     return $false
 }

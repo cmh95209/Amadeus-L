@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { refreshLanguage } from "./i18n";
 import Live2DCharacter from "./components/Live2DCharacter";
 import SamplingSettings from "./components/SamplingSettings";
 import MoodPanel from "./components/MoodPanel";
@@ -281,6 +282,9 @@ export default function App() {
   // all, and where the startup greeting stands. A refresh that already
   // greeted this session starts settled ("done").
   const [backendDown, setBackendDown] = useState(false);
+  // The ref mirrors backendDown: the 30 s probe runs in a stale closure, so
+  // "was the backend down when it last looked?" must come from the ref.
+  const backendDownRef = useRef(false);
   const [greetPhase, setGreetPhase] = useState<GreetPhase>(() =>
     typeof sessionStorage !== "undefined" && sessionStorage.getItem("amadeusGreeted") === "1"
       ? "done" : "idle");
@@ -1080,7 +1084,10 @@ export default function App() {
     try {
       const status = await testConnection();
       setConnStatus(status);
+      const wasDown = backendDownRef.current;
+      backendDownRef.current = false;
       setBackendDown(false);
+      if (wasDown) void refreshLanguage(); // the page may still be English
       if (initState.current === "failed") { // backend came back
         initState.current = "pending";
         void initialize();
@@ -1106,6 +1113,7 @@ export default function App() {
       modelWasFound.current = found;
     } catch {
       setConnStatus(null); // even the backend is unreachable
+      backendDownRef.current = true;
       setBackendDown(true);
     }
   }
@@ -1610,7 +1618,10 @@ export default function App() {
         setDisplayedConvId(convs.active_id);
       }
       setStatus("Online");
+      const wasDown = backendDownRef.current;
+      backendDownRef.current = false;
       setBackendDown(false);
+      if (wasDown) void refreshLanguage(); // the page may still be English
       initState.current = "ok";
       // Startup greeting: fires once now if the model is already servable,
       // and again (still once per session) the instant it comes up. Never
@@ -1620,6 +1631,7 @@ export default function App() {
       // The footer says "Backend not running"; the connection probe re-runs
       // this the moment the backend answers again.
       initState.current = "failed";
+      backendDownRef.current = true;
       setBackendDown(true);
     }
   }
@@ -3325,6 +3337,24 @@ export default function App() {
               </div>
 
               <div className="modal-heading-actions">
+                <a
+                  className="ghost-button discord-report-button"
+                  href="https://discord.gg/mkFjkQBVfN"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Report bugs"
+                >
+                  Report bugs
+                </a>
+                <a
+                  className="discord-join-button"
+                  href="https://discord.gg/Cq4wYmZggk"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Join our Discord"
+                >
+                  <img className="discord-join-image" src="/icons/join-discord.png" alt="Join Discord" />
+                </a>
                 <button
                   type="button"
                   className="ghost-button quit-button"

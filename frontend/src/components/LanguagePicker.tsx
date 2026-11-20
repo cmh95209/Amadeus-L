@@ -39,9 +39,8 @@ export function LanguagePicker() {
         </select>
       </label>
       <p className="settings-help" id="your-language-help">
-        The page and the translation under her replies. She always speaks Japanese. Earlier
-        replies keep their language. Saved at once - to switch back by hand, edit
-        backend/language.txt.
+        The page and the translation under her replies. Earlier replies keep their language.
+        Saved at once - to switch back by hand, edit backend/language.txt.
       </p>
       {error && <p className="settings-help" role="alert">{error}</p>}
     </div>

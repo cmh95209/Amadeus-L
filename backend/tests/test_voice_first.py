@@ -185,7 +185,8 @@ class VoiceFirstTests(unittest.TestCase):
             patch.object(store, "load_active_conversation", return_value=1),
             patch.object(store, "load_deep_thinking", return_value=False),
             patch.object(store, "load_web_access", return_value=False),
-            patch.object(cm_bridge, "CM_SIDECAR_URL", "http://127.0.0.1:1"),
+            # port 0: refused at once (port 1 takes ~2 s on Windows)
+            patch.object(cm_bridge, "CM_SIDECAR_URL", "http://127.0.0.1:0"),
         ]
 
     def _run(self, fake, structured_script=None, plain_script=None,

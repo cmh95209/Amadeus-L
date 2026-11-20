@@ -38,6 +38,7 @@ for _p in (BACKEND, Path(__file__).resolve().parent):
 
 from test_builtin_llm import _config, _write  # noqa: E402
 from test_ceremony import _FreshAppTests  # noqa: E402
+from sparse_file import make_sparse_file  # noqa: E402
 
 # A stand-in for llama-server: answers /health with 503 ("loading") for a
 # moment, then 200; prints a line to its log. argv: port, delay, exit_code
@@ -81,6 +82,9 @@ class _ServerBase(unittest.TestCase):
         self.s = importlib.import_module("builtin_server")
         self.addCleanup(self.s.unload)
         self.s.LOG_FILE = self.tmp / "logs" / "llm.log"
+        # Same checks, shorter waits between them (the app keeps 1 s / 2 s).
+        self.s.LOAD_POLL_S = 0.05
+        self.s.HEALTH_TIMEOUT_S = 0.3
         self.port = _free_port()
         self.cfg_path = self.tmp / "data" / "local_llm.json"
         _write(self.cfg_path, _config(self.tmp, port=self.port))
@@ -408,8 +412,7 @@ class LauncherModelTests(unittest.TestCase):
         Path(cfg["model_file"]).write_bytes(b"x" * 1024)
         self.assertEqual(self.launcher.builtin_vram_need_gb(cfg), 11.0)
         own = self.tmp / "models" / "big.gguf"
-        with open(own, "wb") as f:
-            f.truncate(1024 + 2 * 1024 ** 3)   # 2 GB bigger (sparse)
+        make_sparse_file(own, 1024 + 2 * 1024 ** 3)   # 2 GB bigger
         cfg["selected_file"] = str(own)
         self.assertEqual(self.launcher.builtin_vram_need_gb(cfg), 13.0)
         self.assertIsNone(self.launcher.builtin_vram_need_gb(_config(self.tmp)))   # old file: no estimate
@@ -441,8 +444,7 @@ class LauncherModelTests(unittest.TestCase):
         cfg = _config(self.tmp, vram_need_gb=11.0, model="12B")
         Path(cfg["model_file"]).unlink()
         own = self.tmp / "models" / "big-own.gguf"
-        with open(own, "wb") as f:
-            f.truncate(6716356800 + 10 * 1024 ** 3)   # the 12B's size + 10 GB (sparse)
+        make_sparse_file(own, 6716356800 + 10 * 1024 ** 3)   # the 12B's size + 10 GB
         cfg["selected_file"] = str(own)
         self.assertEqual(self.launcher.builtin_vram_need_gb(cfg), 21.0)
 

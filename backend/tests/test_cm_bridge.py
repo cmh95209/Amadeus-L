@@ -106,8 +106,9 @@ class BridgeServiceDownTests(unittest.TestCase):
 
     def setUp(self):
         self._old_url = cm_bridge.CM_SIDECAR_URL
-        # Port 1 on loopback: nothing listens there, connect fails fast.
-        cm_bridge.CM_SIDECAR_URL = "http://127.0.0.1:1"
+        # Port 0 on loopback: no server can be there and Windows refuses at
+        # once (a free port like 1 takes ~2 s to be refused on Windows).
+        cm_bridge.CM_SIDECAR_URL = "http://127.0.0.1:0"
 
     def tearDown(self):
         cm_bridge.CM_SIDECAR_URL = self._old_url

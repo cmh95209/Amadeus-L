@@ -30,6 +30,9 @@ import timing
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOG_FILE = PROJECT_ROOT / "logs" / "llm.log"
 LOAD_TIMEOUT_S = 900   # a 14 GB model from a slow disk; the server says "loading" meanwhile
+LOAD_POLL_S = 1.0      # how often a loading model is checked (tests make it short)
+HEALTH_TIMEOUT_S = 2.0  # one /health check (tests make it short: Windows needs ~2 s
+                        # to refuse a port nobody listens on yet)
 
 # The Amadeus help channel (one constant per language/script: the same
 # value lives once in the launcher and the installers): every failure
@@ -330,11 +333,12 @@ def _port_taken(port: int, wait_s: float = 3.0) -> bool:
         time.sleep(0.25)
 
 
-def _health(port: int, timeout: float = 2.0) -> int:
+def _health(port: int, timeout: float | None = None) -> int:
     """llama-server's /health: 200 = model loaded, 503 = still loading,
     0 = not answering."""
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=timeout) as r:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health",
+                                    timeout=HEALTH_TIMEOUT_S if timeout is None else timeout) as r:
             return r.status
     except urllib.error.HTTPError as e:
         return e.code
@@ -496,7 +500,7 @@ def _watch_loading(proc, target, port, log, started=None, memory_before=None,
                 if current and started is not None:
                     timing.model_loaded(started, memory_before)
                 return
-            time.sleep(1)
+            time.sleep(LOAD_POLL_S)
         with _lock:
             if _proc is proc:
                 _set("failed", target, f"her model did not finish loading in {LOAD_TIMEOUT_S // 60} "

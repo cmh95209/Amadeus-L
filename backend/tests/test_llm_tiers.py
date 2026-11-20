@@ -24,12 +24,27 @@ import re
 import shutil
 import subprocess
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 _INSTALLER = _SCRIPTS / "install_windows.ps1"
 _MAC_INSTALLER = _SCRIPTS / "install_macos.sh"
 _LINUX_INSTALLER = _SCRIPTS / "install_linux.sh"
+
+
+def _run_side_by_side(run, items, workers=6):
+    """Run the installer once per grid row, several at a time (each run is a
+    separate shell that only reads: --hardware-check-only). Returns, in grid
+    order, the subprocess result or the error it raised; the tests then check
+    every row exactly as before. ~5x faster than one after another."""
+    def one(item):
+        try:
+            return run(item)
+        except Exception as e:      # re-raised inside that row's subTest
+            return e
+    with ThreadPoolExecutor(workers) as pool:
+        return list(pool.map(one, items))
 
 
 def _load_tiers():
@@ -295,20 +310,27 @@ class PowerShellAgreesTests(unittest.TestCase):
     """The installer, run for real with pretend hardware, agrees with Python.
     The pretend card keeps this PC's card maker (or NVIDIA if it has none)."""
 
-    def run_check(self, vram, ram):
-        out = subprocess.run(
+    @staticmethod
+    def start_check(vram, ram):
+        return subprocess.run(
             [_POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
              str(_INSTALLER), "-HardwareCheckOnly", "-Json",
              "-SimulateVramGB", str(vram), "-SimulateRamGB", str(ram)],
             capture_output=True, text=True, timeout=120)
+
+    def read_check(self, out):
+        if isinstance(out, Exception):
+            raise out
         self.assertEqual(out.returncode, 0, out.stderr)
         return json.loads(out.stdout.strip().splitlines()[-1])
 
     def test_grid_matches_python(self):
-        for vram, ram in [(0, 32), (5, 32), (6, 32), (6, 8), (8, 16), (8, 8), (12, 32),
-                          (16, 8), (24, 32), (32, 32), (48, 64)]:
+        grid = [(0, 32), (5, 32), (6, 32), (6, 8), (8, 16), (8, 8), (12, 32),
+                (16, 8), (24, 32), (32, 32), (48, 64)]
+        results = _run_side_by_side(lambda row: self.start_check(*row), grid)
+        for (vram, ram), out in zip(grid, results):
             with self.subTest(vram=vram, ram=ram):
-                hw = self.run_check(vram, ram)
+                hw = self.read_check(out)
                 card = hw["card"] or {}
                 vendor = card.get("vendor")
                 driver = card.get("driver", "")
@@ -456,12 +478,14 @@ class MacShellAgreesTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp, True)
         script = tmp / "install_macos.sh"
         script.write_bytes(_MAC_INSTALLER.read_bytes().replace(b"\r\n", b"\n"))
-        for apple, ram, _ in MAC_GRID:
+        results = _run_side_by_side(lambda row: subprocess.run(
+            [_BASH, str(script), str(tmp / "inst"), "--hardware-check-only", "--json",
+             "--simulate-chip", "apple" if row[0] else "intel", "--simulate-ram-gb", str(row[1])],
+            capture_output=True, text=True, timeout=60), MAC_GRID)
+        for (apple, ram, _), out in zip(MAC_GRID, results):
             with self.subTest(apple=apple, ram=ram):
-                out = subprocess.run(
-                    [_BASH, str(script), str(tmp / "inst"), "--hardware-check-only", "--json",
-                     "--simulate-chip", "apple" if apple else "intel", "--simulate-ram-gb", str(ram)],
-                    capture_output=True, text=True, timeout=60)
+                if isinstance(out, Exception):
+                    raise out
                 self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
                 hw = json.loads(out.stdout.strip().splitlines()[-1])
                 expected = tiers.choose_mac(TABLE, apple, ram)
@@ -605,18 +629,25 @@ class LinuxShellAgreesTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp, True)
         script = tmp / "install_linux.sh"
         script.write_bytes(_LINUX_INSTALLER.read_bytes().replace(b"\r\n", b"\n"))
-        for vendor, vram, ram, driver, x64, _cuda, cc, _ in LINUX_GRID:
-            if not x64:
-                continue        # the processor type is read from the PC (not pretendable)
+        # x64 False rows are skipped: the processor type is read from the PC
+        # (not pretendable).
+        rows = [r for r in LINUX_GRID if r[4]]
+
+        def start(row):
+            vendor, vram, ram, driver, _x64, _cuda, cc, _ = row
+            args = [_BASH, str(script), str(tmp / "inst"), "--hardware-check-only", "--json",
+                    "--simulate-gpu", vendor or "none", "--simulate-vram-gb", str(vram),
+                    "--simulate-ram-gb", str(ram)]
+            if driver:
+                args += ["--simulate-driver", driver]
+            if cc:
+                args += ["--simulate-cc", cc]
+            return subprocess.run(args, capture_output=True, text=True, timeout=60)
+        results = _run_side_by_side(start, rows)
+        for (vendor, vram, ram, driver, x64, _cuda, cc, _), out in zip(rows, results):
             with self.subTest(vendor=vendor, vram=vram, ram=ram, driver=driver, cc=cc):
-                args = [_BASH, str(script), str(tmp / "inst"), "--hardware-check-only", "--json",
-                        "--simulate-gpu", vendor or "none", "--simulate-vram-gb", str(vram),
-                        "--simulate-ram-gb", str(ram)]
-                if driver:
-                    args += ["--simulate-driver", driver]
-                if cc:
-                    args += ["--simulate-cc", cc]
-                out = subprocess.run(args, capture_output=True, text=True, timeout=60)
+                if isinstance(out, Exception):
+                    raise out
                 self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
                 hw = json.loads(out.stdout.strip().splitlines()[-1])
                 expected = tiers.choose_linux(TABLE, vendor, vram, ram, driver, True,

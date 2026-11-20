@@ -23,6 +23,7 @@ for _p in (BACKEND, Path(__file__).resolve().parent):
 
 from test_builtin_llm import _config, _write  # noqa: E402
 from test_builtin_server import _ServerBase  # noqa: E402
+from sparse_file import make_sparse_file  # noqa: E402
 
 QAT = "gemma-4-12B-it-qat-UD-Q4_K_XL.gguf"
 QAT_VISION = "gemma-4-12B-it-qat-mmproj-F16.gguf"
@@ -146,8 +147,7 @@ class CardMemoryTests(_ServerBase):
         # 2026-10-26 live check: 7.3 GB free looked enough, her model spilled).
         cfg = _config(self.tmp, tier="8-11", vram_need_gb=6.5)
         big = self.models / "my-bigger-model.gguf"
-        with open(big, "wb") as f:
-            f.truncate(5693872960 + 1024 ** 3)            # the tier's 3-bit file + 1 GB
+        make_sparse_file(big, 5693872960 + 1024 ** 3)     # the tier's 3-bit file + 1 GB
         self.assertAlmostEqual(self.s.model_need_gb(cfg, big), 7.5, places=2)
         with patch.object(self.s, "_voice_running", return_value=False):
             self.assertFalse(self.s.vision_on_card(cfg, (0.7, 8.0), big)[0])        # 7.3 < 8.1

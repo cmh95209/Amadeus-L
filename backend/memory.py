@@ -2945,6 +2945,21 @@ def latest_user_message_id(conversation_id: int) -> int:
         conn.close()
 
 
+def message_row_exists(message_id: int) -> bool:
+    """Whether a stored message row with this id is still there (the
+    greeting cooldown must not hold once her line was deleted).
+    Never modifies memory."""
+    conn = _connect_db()
+    try:
+        c = conn.cursor()
+        _ensure_messages_table(c)
+        row = c.execute("SELECT 1 FROM messages WHERE id = ?",
+                        (int(message_id),)).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
 # The kinds of greeting line (messages.greeting_kind). Scripted lines (the
 # fixed first-launch intro / trying / reminder / fallback texts) are never
 # regenerated; every other kind is written by the model and can be.

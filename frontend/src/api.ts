@@ -488,6 +488,29 @@ export async function getGreeting(justSaved = false, restarted = false): Promise
   });
 }
 
+/** How many seconds after her last startup greeting a reopen, refresh, or
+ *  reconnect of the app keeps that greeting instead of a new one
+ *  (0 = always greet). Rejects against an older backend without the route. */
+export async function getGreetingCooldown(): Promise<number> {
+  const data = await parseResponse(await fetch(`${API_BASE}/greetingCooldown`, { cache: "no-store" }));
+  if (typeof data.value !== "number") {
+    throw new Error("Backend returned an invalid greeting cooldown");
+  }
+  return data.value;
+}
+
+export async function setGreetingCooldown(seconds: number): Promise<number> {
+  const data = await parseResponse(await fetch(`${API_BASE}/greetingCooldown`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value: seconds }),
+  }));
+  if (typeof data.value !== "number") {
+    throw new Error("Backend returned an invalid greeting cooldown");
+  }
+  return data.value;
+}
+
 // Settings -> System (2026-11-01): her parts' live state and the restart.
 export type PartState =
   "ready" | "offline" | "waiting" | "stopping" | "starting" | "failed" | "off";

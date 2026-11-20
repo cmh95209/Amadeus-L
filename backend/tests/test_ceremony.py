@@ -79,7 +79,8 @@ class _FreshAppTests(unittest.TestCase):
         # providers about the active row, and none of these modules may bind
         # to a copy a sibling test module left behind.
         for name in ('api', 'chat', 'memory', 'ceremony', 'chat_interactions',
-                     'providers', 'vertex_auth', 'builtin_llm', 'builtin_server'):
+                     'providers', 'vertex_auth', 'builtin_llm', 'builtin_server',
+                     'greeting_cooldown'):
             sys.modules.pop(name, None)
         self.memory = importlib.import_module('memory')
         # The LLM server file is memory.py's one ABSOLUTE path (its own

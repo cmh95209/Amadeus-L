@@ -719,12 +719,13 @@ class SourcesInChatTests(unittest.TestCase):
         store.append_message("user", "banner?", conversation_id=1)
         her = store.append_message("assistant", "Ineffa.", conversation_id=1, japanese="イネファよ。")
         plain = store.append_message("assistant", "Hi.", conversation_id=1, japanese="やあ。")
+        store.set_message_active(plain, False)   # her answer is the shown version
         store.set_message_sources(her, self.SOURCES)
         rows = {m["id"]: m for m in store.load_memory_raw(1)}
         self.assertEqual(rows[her]["sources"][0]["results"][0]["url"], "https://game8.co/a")
         self.assertEqual(rows[her]["sources"][0]["read"], "https://game8.co/a")
         self.assertNotIn("engine", rows[her]["sources"][0])
-        self.assertNotIn("sources", rows[plain])
+        self.assertNotIn(plain, rows)            # the hidden version is not listed
 
     def test_broken_saved_sources_never_break_the_history(self):
         her = store.append_message("assistant", "Hi.", conversation_id=1, japanese="やあ。")

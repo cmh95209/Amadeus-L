@@ -2543,7 +2543,10 @@ export default function App() {
     try {
       await deleteMessage(message.id);
       for (const id of withHers ? hers : []) await deleteMessage(id);
-      if (withHers) setMessages(await getMemory());
+      // Deleting a line with versions removes ALL of its versions on the
+      // server (a greeting by group, a reply by turn): reload so no sibling
+      // version is left on screen.
+      if (withHers || (message.total_versions ?? 1) > 1) setMessages(await getMemory());
       else setMessages((current) => current.filter((m) => m.id !== message.id));
       if (message.attachments?.length) {
         void pictures.refreshDesk();   // its pictures went with it
@@ -2567,7 +2570,9 @@ export default function App() {
       setStatus(
         result.action === "switch"
           ? "Went back to the previous version"
-          : "Her last reply was undone"
+          : result.action === "deleted_version"
+            ? "Removed the newest version"
+            : "Her last reply was undone"
       );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not undo the reply");

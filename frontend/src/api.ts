@@ -1344,6 +1344,32 @@ export async function getVertexLocations(): Promise<{ locations: string[]; regio
   };
 }
 
+/** The Google Vertex "Priority" switch (Settings -> Custom Model; off by
+ * default). When on, Google serves the app's Vertex calls from its
+ * on-demand-priority capacity: fewer "busy" errors, at a higher rate.
+ * Rejects against an older backend without the route. */
+export async function getVertexPriority(): Promise<boolean> {
+  const data = await parseResponse(
+    await fetch(`${API_BASE}/llm/vertex/priority`, { cache: "no-store" })
+  );
+  if (typeof data.on !== "boolean") {
+    throw new Error("Could not read the Google Vertex priority setting");
+  }
+  return data.on;
+}
+
+export async function setVertexPriority(on: boolean): Promise<boolean> {
+  const data = await parseResponse(await fetch(`${API_BASE}/llm/vertex/priority`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ on }),
+  }));
+  if (typeof data.on !== "boolean") {
+    throw new Error("Could not confirm the Google Vertex priority setting");
+  }
+  return data.on;
+}
+
 /** Make one provider the active brain: the address comes from the table
  * (a custom address may ride along), and - when given - the model name is
  * saved with it. Omitting the model keeps today's "no model yet" behaviour. */

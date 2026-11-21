@@ -97,6 +97,8 @@ import {
   revealProviderKey,
   saveVertex,
   getVertexLocations,
+  getVertexPriority,
+  setVertexPriority as saveVertexPriority,
   activateProvider,
   getBuiltinModel,
   loadBuiltinModel,
@@ -359,6 +361,10 @@ export default function App() {
   // user picks after (it means nothing until Save is pressed).
   const [vertexRegions, setVertexRegions] = useState<string[]>([]);
   const [vertexRegion, setVertexRegion] = useState("");
+  // The Google Vertex "Priority" switch (off by default). null = not loaded
+  // yet, or an older backend without the route (the row is then hidden);
+  // once the backend reports it, flipping it saves at once (no Save button).
+  const [vertexPriority, setVertexPriority] = useState<boolean | null>(null);
   // A counter that drops the answer of a check the user outgrew (they
   // switched provider while it was still running).
   const providerSeq = useRef(0);
@@ -866,6 +872,7 @@ export default function App() {
           setVertexRegion(listing.vertex?.region ?? "global");
           setVertexRegions([]);
           void loadVertexLocations();
+          void loadVertexPriority();
         } else {
           setVertexRegion("");
           setVertexRegions([]);
@@ -1273,6 +1280,7 @@ export default function App() {
       setVertexRegion(listing.vertex?.region ?? "global");
       setVertexRegions([]);
       void loadVertexLocations();
+      void loadVertexPriority();
     } else {
       setVertexRegion("");
       setVertexRegions([]);
@@ -1428,6 +1436,36 @@ export default function App() {
       setVertexRegion((current) => current || data.region);
     } catch {
       // The backend may predate the route: keep what the panel has.
+    }
+  }
+
+  // Custom Model (Vertex): the "Priority" switch's saved state, loaded when
+  // the panel is shown. An older backend without the route hides the row
+  // (null), like the endpoint list does.
+  async function loadVertexPriority() {
+    try {
+      setVertexPriority(await getVertexPriority());
+    } catch {
+      setVertexPriority(null);
+    }
+  }
+
+  // Custom Model (Vertex): flip the "Priority" switch at once (no Save
+  // button): the POST saves it, and the backend rebuilds her Vertex clients
+  // so the next call already carries the headers (or no longer does). On
+  // failure the switch goes back where it was and the error shows in the
+  // status line under the key area.
+  async function toggleVertexPriority() {
+    if (vertexPriority === null || providerBusy || settingsBusy) return;
+    const next = !vertexPriority;
+    setVertexPriority(next);
+    setVertexError("");
+    try {
+      setVertexPriority(await saveVertexPriority(next));
+    } catch (error) {
+      setVertexPriority(vertexPriority);
+      setVertexError(
+        error instanceof Error ? error.message : "Could not save Priority.");
     }
   }
 
@@ -3650,6 +3688,27 @@ export default function App() {
                         global has the newest models; a regional endpoint can
                         answer more steadily but offers fewer models.
                       </p>
+                      {vertexPriority !== null && (
+                        <div className="settings-toggle-row" aria-label="Priority">
+                          <div className="settings-toggle-text">
+                            <span className="settings-toggle-title">Priority</span>
+                            <span className="settings-toggle-desc">
+                              Fewer "busy" errors from Google. Google charges a
+                              higher rate for priority requests.
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className={`settings-toggle${vertexPriority ? " on" : ""}`}
+                            onClick={() => void toggleVertexPriority()}
+                            aria-pressed={vertexPriority}
+                            disabled={settingsBusy || providerBusy}
+                          >
+                            <span className="settings-toggle-knob" aria-hidden="true" />
+                            <span>{vertexPriority ? "On" : "Off"}</span>
+                          </button>
+                        </div>
+                      )}
                       <div className="conn-row">
                           <>
                             <button

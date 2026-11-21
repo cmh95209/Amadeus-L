@@ -54,6 +54,8 @@ backend/data/attachments/
 backend/data/attach_reaction.txt
 # The greeting cooldown choice (Settings -> Preferences, user setting)
 backend/data/greeting_cooldown.txt
+# The Vertex "Priority" switch (Settings -> Custom Model, user setting)
+backend/data/vertex_priority.txt
 # Character memory sidecar data (user data)
 backend/data/character_memory/
 backend/generated/

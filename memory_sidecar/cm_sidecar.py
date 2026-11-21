@@ -60,7 +60,7 @@ Endpoints:
 Run: started by the launcher (first run creates venv/ and pip-installs
 requirements.txt); or directly: venv/Scripts/python.exe cm_sidecar.py
 """
-import json, os, shutil, sys, threading, time, urllib.request
+import json, os, random, shutil, sys, threading, time, urllib.request
 from datetime import datetime
 from typing import Optional
 
@@ -329,12 +329,172 @@ def _reasoning_body(server: str, level: str) -> dict:
     return {"reasoning_effort": level} if thinking else {"chat_template_kwargs": {"enable_thinking": False}}
 
 
+# ---- 429 backoff (mirror of backend/cloud_retry.py BACKGROUND profile) ----
+# The sidecar runs as its own process with its own venv and cannot import
+# the backend's cloud_retry module, so it keeps its own copy of the small
+# core, with its own constants. KEEP THE TWO IN SYNC. The rules (the
+# sidecar is the BACKGROUND profile - it learns in the background and may
+# wait much longer than her replies may; the app uses the FOREGROUND one):
+#   * retry only a "busy" answer: HTTP 429 / 503 (or the text says so) -
+#     never a daily-quota 429 (text with perday / per_day / "daily quota" /
+#     "daily limit": waiting cannot bring it back) and never other errors
+#     (a bad key, a schema 400, a dropped connection);
+#   * local / LAN servers are never retried (the same host check as
+#     _reasoning_body above, via _is_local_host): one attempt, as before;
+#   * exponential backoff: first wait 5 s, doubling per try, one wait capped
+#     at 60 s, at most 5 tries in total (the first call + 4 retries), and
+#     the sum of all the waits capped at 180 s;
+#   * each wait is drawn randomly to 50-100 % of its nominal size (full
+#     jitter - spreads out the calls, never 0);
+#   * a Retry-After header (seconds form) replaces the computed wait,
+#     capped at 30 s, and still counts against the budget;
+#   * one log line per wait; when nothing more may be tried the last error
+#     is re-raised - learning just pauses and the turns stay queued (the
+#     service is never killed by a busy provider).
+_SIDECAR_RETRY_STATUSES = (429, 503)
+_SIDECAR_BACKOFF_FIRST_S = 5.0
+_SIDECAR_BACKOFF_FACTOR = 2.0
+_SIDECAR_BACKOFF_MAX_S = 60.0
+_SIDECAR_BACKOFF_TRIES = 5            # the last allowed try number
+_SIDECAR_BACKOFF_BUDGET_S = 180.0     # total of all the waits
+_SIDECAR_RETRY_AFTER_CAP_S = 30.0
+_SIDECAR_JITTER = (0.5, 1.0)
+_SIDECAR_RETRY_HINTS = ("429", "resource exhausted", "resource_exhausted",
+                        "too many requests", "rate limit")
+_SIDECAR_DAILY_QUOTA_HINTS = ("perday", "per_day", "daily quota", "daily limit")
+
+
+def _sidecar_is_retryable(exc) -> bool:
+    """True when the answer is a "busy" refusal (429/503 or its text) and
+    NOT a daily-quota exhaustion or any other error."""
+    text = str(exc).lower()
+    if any(hint in text for hint in _SIDECAR_DAILY_QUOTA_HINTS):
+        return False
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        code = getattr(exc, "code", None)
+        status = code if isinstance(code, int) else None
+    if isinstance(status, int):
+        # A known status decides alone (a 400 mentioning "429" is not busy).
+        return status in _SIDECAR_RETRY_STATUSES
+    return any(hint in text for hint in _SIDECAR_RETRY_HINTS)
+
+
+def _sidecar_retry_after(exc):
+    """The server's Retry-After hint in seconds (capped), or None."""
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    if headers is None:
+        return None
+    try:
+        hint = headers.get("retry-after")
+        if not hint:
+            return None
+        seconds = float(hint)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, _SIDECAR_RETRY_AFTER_CAP_S)
+
+
+def _sidecar_backoff_wait(attempt, exc) -> float:
+    """The wait (seconds) before retry number `attempt` (the first failed
+    call is attempt 1): the Retry-After hint when given, else 50-100 % of
+    the nominal 5 s x 2^(attempt-1), capped at 60 s."""
+    hint = _sidecar_retry_after(exc)
+    if hint is not None:
+        return hint
+    nominal = min(_SIDECAR_BACKOFF_FIRST_S
+                  * (_SIDECAR_BACKOFF_FACTOR ** (attempt - 1)),
+                  _SIDECAR_BACKOFF_MAX_S)
+    lo, hi = _SIDECAR_JITTER
+    return random.uniform(lo, hi) * nominal
+
+
+def _sidecar_call_with_backoff(fn, *, sleep=time.sleep, label=""):
+    """Call ``fn()``; on a retryable "busy" error wait and try again until
+    it succeeds, the try count or the wait budget is spent, or the error is
+    not retryable (raised at once, unmarked). See the block header above."""
+    budget = _SIDECAR_BACKOFF_BUDGET_S
+    total = _SIDECAR_BACKOFF_TRIES
+    spent = 0.0
+    last_exc = None
+    for attempt in range(1, total + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            if not _sidecar_is_retryable(exc):
+                raise
+            last_exc = exc
+            if attempt == total:
+                break  # no more tries may be started: never wait after the last one
+            wait = _sidecar_backoff_wait(attempt, exc)
+            if spent + wait > budget:
+                break
+            log(f"[Amadeus-sidecar] {label or 'cloud'} busy - waiting "
+                f"{wait:.1f} s, try {attempt + 1} of {total}")
+            sleep(wait)
+            spent += wait
+    log(f"[Amadeus-sidecar] {label or 'cloud'} busy - giving up; learning "
+        f"pauses and turns stay queued")
+    raise last_exc
+
+
+# ---- Vertex priority headers (mirror of backend/vertex_priority.py) -------
+# The app's "Priority" switch (vertex_priority.txt in the app's data
+# folder, next to the key file): when it is ON and the server is Google
+# Vertex, the same two headers the app sends mark the learning calls as
+# priority requests (Google serves them from its on-demand-priority
+# capacity - fewer "busy" 429s, at a higher rate). Keep in sync with
+# backend/vertex_priority.py: the file name and the two headers.
+_SIDECAR_PRIORITY_FILE = "vertex_priority.txt"
+_SIDECAR_PRIORITY_HEADERS = {
+    "X-Vertex-AI-LLM-Request-Type": "shared",
+    "X-Vertex-AI-LLM-Shared-Request-Type": "priority",
+}
+
+
+def _sidecar_priority_on() -> bool:
+    """The app's switch right now: "on" (case-insensitive) in the file
+    next to the key file; missing or unreadable or anything else = off."""
+    try:
+        with open(os.path.join(os.path.dirname(KEY_FILE), _SIDECAR_PRIORITY_FILE),
+                  encoding="utf-8") as f:
+            value = f.read().strip().lower()
+    except OSError:
+        return False
+    return value == "on"
+
+
+def _sidecar_priority_headers(server: str) -> dict:
+    """The two priority headers, only when the switch is on AND the server
+    is Google Vertex (the aiplatform host); anything else - and the switch
+    off - gets none (other providers would only be confused by them)."""
+    if "aiplatform.googleapis.com" not in server:
+        return {}
+    return dict(_SIDECAR_PRIORITY_HEADERS) if _sidecar_priority_on() else {}
+
+
 class NonThinkingLLM(OpenAICompatibleLLM):
     """Their client + Amadeus's reasoning extra_body (the app's Translations
     level, default off). Thinking off matters where the server accepts it
     (unbudgeted thinking truncated the extraction JSON); servers that REJECT the parameter
     (HTTP 400/422 - foreign local servers, cloud) get one plain retry,
-    mirroring the app's maybe_strip_rejected_params."""
+    mirroring the app's maybe_strip_rejected_params.
+
+    The openai client's own retry-with-backoff is switched off
+    (max_retries=0) so the 429 waits are Amadeus's own - one budget, not
+    the SDK's budget plus ours: on a CLOUD server a "busy" answer (429/503)
+    gets the 429 backoff block above instead; local / LAN servers keep one
+    plain attempt. When the app's "Priority" switch is on and the server is
+    Google Vertex, the request carries the two priority headers (the mirror
+    block above)."""
+    def __init__(self, config=None, **overrides):
+        super().__init__(config, **overrides)
+        # max_retries=0: the SDK retries nothing; the 429 backoff above is
+        # Amadeus's (a shallow copy - the base class' client is untouched).
+        self._client = self._client.with_options(max_retries=0)
+
     def chat(self, messages, *, temperature=None, max_tokens=None):
         level = _learning_reasoning()
         kw = dict(
@@ -345,16 +505,31 @@ class NonThinkingLLM(OpenAICompatibleLLM):
         if level != "off" and kw["max_tokens"]:
             # Thinking counts against the cap: keep the extraction's own room.
             kw["max_tokens"] += _THINKING_BUDGETS[level]
-        try:
-            resp = self._client.chat.completions.create(
-                extra_body=_reasoning_body(_read_app_llm()[0], level), **kw)
-        except Exception as e:
-            msg = repr(e)
-            if not ("400" in msg or "422" in msg
-                    or "Bad Request" in msg or "Unprocessable" in msg):
-                raise
-            log("server rejected the thinking-off parameter - plain retry")
-            resp = self._client.chat.completions.create(**kw)
+        server = _read_app_llm()[0]
+        body = _reasoning_body(server, level)
+        headers = _sidecar_priority_headers(server)
+        if headers:
+            kw["extra_headers"] = headers
+
+        def attempt():
+            try:
+                return self._client.chat.completions.create(
+                    extra_body=body, **kw)
+            except Exception as e:
+                msg = repr(e)
+                if not ("400" in msg or "422" in msg
+                        or "Bad Request" in msg or "Unprocessable" in msg):
+                    raise
+                log("server rejected the thinking-off parameter - plain retry")
+                return self._client.chat.completions.create(**kw)
+
+        if _is_local_host(server):
+            # Local / LAN / built-in: exactly the old behaviour - one
+            # attempt, no retry (a second copy would only slow the GPU).
+            resp = attempt()
+        else:
+            host = server.split("//", 1)[-1].split("/")[0]
+            resp = _sidecar_call_with_backoff(attempt, label=host)
         return resp.choices[0].message.content or ""
 
 

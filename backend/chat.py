@@ -2610,6 +2610,13 @@ def _invoke_forced(bound_llm, convo):
     (429 - free cloud tiers) triggers ONE bounded wait and retry (see
     _is_rate_limited). Other exceptions (timeouts, connection drops, real schema
     400s) propagate unchanged.
+
+    A 429 that already came back marked ``amadeus_retried`` (cloud_retry: the
+    cloud client retried it with backoff, up to its total wait budget) fails
+    at once - the waiting already happened, and stacking this call's 45 s
+    wait on top of it only delays the honest line. Unmarked exceptions
+    (local / LAN servers are never retried by cloud_retry) keep the old
+    one-wait-then-retry behaviour.
     """
     try:
         return bound_llm.invoke(convo)
@@ -2619,6 +2626,8 @@ def _invoke_forced(bound_llm, convo):
                   type(exc).__name__)
             return bound_llm.bind(tool_choice="auto").invoke(convo)
         if _is_rate_limited(exc):
+            if getattr(exc, "amadeus_retried", False):
+                raise
             if _is_daily_quota_exhausted(exc):
                 print("[Amadeus] API daily quota exhausted - waiting cannot "
                       "help, skipping the wait.")
@@ -5959,11 +5968,14 @@ def _translate_retry_wait(exc) -> float:
 def _backfill_english(turn: "VoiceFirstTurn", llm, context_lines) -> None:
     """Call 2, in a background thread: write the English display line for the
     Japanese line call 1 already stored, then publish it (the stored row and
-    the UI). A rate limit (429, not a daily quota) gets ONE wait and retry.
-    A final failure stores the Japanese line as the text (old clients keep
-    working) and marks the turn failed; the page then shows her line in the
-    Japanese place with "Translate again" (POST /messages/<id>/translate).
-    The turn's deferred side jobs run afterwards, whatever happened."""
+    the UI). A rate limit (429, not a daily quota) gets ONE wait and retry -
+    unless the 429 already came back marked ``amadeus_retried`` (cloud_retry:
+    the client retried it with backoff, up to its budget), which fails the
+    turn at once instead of stacking this 30 s wait on top. A final failure
+    stores the Japanese line as the text (old clients keep working) and marks
+    the turn failed; the page then shows her line in the Japanese place with
+    "Translate again" (POST /messages/<id>/translate). The turn's deferred
+    side jobs run afterwards, whatever happened."""
     jps = (turn.pack.assistant_reply_JPS or "").strip()
     # Voice on the processor + voice started early: let her finish first.
     turn._wait_for_voice()
@@ -5974,6 +5986,8 @@ def _backfill_english(turn: "VoiceFirstTurn", llm, context_lines) -> None:
         try:
             en = _translate_reply_en(llm, jps, context_lines)
         except Exception as exc:
+            if getattr(exc, "amadeus_retried", False):
+                raise
             if not _is_rate_limited(exc) or _is_daily_quota_exhausted(exc):
                 raise
             wait = _translate_retry_wait(exc)

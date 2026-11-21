@@ -1,16 +1,20 @@
 import ipaddress
 import os
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
+from typing import ClassVar
 
 import requests
 from langchain_openai import ChatOpenAI
 
 import builtin_llm
+import cloud_retry
 import memory
 import timing
+import vertex_priority
 
 # =============================================================================
 #  Amadeus -> YOUR local model (Unsloth Desktop)
@@ -298,16 +302,31 @@ class _ThoughtFreeChatOpenAI(ChatOpenAI):
     _generate re-sends a stalled request once (see _cloud_patience): the
     call runs in a worker thread, is waited on for a patience limit, and when
     it is still silent the SAME request goes out a second time; whichever of
-    the two answers first wins, and a third attempt is never started. A local
-    or LAN server keeps today's exact behaviour: one attempt, the calling
-    thread, no waiting (a second copy would only slow both copies down)."""
+    the two answers first wins, and a third attempt is never started.
+
+    The same cloud rule also covers the provider saying "busy" (HTTP 429 -
+    Google's shared-capacity "Resource exhausted" - or 503): the whole
+    attempt (the stall re-send included) is wrapped in cloud_retry with the
+    FOREGROUND profile - exponential backoff + jitter, the server's
+    Retry-After honoured, a total wait budget, the screen told through the
+    turn's progress hook ("The AI service is busy - trying again in N s...").
+    While a cloud call has just been refused (cloud_retry.recently_busy,
+    cloud_retry.NO_RESEND_AFTER_429_S), the stalled re-send is skipped
+    (patience treated as 0 for that call) so two copies are not in flight
+    while Google is already refusing both. A local or LAN server keeps
+    today's exact behaviour: no retry, one attempt, the calling thread, no
+    waiting (a second copy would only slow both copies down)."""
+
+    # False = never wait out a "busy" answer (the Settings Test client).
+    _busy_retry: ClassVar[bool] = True
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         # Cloud servers: her "right now" note goes out as a user message, so
         # the prompt start stays the same between replies (prompt cache -
-        # _right_now_note_as_user). Done once, before any re-send, so both
-        # attempts send the same request.
-        if not _is_local_host(str(getattr(self, "openai_api_base", None) or "")):
+        # _right_now_note_as_user). Done once, before any re-send or retry,
+        # so every attempt sends the same request.
+        cloud = not _is_local_host(str(getattr(self, "openai_api_base", None) or ""))
+        if cloud:
             messages = _right_now_note_as_user(messages)
         # `run_manager` is passed through to the worker thread as today. The
         # app never attaches callbacks to these clients (it does not rely on
@@ -320,9 +339,43 @@ class _ThoughtFreeChatOpenAI(ChatOpenAI):
         # reasoning level (Settings -> Reasoning) is read from whatever shape
         # the host uses: thinking legitimately takes longer, so it waits
         # longer.
-        patience = 0.0
-        if not _is_local_host(str(self.openai_api_base or "")):
-            patience = _cloud_patience(messages, _effort_level(self.extra_body))
+        # While a cloud call has just been refused with a 429/503, a stalled
+        # request is NOT re-sent (patience treated as 0 for this call): the
+        # provider is already refusing, and two in-flight copies of the same
+        # request just get both refused.
+        def patience_now() -> float:
+            # Read again before EVERY attempt, so a retry that follows a 429
+            # never re-sends a stalled copy while the provider is refusing.
+            if cloud_retry.recently_busy(cloud_retry.NO_RESEND_AFTER_429_S):
+                return 0.0
+            return _cloud_patience(messages, _effort_level(self.extra_body))
+        if cloud and not self._busy_retry:
+            # The Settings "Test" client: a quick, honest answer, no waiting
+            # (a 429 there reports "rate limited" at once, as before).
+            return self._generate_body(messages, patience_now(), stop,
+                                       run_manager, **kwargs)
+        if cloud:
+            # A "busy" answer (429 / 503) from the cloud provider: wait with
+            # backoff and try the whole attempt again (cloud_retry, the
+            # FOREGROUND profile). The on_wait hook tells the screen through
+            # the turn's progress line when one is attached (the web stream;
+            # otherwise cloud_retry's log line alone is enough). The label
+            # is the host, so the log line says which server is busy.
+            host = str(self.openai_api_base or "").split("//", 1)[-1].split("/")[0]
+            return cloud_retry.call_with_retry(
+                lambda: self._generate_body(messages, patience_now(), stop,
+                                            run_manager, **kwargs),
+                profile="foreground",
+                on_wait=_busy_on_wait,
+                label=host)
+        return self._generate_body(messages, 0.0, stop, run_manager, **kwargs)
+
+    def _generate_body(self, messages, patience, stop, run_manager, **kwargs):
+        # One attempt at the request: the call itself, the stalled re-send
+        # (cloud servers only, `patience` > 0) and the reasoning fallbacks.
+        # Called once directly (local / LAN / built-in servers - patience
+        # stays 0: exactly today's one attempt in the calling thread) or
+        # once per retry by cloud_retry.call_with_retry (cloud servers).
         if patience <= 0:
             # A local / LAN server - or AMADEUS_CLOUD_PATIENCE is 0/negative
             # and the re-send is switched off for support. Exactly today's
@@ -520,6 +573,7 @@ class _ThoughtFreeChatOpenAI(ChatOpenAI):
         timing.note_server_report(response)
         result = super()._create_chat_result(response, generation_info)
         _keep_reasoning_text(response, result)
+        _log_vertex_tier(self, response, generation_info, result)
         for gen in result.generations:
             message = getattr(gen, "message", None)
             if message is not None and isinstance(message.content, str):
@@ -529,6 +583,78 @@ class _ThoughtFreeChatOpenAI(ChatOpenAI):
                     if hasattr(gen, "text"):
                         gen.text = cleaned
         return result
+
+
+class _QuickTestChatOpenAI(_ThoughtFreeChatOpenAI):
+    """The Settings "Test" client: everything like her real client, but a
+    "busy" 429 is reported at once (no cloud_retry waits)."""
+    _busy_retry: ClassVar[bool] = False
+
+
+def _busy_on_wait(seconds: float) -> None:
+    """The cloud_retry on_wait hook: while a turn is being streamed to the
+    page, the stream's runner attaches a progress hook to the turn
+    (chat._turn.progress, thread-local) and the page shows the line under
+    her bubble. The chat module is looked up through sys.modules instead of
+    imported here (chat imports llm - a top-level import would be circular);
+    with no hook attached (the app's own calls, the tests) cloud_retry's log
+    line alone is enough."""
+    try:
+        module = sys.modules.get("chat")
+        if module is None:
+            return
+        hook = getattr(getattr(module, "_turn", None), "progress", None)
+        if not callable(hook):
+            return
+        hook("busy", f"The AI service is busy - trying again in {seconds:.0f} s...")
+    except Exception:  # noqa: BLE001 - the screen is best-effort, always
+        pass
+
+
+def _log_vertex_tier(client, response, generation_info, result) -> None:
+    """Which tier served this Google Vertex answer, when the "Priority"
+    switch (vertex_priority) is on:
+    ``[Amadeus] Vertex tier: priority`` = Google served the call from its
+    on-demand-priority capacity (the two priority headers did their job);
+    ``[Amadeus] Vertex tier: normal (Google was full)`` = the priority
+    request was served from normal capacity anyway (the shared pool was
+    full at that moment - the answer is still a normal, full answer).
+    Google puts the tier in the raw JSON answer's usage block
+    (``extra_properties.google.traffic_type``); the openai SDK and
+    langchain may hide or reshape it, so look in the usage object,
+    generation_info, the llm_output dict and the message's response
+    metadata. Best effort: when nothing is found - or the switch is off,
+    or the server is not Vertex - it logs nothing, and it never fails
+    the call for this."""
+    try:
+        if not vertex_priority.is_on():
+            return
+        if vertex_priority.VERTEX_HOST not in \
+                str(getattr(client, "openai_api_base", None) or ""):
+            return
+        tier = vertex_priority.traffic_type(getattr(response, "usage", None))
+        if tier is None and generation_info is not None:
+            tier = vertex_priority.traffic_type(generation_info)
+        if tier is None:
+            tier = vertex_priority.traffic_type(getattr(result, "llm_output", None))
+        if tier is None:
+            for gen in result.generations or ():
+                message = getattr(gen, "message", None)
+                tier = vertex_priority.traffic_type(
+                    getattr(message, "response_metadata", None))
+                if tier is None:
+                    tier = vertex_priority.traffic_type(
+                        getattr(message, "usage_metadata", None))
+                if tier is not None:
+                    break
+        if tier is None:
+            return
+        if tier == "ON_DEMAND_PRIORITY":
+            print("[Amadeus] Vertex tier: priority")
+        else:
+            print("[Amadeus] Vertex tier: normal (Google was full)")
+    except Exception:  # noqa: BLE001 - never fail the call for this
+        pass
 
 
 def _keep_reasoning_text(response, result) -> None:
@@ -808,9 +934,13 @@ def get_llm(api_key: str, model: str, enable_thinking: bool = False, reasoning: 
     # message without an app restart.
     thinking = reasoning != "off"
     sampling_standard, sampling_extra, _ = _effective_sampling(base_url, thinking)
+    # The Vertex "Priority" switch (vertex_priority) is part of the client
+    # identity: it changes the headers the client sends, so flipping it in
+    # Settings rebuilds the client for the next call (no restart needed).
     key = (model, reasoning,
            tuple(sorted(sampling_standard.items())),
-           tuple(sorted(sampling_extra.items())))
+           tuple(sorted(sampling_extra.items())),
+           vertex_priority.is_on())
 
     cached = _LLM_CACHE.get(key)
     if cached is not None and _LLM_CACHE_URL.get(key) == base_url:
@@ -926,6 +1056,17 @@ def _build_client(base_url, api_key, model, reasoning, builtin, reply_cap,
     if extra_body:
         kwargs["extra_body"] = extra_body
 
+    # Google Vertex AI "Priority" (Settings -> Custom Model, off by default):
+    # the two headers mark the call as a priority request, so Google serves
+    # it from its on-demand-priority capacity - fewer "busy" 429s, at a
+    # higher rate (vertex_priority). Sent ONLY to aiplatform addresses, only
+    # when the switch is on; every other provider keeps its old requests.
+    # Covers both the cached chat clients (get_llm) and the one-off Settings
+    # test clients (client_for) - they all go through this one place.
+    headers = vertex_priority.headers_for(base_url)
+    if headers:
+        kwargs["default_headers"] = headers
+
     # User sampling settings (temperature / top_p / presence_penalty, and the
     # user's own output cap when set) override the built-in defaults above.
     kwargs.update(sampling_standard)
@@ -940,7 +1081,10 @@ def _build_client(base_url, api_key, model, reasoning, builtin, reply_cap,
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens + (THINKING_BUDGETS[reasoning] if thinking else 0)
 
-    return _ThoughtFreeChatOpenAI(**kwargs), sent_params
+    # The Settings Test client (a timeout is passed) answers at once, no
+    # busy-retry waits; the real chat clients wait out a 429 (cloud_retry).
+    cls = _QuickTestChatOpenAI if timeout is not None else _ThoughtFreeChatOpenAI
+    return cls(**kwargs), sent_params
 
 
 def _test_client_timeout(total):

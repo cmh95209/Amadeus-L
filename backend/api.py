@@ -46,6 +46,7 @@ import voice_gate
 import providers
 import reply_errors
 import vertex_auth
+import vertex_priority
 
 from tts import streamVoiceChunks, renderVoiceToPath
 import tts as tts_module
@@ -1944,6 +1945,29 @@ def llm_vertex_locations():
     except vertex_auth.VertexSignInError:
         locations = [vertex_auth.DEFAULT_REGION]
     return jsonify({"locations": locations, "region": vertex_auth.load_region()})
+
+
+# The Google Vertex "Priority" switch (Settings -> Custom Model, off by
+# default): when on, every Vertex call the app makes carries the two
+# priority headers (fewer "busy" 429s, at a higher rate - the user's
+# choice). The choice lives in vertex_priority.txt next to memory.db
+# (vertex_priority.py, mirrored in the sidecar).
+@application.route("/llm/vertex/priority", methods=["GET"])
+def get_llm_vertex_priority():
+    return jsonify({"on": vertex_priority.is_on()})
+
+
+@application.route("/llm/vertex/priority", methods=["POST"])
+def set_llm_vertex_priority():
+    data = request.get_json(silent=True) or {}
+    value = data.get("on")
+    if not isinstance(value, bool):
+        return jsonify({"message": "Expected a boolean 'on' field"}), 400
+    vertex_priority.set_on(value)
+    # The switch changes the client's headers: rebuild her connections so
+    # the next call already carries (or no longer carries) them.
+    llm.reset_llm()
+    return jsonify({"on": vertex_priority.is_on()})
 
 
 @application.route("/llm/provider", methods=["POST"])

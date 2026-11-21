@@ -4,23 +4,35 @@
 
 **Re-run the installers (or double-click Update Amadeus.bat) to update your app.**
 
-**Language and voice:**
+**Language:**
 - **NEW: Your language** (Settings → Preferences): the page, Settings and the translation of
-  her replies in one of 16 languages. The installer asks for it first.
-- **NEW: Voice selector** (Settings → Preferences): her voice in Japanese, English, Mandarin,
-  Cantonese or Korean.
+  her replies in one of 16 languages (English, Chinese, Japanese, Korean, Spanish, French,
+  German, Portuguese, Russian, Arabic, Hindi, Tamil, Malay, Indonesian, Thai, Vietnamese).
+- Her fixed lines (first meeting, pokes, backup greetings, apologies) and error messages come
+  in your language too.
+- She understands "search for...", "open this link" and "say that again" in any language.
 - Settings is fully translated; a page started offline switches to your language once
   connected.
-- A busy cloud service no longer leaves her translation line in Japanese: it retries.
+- Her translation line is always in your language: a line the model wrote in English anyway
+  is translated, and a busy cloud service no longer leaves it in Japanese (it retries).
+
+**Voice:**
+- **NEW: Voice selector** (Settings → Preferences): her voice in Japanese, English, Mandarin,
+  Cantonese or Korean, separate from Your language.
+- Voice timing is learned separately for each voice language.
 
 **Conversation and memory:**
 - **NEW: Live weather:** she looks it up herself when the talk calls for it, never a made-up
-  forecast. New **Your town** field in Settings → About you.
+  forecast, and asks for the town instead of guessing. New **Your town** field in
+  Settings → About you.
 - **NEW: Smarter recall:** memories and files from your other chats are matched by meaning, in
-  any language; "let me show you" no longer brings up an old picture from another chat.
+  any language. A file from another chat comes back as her notes on it, labeled with its chat
+  and day; a recalled file stays with her while you keep talking about it.
 - **NEW: Greeting cooldown** (Settings → Preferences): reopening or refreshing within 15
   seconds of her last greeting keeps that greeting instead of a new one (adjustable, or off).
-- The sources chip only shows what she really looked up.
+- **Honest sources:** the line under her reply only shows what she really looked up, and
+  marks recalled files as "Recalled". Stray words no longer bring back an old file, and
+  "let me show you" no longer brings up an old picture from another chat.
 - Regenerated greetings no longer come back as extra greetings or vanish. Delete removes a
   message with all its versions; Undo removes the newest version.
 - A regenerated reply is written as of the moment you first asked.
@@ -28,13 +40,16 @@
 **Cloud models:**
 - **NEW: Google Vertex AI "Priority" switch** (Settings → Custom Model, off by default): asks
   Google to answer from its priority capacity when it is busy. Google charges more for it.
-- A busy cloud service ("429") no longer fails her reply at once: she waits and tries again
-  (up to about 45 seconds) and the page says so.
+- A busy cloud service ("429") no longer fails her reply at once: she and her memory wait and
+  try again (up to about 45 seconds) and the page says so.
 - A failed reply shows a plain error with the code and the reason.
 
-**Launcher and installer:**
+**Installer and launcher:**
+- **NEW:** the installer's first question is which language Amadeus shows; a re-run keeps
+  your answer (change it any time in Settings).
 - **NEW:** in the launcher window, press **R** to restart her or **B** to restart only her
   brain (Mac / Linux: then Enter).
+- The Windows installer sets up what her Korean voice needs.
 - Updating with "Keep that choice? Y" keeps the model you picked in Settings (cloud users were
   switched back to the built-in model).
 

@@ -1,10 +1,10 @@
 # Amadeus-L
 
-**Latest version: v3.10 in [`releases section`](https://github.com/cmh95209/Amadeus-L/releases)** 
+**Latest version: v3.2.0 in [`releases section`](https://github.com/cmh95209/Amadeus-L/releases)** 
 
 **Join Discord for support and discussions:** [![](https://dcbadge.limes.pink/api/server/qSYmSYkpuA)](https://discord.gg/qSYmSYkpuA)
 
-**Reddit Announcement Thread for more details** [https://www.reddit.com/r/steinsgate/s/9K5Hvjqtxw](https://www.reddit.com/user/RidingEdge/comments/1xt9gtn/i_recreated_amadeus_steinsgate0_faithfully_full/)
+**Reddit Announcement Thread for more details** [https://www.reddit.com/user/RidingEdge/comments/1xt9gtn/i_recreated_amadeus_steinsgate0_faithfully_full/](https://www.reddit.com/user/RidingEdge/comments/1xt9gtn/i_recreated_amadeus_steinsgate0_faithfully_full/)
 <p align="center">
   <a href="docs/images/screenshot-poke.png"><img width="32%" alt="Amadeus answering a poke, with her English and Japanese lines" src="docs/images/screenshot-poke.png" /></a>
   <a href="docs/images/screenshot-web-search.png"><img width="32%" alt="Amadeus answering a travel question with web search, pictures and videos on her desk" src="docs/images/screenshot-web-search.png" /></a>
@@ -14,14 +14,19 @@ Amadeus-L is a Steins;Gate 0-inspired AI assistant designed to
 replicate the Amadeus AI assistant as seen in the anime!
 
 Amadeus-L can run on her own built-in local
-model after installation， 
+model after installation, 
 sees your pictures, 
-reads your documents，watches your videos, 
+reads your documents, watches your videos, 
 grows closer to you over time...
 
 She also has long-term memory, 
 voice-first native-Japanese
 dialogue, web search and weather, and installers for Windows, Mac and Linux. 
+
+Amadeus is multilingual with 16 display languages (English, Chinese, Japanese, Korean,
+Spanish, French, German, Portuguese, Russian, Arabic, Hindi, Tamil, Malay, Indonesian,
+Thai and Vietnamese), and you can choose 5 different voices for her (Japanese, English,
+Mandarin, Cantonese and Korean).
 
 
 ---
@@ -38,7 +43,8 @@ dialogue, web search and weather, and installers for Windows, Mac and Linux.
    because the file is not signed by a company: click **More info**, then
    **Run anyway**.
 3. A window opens, downloads the latest installer and runs it. Answer its
-   first question (how Amadeus should think), then wait - see step 3 below.
+   first questions (which language Amadeus shows, then how she should think),
+   then wait - see step 3 below.
 
 Note: If your antivirus blocks the installer, please add it to exclusion list or use the manual powershell method below:
 
@@ -83,8 +89,8 @@ version over a newer one; on Windows it can install it next to your current one.
    curl -fsSL https://raw.githubusercontent.com/cmh95209/Amadeus-L/main/scripts/install_macos.sh -o install_macos.sh && bash install_macos.sh
    ```
 
-3. Answer its first question (how Amadeus should think): **A** sets up her
-   own built-in model on a Mac with an Apple chip and 16 GB of memory or
+3. Answer its first questions: which language Amadeus shows, then how she
+   should think: **A** sets up her own built-in model on a Mac with an Apple chip and 16 GB of memory or
    more; **B** is for a cloud service or your own model server.
 4. Wait (a fresh Mac downloads several gigabytes of models), then double-click
    `start_macos.command` in the Amadeus folder (by default `~/Amadeus`).
@@ -96,7 +102,7 @@ for each exact version) are attached to each
 [release](https://github.com/cmh95209/Amadeus-L/releases). To update later,
 run the line above again.
 
-## Linux (new)
+## Linux
 
 Made for Ubuntu 22.04 / 24.04 and Debian 12 (and Linux versions based on
 them, like Linux Mint and Pop!_OS) on a 64-bit Intel/AMD PC. Other Linux
@@ -112,8 +118,8 @@ send the install log (`~/Amadeus/install_linux.log`).
    ```
 
    (`curl -fsSL <the same address> -o install_linux.sh` works too.)
-3. Answer its first question (how Amadeus should think): **A** sets up her
-   own built-in model when your PC has a graphics card with 6 GB or more
+3. Answer its first questions: which language Amadeus shows, then how she
+   should think: **A** sets up her own built-in model when your PC has a graphics card with 6 GB or more
    (NVIDIA cards need NVIDIA's own driver installed first; AMD and Intel
    cards work with the usual Mesa drivers); **B** is for a cloud service or
    your own model server.
@@ -146,16 +152,21 @@ section further down which lists every step the installer scripts do for you.
 
 Amadeus separates the **text you read** from the **voice you hear**.
 
-You can chat with her in **English** (or any language she can understand).
+You can chat with her in **any language she can understand**.
 For each normal response, Amadeus asks the LLM to write her reply **natively
 in Japanese first**, then a translation of it for the UI — in a single model
 call:
 
-- **Japanese (spoken line)** — natural spoken Japanese, written the way she
-  would actually talk; sent to GPT-SoVITS for voice synthesis. This is also
-  what is stored in her memory, so her own history stays in her own voice.
-- **English (display line)** — a translation of that Japanese line, displayed
-  in the conversation UI. Her voice is Japanese-only by design.
+- **Japanese (her own line)** — natural spoken Japanese, written the way she
+  would actually talk. This is what is stored in her memory, so her own
+  history stays in her own voice.
+- **Display line** — a translation of that Japanese line in **your language**
+  (Settings → Preferences → Your language, 16 languages), shown in the
+  conversation UI.
+
+Her **voice** follows Settings → Preferences → Voice language: Japanese (the
+default) speaks her Japanese line; English, Mandarin, Cantonese or Korean
+speaks a translation of it.
 
 So a typical conversation looks like:
 
@@ -165,9 +176,9 @@ You type a message
         ▼
       LLM
         │
-        ├── Japanese dialogue (native) ─► GPT-SoVITS ─► Amadeus speaks Japanese
+        ├── Japanese dialogue (native) ─► GPT-SoVITS ─► Amadeus speaks (your voice language)
         │
-        └── English translation ─────► displayed in the WebUI
+        └── Translation in your language ─► displayed in the WebUI
 ```
 
 ### Does Amadeus run a local LLM?
@@ -194,7 +205,7 @@ clickable chips.
 What runs locally:
 
 - **The conversational LLM** (when pointed at a local server) — on your GPU
-- **GPT-SoVITS** — Japanese voice synthesis
+- **GPT-SoVITS** — her voice (Japanese, English, Mandarin, Cantonese, Korean)
 - **The CharacterMemory sidecar** — her long-term memory (small; CPU is fine)
 - **Live2D / Cubism** — character rendering and animation
 - **Conversation history** — stored locally in SQLite
@@ -215,7 +226,7 @@ choice and point Amadeus at it (on an Intel Mac, this is the way).
 
 # Development Roadmap
 
-Status as of v3.0:
+Status as of v3.2:
 
 ```text
 Live2D static rendering       ✓
@@ -233,7 +244,7 @@ Live weather & air quality    ✓
 Voice retention               ✓
 First-meeting ceremony        ✓
 Long-term memory (v2.0)       ✓
-One-shot installers           ✓ Windows, Mac, Linux (new)
+One-shot installers           ✓ Windows, Mac, Linux
 Show her Japanese line        ✓
 Voice without gaps (v3.0.2)   ✓ Smooth / Early / Right away / When fully ready
 Quick typing in long chats    ✓ v3.0.2
@@ -243,8 +254,10 @@ Built-in local model (v3.0)   ✓ Windows, Linux + Apple-chip Macs, no account n
 Pictures, documents, videos   ✓ v3.0
 Closeness levels + feelings   ✓ v3.0
 Remote access (Tailscale)     ✓ v3.0, your own devices only
-Display-language dropdown     planned (her voice stays Japanese)
-English voice                 planned
+Your language (v3.2)          ✓ 16 display languages
+Voice selector (v3.2)         ✓ Japanese, English, Mandarin, Cantonese, Korean
+Live weather lookups (v3.2)   ✓ she checks it herself, honest sources
+Busy-cloud retry (v3.2)       ✓ plus a Vertex AI Priority switch
 Better animations/Live2D      planned
 Better web and harness tools  planned
 Agentic workflows             planned
@@ -260,7 +273,7 @@ The longer sections of this README live in the [docs/ folder](docs/).
 | Section | What's inside |
 |---------|---------------|
 | [Long-Term Memory (v2.0)](docs/long-term-memory.md) | How her memory works and where it lives |
-| [Latest features (v3.0)](docs/latest-features.md) | Everything she can do today |
+| [Latest features (v3.2)](docs/latest-features.md) | Everything she can do today |
 | [Remote access](docs/remote-access.md) | Open her on your phone through Tailscale |
 | [Architecture](docs/architecture.md) | The five components and how they talk to each other |
 | [Project Structure](docs/architecture.md#project-structure) | What lives in each folder |

@@ -56,7 +56,7 @@ The current version (v3.2) includes:
   cross-platform launcher support included
 - Persistent SQLite conversation history
 - Runtime LLM model switching
-- GPT-SoVITS character voice synthesis (Japanese, streamed, lip-synced)
+- GPT-SoVITS character voice synthesis (Japanese by default, streamed, lip-synced)
 - Live2D Cubism rendering directly in the WebUI
 - Natural looping idle and talking-body motions
 - Touch interactions with one-shot character reactions
@@ -86,6 +86,4 @@ Next major work includes:
 
 - More expression and motion control from model responses
 - Richer hit-area and interaction behavior
-- A user-selectable display-language dropdown (her voice stays Japanese)
-- Showing her Japanese line alongside the translation
 - Expanding the prerecorded interaction voice library

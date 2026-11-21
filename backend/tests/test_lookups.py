@@ -38,8 +38,13 @@ class _Db(unittest.TestCase):
         self.db = str(Path(self._dir.name) / "memory.db")
         self._p = patch.object(store, "PATH_TO_MEMORY", self.db)
         self._p.start()
+        # own active-chat pointer: the real data\ one is shared by parallel test runs
+        self._p_act = patch.object(store, "PATH_TO_ACTIVE_CONV",
+                                   str(Path(self._dir.name) / "active_conversation.txt"))
+        self._p_act.start()
 
     def tearDown(self):
+        self._p_act.stop()
         self._p.stop()
         self._dir.cleanup()
         chat.take_turn_sources()

@@ -10,6 +10,7 @@ the explicit-search fast path; web OFF -> no weather call at all).
 """
 import json
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -19,6 +20,30 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import weather  # noqa: E402
 import chat  # noqa: E402
+
+# The chat-loop tests reach the memory store (the active chat, its pointer
+# file). Point the whole file at a temp DB + pointer, never the real data\
+# files (parallel test runs share those).
+_TMP = None
+_STORE_PATCHES = []
+
+
+def setUpModule():
+    global _TMP, _STORE_PATCHES
+    _TMP = tempfile.TemporaryDirectory()
+    _STORE_PATCHES = [
+        patch.object(chat.store, "PATH_TO_MEMORY", str(Path(_TMP.name) / "memory.db")),
+        patch.object(chat.store, "PATH_TO_ACTIVE_CONV",
+                     str(Path(_TMP.name) / "active_conversation.txt")),
+    ]
+    for p in _STORE_PATCHES:
+        p.start()
+
+
+def tearDownModule():
+    for p in reversed(_STORE_PATCHES):
+        p.stop()
+    _TMP.cleanup()
 
 
 # --- faked Open-Meteo payloads (shapes verified live, 2026-09-15) ------------

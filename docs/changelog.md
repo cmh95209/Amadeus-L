@@ -1,39 +1,46 @@
 # Changelog
 
-## v3.2.0 — Your Language, Her Voice in Five Languages, Live Weather — November 2026
+## v3.2.0 — Multi-Language Support and Voice Selector — November 2026
 
 **Re-run the installers (or double-click Update Amadeus.bat) to update your app.**
 
-**NEW:**
-- **Your language** (Settings → Preferences): the page, Settings and the translation of her
-  replies in one of 16 languages. The installer asks for it first.
-- **Voice language** (Settings → Preferences): her voice in Japanese, English, Mandarin,
+**Language and voice:**
+- **NEW: Your language** (Settings → Preferences): the page, Settings and the translation of
+  her replies in one of 16 languages. The installer asks for it first.
+- **NEW: Voice selector** (Settings → Preferences): her voice in Japanese, English, Mandarin,
   Cantonese or Korean.
-- **Live weather:** she looks it up herself when the talk calls for it, never a made-up
-  forecast. New **Your town** field in Settings → About you.
-- **Honest sources:** the sources chip only shows what she really looked up.
-- **Smarter recall:** memories and files from your other chats are matched by meaning, in any
-  language; "let me show you" no longer brings up an old picture from another chat.
-- Launcher window: press **R** to restart her, **B** to restart only her brain (Mac / Linux:
-  then Enter).
-- **Greeting cooldown** (Settings → Preferences): reopening or refreshing within 15 seconds of
-  her last greeting keeps that greeting instead of a new one (adjustable, or off).
-- **Report bugs** and **Join Discord** buttons next to Quit in Settings.
-- **Google Vertex AI "Priority" switch** (Settings → Custom Model, off by default): asks
-  Google to answer from its priority capacity when it is busy. Google charges more for it.
+- Settings is fully translated; a page started offline switches to your language once
+  connected.
+- A busy cloud service no longer leaves her translation line in Japanese: it retries.
 
-**Fixes:**
+**Conversation and memory:**
+- **NEW: Live weather:** she looks it up herself when the talk calls for it, never a made-up
+  forecast. New **Your town** field in Settings → About you.
+- **NEW: Smarter recall:** memories and files from your other chats are matched by meaning, in
+  any language; "let me show you" no longer brings up an old picture from another chat.
+- **NEW: Greeting cooldown** (Settings → Preferences): reopening or refreshing within 15
+  seconds of her last greeting keeps that greeting instead of a new one (adjustable, or off).
+- The sources chip only shows what she really looked up.
+- Regenerated greetings no longer come back as extra greetings or vanish. Delete removes a
+  message with all its versions; Undo removes the newest version.
+- A regenerated reply is written as of the moment you first asked.
+
+**Cloud models:**
+- **NEW: Google Vertex AI "Priority" switch** (Settings → Custom Model, off by default): asks
+  Google to answer from its priority capacity when it is busy. Google charges more for it.
 - A busy cloud service ("429") no longer fails her reply at once: she waits and tries again
   (up to about 45 seconds) and the page says so.
 - A failed reply shows a plain error with the code and the reason.
-- A busy cloud service no longer leaves her translation line in Japanese: it retries.
-- A regenerated reply is written as of the moment you first asked.
-- The Personality tab has a Close button; the refresh button stays clickable while she replies.
-- Regenerated greetings no longer come back as extra greetings or vanish. Delete removes a
-  message with all its versions; Undo removes the newest version.
+
+**Launcher and installer:**
+- **NEW:** in the launcher window, press **R** to restart her or **B** to restart only her
+  brain (Mac / Linux: then Enter).
 - Updating with "Keep that choice? Y" keeps the model you picked in Settings (cloud users were
   switched back to the built-in model).
-- Settings is fully translated; a page started offline switches to your language once connected.
+
+**Page and Settings:**
+- **NEW: Report bugs** and **Join Discord** buttons next to Quit in Settings.
+- The Personality tab has a Close button; the refresh button stays clickable while she replies.
 
 ## v3.1.1 — Easier First Setup, One Version Number, Installers for Every Release — November 2026
 

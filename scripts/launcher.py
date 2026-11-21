@@ -1119,6 +1119,11 @@ def start_process(name: str, command: list[str], cwd: Path,
     env["PYTHONIOENCODING"] = "utf-8"
     kwargs: dict = {
         "cwd": str(cwd),
+        # No keyboard for her parts: the launcher window's keys (R / B) are
+        # the launcher's. With the window's keyboard, the web page's server
+        # (Vite) waited for its own shortcuts and took every key first, so R
+        # and B never arrived (2026-11-21, MH's install).
+        "stdin": subprocess.DEVNULL,
         "stdout": log,
         "stderr": subprocess.STDOUT,
         "text": True,

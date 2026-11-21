@@ -248,6 +248,32 @@ class ConsoleKeyTests(unittest.TestCase):
         self.assertIn("brain_only=brain_only", loop)
         self.assertIn("not brain_only", loop)          # B does not rebuild the page
 
+    def test_her_parts_get_no_keyboard(self):
+        # A part with the window's keyboard (the web page's Vite) swallowed
+        # R / B before the launcher saw them (2026-11-21).
+        import subprocess
+        from unittest.mock import patch
+        seen = {}
+
+        class FakeProc:
+            pid = 1
+
+        def fake_popen(command, **kwargs):
+            seen.update(kwargs)
+            return FakeProc()
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(self.launcher, "LOG_DIR", Path(tmp)), \
+                patch.object(subprocess, "Popen", fake_popen), \
+                patch.object(self.launcher, "_add_to_job", lambda p: None):
+            self.launcher.start_process("frontend", ["npm"], Path(tmp))
+            self.launcher.processes.clear()
+            for handle in self.launcher.log_handles:
+                handle.close()
+            self.launcher.log_handles.clear()
+            self.launcher._log_by_name.clear()
+        self.assertIs(seen.get("stdin"), subprocess.DEVNULL)
+
 
 class RequestFileTests(unittest.TestCase):
     def setUp(self):

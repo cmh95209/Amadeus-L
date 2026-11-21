@@ -15,6 +15,9 @@ The current version (v3.2) includes:
   in any language
 - **Greeting cooldown** (v3.2): reopening or refreshing the app right after her greeting
   keeps that greeting instead of a new one (Settings -> Preferences)
+- **Rides out busy cloud services** (v3.2): on a "busy" (429) answer she waits and tries
+  again; Google Vertex AI users can also turn on the paid "Priority" switch
+  (Settings -> Custom Model)
 
 - **Provider list + Test button** (v3.1): OpenRouter, Google Gemini, Google Vertex AI,
   OpenAI, DeepSeek, Groq and more, or a local server - each with its own key; Test sends

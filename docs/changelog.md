@@ -19,8 +19,12 @@
 - **Greeting cooldown** (Settings → Preferences): reopening or refreshing within 15 seconds of
   her last greeting keeps that greeting instead of a new one (adjustable, or off).
 - **Report bugs** and **Join Discord** buttons next to Quit in Settings.
+- **Google Vertex AI "Priority" switch** (Settings → Custom Model, off by default): asks
+  Google to answer from its priority capacity when it is busy. Google charges more for it.
 
 **Fixes:**
+- A busy cloud service ("429") no longer fails her reply at once: she waits and tries again
+  (up to about 45 seconds) and the page says so.
 - A failed reply shows a plain error with the code and the reason.
 - A busy cloud service no longer leaves her translation line in Japanese: it retries.
 - A regenerated reply is written as of the moment you first asked.

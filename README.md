@@ -1,3 +1,7 @@
+<p align="center">
+  <img width="100%" alt="Amadeus-L: the most faithful SG;0 Amadeus recreation" src="docs/images/amadeus-l-banner.png" />
+</p>
+
 # Amadeus-L
 
 **Latest version: v3.2.0 in [`releases section`](https://github.com/cmh95209/Amadeus-L/releases)** 

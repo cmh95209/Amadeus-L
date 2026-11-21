@@ -41,6 +41,8 @@ MODEL = "backend/data/llm_model.txt"
 _MARKERS = ("<<<<<<<", ">>>>>>>", "=======")
 OLD_VOICE = "【声のルール】\n古いルール。\n"
 NEW_VOICE = "【声のルール / Voice rules】\n新しいルール、たくさん良くなった。\n"
+# The project's address before it was renamed to Amadeus-L (2026-11-21).
+OLD_ADDRESS = "https://github.com/cmh95209/Amadeus-Project"
 
 
 def _ja_voice(block: str) -> str:
@@ -137,7 +139,8 @@ class _FakeRelease(unittest.TestCase):
 _EXTRACT = r"""
 param($Installer, $Out)
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($Installer, [ref]$null, [ref]$null)
-$names = @('Write-LogLines', 'Log', 'Write-LogOnly', 'Test-Complete', 'Move-ToRewrittenHistory')
+$names = @('Write-LogLines', 'Log', 'Write-LogOnly', 'Test-Complete', 'Move-ToRewrittenHistory',
+           'Update-MovedRemotes')
 $defs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $names -contains $n.Name }, $true)
 if (@($defs).Count -ne $names.Count) { throw ('expected ' + $names.Count + ' functions, found ' + @($defs).Count) }
 Set-Content -Path $Out -Value ((@($defs) | ForEach-Object { $_.Extent.Text }) -join "`n`n") -Encoding utf8
@@ -193,6 +196,38 @@ class WindowsUpdateTests(_FakeRelease):
         self.assertIn("Updated to the latest version", output, output)
         self.check_updated(dest, edited=False)
 
+    def test_old_project_address_is_switched_to_the_new_one(self):
+        """Installs from before the rename remember .../Amadeus-Project: the
+        update points them at the current address (here: the fake fork)."""
+        dest = self.make_install(shallow=True)
+        _git("remote", "set-url", "origin", OLD_ADDRESS + ".git", cwd=dest)
+        _git("remote", "add", "fork", OLD_ADDRESS + ".git", cwd=dest)
+        output = self.run_update(dest)
+        self.assertIn("Updated to the latest version", output, output)
+        self.check_updated(dest)
+        self.assertEqual(_git("remote", "get-url", "fork", cwd=dest), str(self.fork))
+        self.assertEqual(_git("remote", "get-url", "origin", cwd=dest), str(self.fork))
+
+    def test_other_addresses_are_left_alone(self):
+        dest = self.make_install(shallow=True)
+        other = "https://github.com/someone-else/Amadeus-Project-fork.git"
+        _git("remote", "set-url", "origin", other, cwd=dest)
+        _git("remote", "add", "fork", "https://github.com/cmh95209/Amadeus-L.git", cwd=dest)
+        # Only the switch itself runs (no fetch: nothing goes online).
+        (self.tmp / "extract.ps1").write_text(_EXTRACT, encoding="utf-8")
+        env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
+        ps = [_POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
+        out = subprocess.run(ps + [str(self.tmp / "extract.ps1"), "-Installer", str(_WIN),
+                                   "-Out", str(self.tmp / "defs.ps1")], capture_output=True, text=True, env=env)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        run = self.tmp / "moved.ps1"
+        run.write_text(f". '{self.tmp / 'defs.ps1'}'\n$ForkUrl = '{self.fork}'\n"
+                       f"Update-MovedRemotes 'git' '{dest}'\n'RESULT=OK'\n", encoding="utf-8-sig")
+        out = subprocess.run(ps + [str(run)], capture_output=True, text=True, env=env)
+        self.assertIn("RESULT=OK", out.stdout, out.stdout + out.stderr)
+        self.assertEqual(_git("remote", "get-url", "origin", cwd=dest), other)
+        self.assertEqual(_git("remote", "get-url", "fork", cwd=dest), "https://github.com/cmh95209/Amadeus-L.git")
+
 
 _EXTRACT_DEFAULTS = r"""
 param($Installer, $Out)
@@ -200,7 +235,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile($Installer, [re
 $names = @('Write-LogLines', 'Log', 'Write-LogOnly', 'Test-Complete', 'Move-ToRewrittenHistory',
            'Join-ProcessArgs', 'Resolve-Exe', 'Read-Answer', 'Die', 'Write-Utf8File',
            'ConvertTo-NormalText', 'Get-GitFileText', 'Get-NewDefaultText', 'Get-DefaultsToOffer',
-           'Confirm-NewDefaults', 'Apply-NewDefaults')
+           'Confirm-NewDefaults', 'Apply-NewDefaults', 'Update-MovedRemotes')
 $defs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $names -contains $n.Name }, $true)
 if (@($defs).Count -ne $names.Count) { throw ('expected ' + $names.Count + ' functions, found ' + @($defs).Count) }
 $table = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$DefaultsFiles' }, $true) | Select-Object -First 1
@@ -386,6 +421,39 @@ class MacUpdateTests(_FakeRelease):
         self.assertIn("RESULT=OK", output, output)
         self.assertEqual(_git("rev-parse", "HEAD", cwd=dest), self.new)
         self.assertEqual(_read(dest, PERSONALITY), "new default personality\n")
+
+    def run_moved(self, dest: Path, origin: str) -> str:
+        """Step 3 on an install whose origin is `origin` (no pre-fetch:
+        the block itself must fix the address before it goes online)."""
+        _git("branch", "-q", "-f", "main", self.new, cwd=self.fork)
+        _git("remote", "set-url", "origin", origin, cwd=dest)
+        script = self.tmp / "moved.sh"
+        script.write_bytes((
+            "log() { echo \"$*\"; }\ndie() { echo \"DIE: $*\"; exit 1; }\ndefaults_not_replaced() { :; }\n"
+            f"PROJ='{dest.as_posix()}'\nBRANCH=main\nLEGACY_BRANCH=feature/character-memory-spike\n"
+            f"REPO_URL='{self.fork.as_posix()}'\n"
+            + _mac_update_block() + "echo RESULT=OK\n").encode("utf-8"))
+        out = subprocess.run([_BASH, str(script)], capture_output=True, text=True)
+        return out.stdout + out.stderr
+
+    def test_old_project_address_is_switched_to_the_new_one(self):
+        # The Linux installer's update step is the same text (test_installer_linux).
+        for old in (OLD_ADDRESS, OLD_ADDRESS + ".git", OLD_ADDRESS + "/"):
+            with self.subTest(old=old):
+                dest = self.make_install(shallow=False)
+                output = self.run_moved(dest, old)
+                self.assertIn("RESULT=OK", output, output)
+                self.assertEqual(_git("remote", "get-url", "origin", cwd=dest), self.fork.as_posix())
+                self.check_updated(dest)
+                # git's files are read-only on Windows: clear the flag, then delete.
+                shutil.rmtree(dest.parent, onerror=lambda fn, p, _e: (os.chmod(p, 0o700), fn(p)))
+
+    def test_other_addresses_are_left_alone(self):
+        dest = self.make_install(shallow=False)
+        other = (self.tmp / "someone-elses-copy").as_posix()
+        _git("clone", "-q", "--bare", str(self.fork), other)
+        self.run_moved(dest, other)
+        self.assertEqual(_git("remote", "get-url", "origin", cwd=dest), other)
 
     def test_another_shelved_change_is_left_alone(self):
         dest = self.make_install(shallow=False)

@@ -207,7 +207,7 @@ copy_install_log() {
 # ----------------------------------------------------------------------------
 #  Configuration (keep in sync with the Windows and Mac installers)
 # ----------------------------------------------------------------------------
-REPO_URL="https://github.com/cmh95209/Amadeus-Project"
+REPO_URL="https://github.com/cmh95209/Amadeus-L"
 BRANCH="main"
 INSTALLER_VERSION="v3.2.0"
 LEGACY_BRANCH="feature/character-memory-spike"
@@ -1392,6 +1392,12 @@ defaults_to_offer() {
     DEFAULTS_OFFER=""
     [ -d "$PROJ/.git" ] || return 0
     command -v git >/dev/null 2>&1 || return 0
+    # The project moved from cmh95209/Amadeus-Project to cmh95209/Amadeus-L
+    # (2026-11-21): installs made before that switch to the new address.
+    case "$(git -C "$PROJ" remote get-url origin 2>/dev/null)" in
+        https://github.com/cmh95209/Amadeus-Project|https://github.com/cmh95209/Amadeus-Project.git|https://github.com/cmh95209/Amadeus-Project/)
+            git -C "$PROJ" remote set-url origin "$REPO_URL" >/dev/null 2>&1 || true ;;
+    esac
     git -C "$PROJ" fetch --quiet origin "$BRANCH" >/dev/null 2>&1 || return 0
     head="$(git -C "$PROJ" rev-parse HEAD 2>/dev/null || true)"
     newest="$(git -C "$PROJ" rev-parse --verify --quiet "origin/$BRANCH" 2>/dev/null || true)"
@@ -1837,6 +1843,12 @@ step 3 "Getting Amadeus (the project files)"
 
 if [ -d "$PROJ/.git" ]; then
     log "  Found an existing Amadeus at $PROJ - updating it..."
+    # The project moved from cmh95209/Amadeus-Project to cmh95209/Amadeus-L
+    # (2026-11-21): installs made before that switch to the new address.
+    case "$(git -C "$PROJ" remote get-url origin 2>/dev/null)" in
+        https://github.com/cmh95209/Amadeus-Project|https://github.com/cmh95209/Amadeus-Project.git|https://github.com/cmh95209/Amadeus-Project/)
+            git -C "$PROJ" remote set-url origin "$REPO_URL" >/dev/null 2>&1 || true ;;
+    esac
     # Personal live-value files (her saved connection, personality) are kept
     # out of the update - the same rule as the Windows installer. Only files
     # that are actually changed are shelved, and only a shelf made here is

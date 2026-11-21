@@ -13,7 +13,7 @@ import { qrcodegen } from "../vendor/qrcodegen";
 // in docs/remote-access.md. Only `tailscale serve` (your own devices) - never
 // Funnel: the app has no login, so Funnel would put her on the public internet.
 
-const GUIDE_URL = "https://github.com/cmh95209/Amadeus-Project/blob/main/docs/remote-access.md";
+const GUIDE_URL = "https://github.com/cmh95209/Amadeus-L/blob/main/docs/remote-access.md";
 const ON_COMMANDS = [
   "tailscale serve --bg --https=443 http://localhost:5173",
   "tailscale serve --bg --https=8443 http://127.0.0.1:5050",

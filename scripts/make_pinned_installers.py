@@ -34,7 +34,7 @@ import subprocess
 import sys
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
-RELEASES_URL = "https://github.com/cmh95209/Amadeus-Project/releases/download"
+RELEASES_URL = "https://github.com/cmh95209/Amadeus-L/releases/download"
 FIRST_PINNED = (3, 0, 0)          # older releases are not pinned (see docstring)
 TAG_RX = re.compile(r"^v(\d+)\.(\d+)(?:\.(\d+))?$")
 

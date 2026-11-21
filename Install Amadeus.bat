@@ -26,7 +26,7 @@ set "AMADEUS_BRANCH=main"
 if not "%~1"=="" set "AMADEUS_BRANCH=%~1"
 set AMADEUS_OPTS=%2 %3 %4 %5 %6 %7 %8 %9
 set "AMADEUS_PS1=%~dp0install_windows.ps1"
-set "AMADEUS_URL=https://raw.githubusercontent.com/cmh95209/Amadeus-Project/%AMADEUS_BRANCH%/scripts/install_windows.ps1"
+set "AMADEUS_URL=https://raw.githubusercontent.com/cmh95209/Amadeus-L/%AMADEUS_BRANCH%/scripts/install_windows.ps1"
 
 echo Downloading the latest Amadeus installer (branch %AMADEUS_BRANCH%)...
 powershell -NoProfile -ExecutionPolicy RemoteSigned -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { Invoke-WebRequest -UseBasicParsing -Uri $env:AMADEUS_URL -OutFile $env:AMADEUS_PS1; exit 0 } catch { Write-Host ('  ' + $_.Exception.Message); exit 1 }"

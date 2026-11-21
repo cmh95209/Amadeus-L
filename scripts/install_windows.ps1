@@ -335,7 +335,7 @@ $VoicePipLog = $null
 # Since v2.1 every install follows the fork's main branch. Installs made by
 # older installers sit on the old feature branch; they are moved to main
 # (Step 3) when they hold nothing of the user's own.
-$ForkUrl       = "https://github.com/cmh95209/Amadeus-Project.git"
+$ForkUrl       = "https://github.com/cmh95209/Amadeus-L.git"
 $LegacyBranch  = "feature/character-memory-spike"
 # The voice engine is PINNED to the version Amadeus is tested with (2026-08-18).
 # Its newest version (October 2026: "V5" + a CUDA-graph rework) made her voice
@@ -759,6 +759,19 @@ function Get-NewDefaultText($proj, $rev, $name){
     return $m.Groups[1].Value
 }
 
+# The project moved from cmh95209/Amadeus-Project to cmh95209/Amadeus-L
+# (2026-11-21). Installs made before that remember the old address in their
+# 'fork' (and first-clone 'origin') remote. GitHub forwards it, but an update
+# switches them to the new one. Any other address is left alone.
+function Update-MovedRemotes($gitExe, $proj){
+    foreach ($remote in @("fork", "origin")) {
+        $url = (& $gitExe -C $proj remote get-url $remote 2>$null | Out-String).Trim()
+        if ($url -match '^https://github\.com/cmh95209/Amadeus-Project(\.git)?/?$') {
+            & $gitExe -C $proj remote set-url $remote $ForkUrl 2>$null | Out-Null
+        }
+    }
+}
+
 # The labels of the files a coming update would change, or @() (no install
 # yet, already the newest version, the check failed, or nothing differs).
 function Get-DefaultsToOffer($proj){
@@ -767,6 +780,7 @@ function Get-DefaultsToOffer($proj){
     if (-not (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { return @() }
     $git = Resolve-Exe "git"
     & $git -C $proj remote add fork $ForkUrl 2>$null | Out-Null
+    Update-MovedRemotes $git $proj
     & $git -C $proj fetch fork $Branch 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) { return @() }
     $head = (& $git -C $proj rev-parse HEAD 2>$null | Out-String).Trim()
@@ -2378,6 +2392,7 @@ try {
             Push-Location $proj
             try {
                 & git remote add fork $ForkUrl 2>$null | Out-Null   # no-op if already present
+                Update-MovedRemotes "git" $proj                     # old Amadeus-Project address -> Amadeus-L
                 & git fetch fork $Branch 2>$null | Out-Null
                 $current = (& git rev-parse --abbrev-ref HEAD).Trim()
                 # The app writes these personal files at runtime (her saved

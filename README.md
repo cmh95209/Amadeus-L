@@ -1,6 +1,6 @@
 # Amadeus-L
 
-**Latest version: v3.10 in [`releases section`](https://github.com/cmh95209/Amadeus-Project/releases)** 
+**Latest version: v3.10 in [`releases section`](https://github.com/cmh95209/Amadeus-L/releases)** 
 
 **Join Discord for support and discussions:** [![](https://dcbadge.limes.pink/api/server/qSYmSYkpuA)](https://discord.gg/qSYmSYkpuA)
 
@@ -32,8 +32,8 @@ dialogue, web search and weather, and installers for Windows, Mac and Linux.
 
 **The easy way: double-click to install.** 
 
-1. Download [`Install Amadeus.bat`](https://raw.githubusercontent.com/cmh95209/Amadeus-Project/main/Install%20Amadeus.bat)
-   (right click the link and save it). or grab the installer from the [`releases section`](https://github.com/cmh95209/Amadeus-Project/releases)
+1. Download [`Install Amadeus.bat`](https://raw.githubusercontent.com/cmh95209/Amadeus-L/main/Install%20Amadeus.bat)
+   (right click the link and save it). or grab the installer from the [`releases section`](https://github.com/cmh95209/Amadeus-L/releases)
 2. Double-click it. Windows may first say **"Windows protected your PC"**,
    because the file is not signed by a company: click **More info**, then
    **Run anyway**.
@@ -48,7 +48,7 @@ Note: If your antivirus blocks the installer, please add it to exclusion list or
 2. Paste this one line and press Enter:
 
    ```powershell
-   Set-ExecutionPolicy -Scope Process Bypass; irm "https://raw.githubusercontent.com/cmh95209/Amadeus-Project/main/scripts/install_windows.ps1" -OutFile "$HOME\Downloads\install_windows.ps1"; & "$HOME\Downloads\install_windows.ps1"
+   Set-ExecutionPolicy -Scope Process Bypass; irm "https://raw.githubusercontent.com/cmh95209/Amadeus-L/main/scripts/install_windows.ps1" -OutFile "$HOME\Downloads\install_windows.ps1"; & "$HOME\Downloads\install_windows.ps1"
    ```
 
 3. Accept all the prompts when needed. The installer is safe to re-run if it ever stops
@@ -59,11 +59,11 @@ Note: If your antivirus blocks the installer, please add it to exclusion list or
 To install into a different folder, add a parameter at the end of the command:
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass; irm "https://raw.githubusercontent.com/cmh95209/Amadeus-Project/main/scripts/install_windows.ps1" -OutFile "$HOME\Downloads\install_windows.ps1"; & "$HOME\Downloads\install_windows.ps1" -InstallDir "D:\Amadeus"
+Set-ExecutionPolicy -Scope Process Bypass; irm "https://raw.githubusercontent.com/cmh95209/Amadeus-L/main/scripts/install_windows.ps1" -OutFile "$HOME\Downloads\install_windows.ps1"; & "$HOME\Downloads\install_windows.ps1" -InstallDir "D:\Amadeus"
 ```
 
 Prefer to download the installer by hand? The installers are attached to each
-[release](https://github.com/cmh95209/Amadeus-Project/releases).
+[release](https://github.com/cmh95209/Amadeus-L/releases).
 
 **To update later:** double-click `Update Amadeus.bat` in the `Amadeus-Project` folder.
 
@@ -80,7 +80,7 @@ version over a newer one; on Windows it can install it next to your current one.
 2. Paste this one line and press Enter:
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/cmh95209/Amadeus-Project/main/scripts/install_macos.sh -o install_macos.sh && bash install_macos.sh
+   curl -fsSL https://raw.githubusercontent.com/cmh95209/Amadeus-L/main/scripts/install_macos.sh -o install_macos.sh && bash install_macos.sh
    ```
 
 3. Answer its first question (how Amadeus should think): **A** sets up her
@@ -93,7 +93,7 @@ version over a newer one; on Windows it can install it next to your current one.
 
 Prefer to download the installer by hand? The installers (and a pinned installer
 for each exact version) are attached to each
-[release](https://github.com/cmh95209/Amadeus-Project/releases). To update later,
+[release](https://github.com/cmh95209/Amadeus-L/releases). To update later,
 run the line above again.
 
 ## Linux (new)
@@ -108,7 +108,7 @@ send the install log (`~/Amadeus/install_linux.log`).
 2. Paste this one line and press Enter:
 
    ```bash
-   wget -O install_linux.sh https://raw.githubusercontent.com/cmh95209/Amadeus-Project/main/scripts/install_linux.sh && bash install_linux.sh
+   wget -O install_linux.sh https://raw.githubusercontent.com/cmh95209/Amadeus-L/main/scripts/install_linux.sh && bash install_linux.sh
    ```
 
    (`curl -fsSL <the same address> -o install_linux.sh` works too.)
@@ -285,6 +285,8 @@ The Amadeus project code is MIT-licensed; her voice engine (GPT-SoVITS) is
 MIT; her long-term memory engine (CharacterMemory) is GPL-3.0 and runs only
 inside the sidecar's own process. Full notes and credits:
 [docs/license.md](docs/license.md).
+
+Amadeus-L started as a fork of [Amadeus-Project](https://github.com/reflectors02/Amadeus-Project) by reflectors02. Thank you for the original work.
 
 The voice sample and concept of Amadeus is a copyright of the original IP holders (MAGES inc and relevant parties), and is only used for entertainment and personal purposes.
 Do not attempt to sell or commercialize the app and/or voice sample without permission of the original IP holders.

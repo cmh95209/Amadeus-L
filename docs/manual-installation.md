@@ -41,7 +41,7 @@ a macOS command, use the same one on Linux.
 ## 1. Clone Amadeus
 
 ```bash
-git clone https://github.com/cmh95209/Amadeus-Project.git
+git clone https://github.com/cmh95209/Amadeus-L.git Amadeus-Project
 cd Amadeus-Project
 ```
 

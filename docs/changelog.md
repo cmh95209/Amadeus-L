@@ -45,6 +45,8 @@
 - A failed reply shows a plain error with the code and the reason.
 
 **Installer and launcher:**
+- Amadeus-L is now its own project: github.com/cmh95209/Amadeus-L. Old links and installs
+  keep working and switch over automatically on update.
 - **NEW:** the installer's first question is which language Amadeus shows; a re-run keeps
   your answer (change it any time in Settings).
 - **NEW:** in the launcher window, press **R** to restart her or **B** to restart only her
@@ -449,7 +451,7 @@ unusable model names, and a suite of reliability fixes (startup race
 conditions, tab-pointer recovery, honest "no results" wording).
 
 **Published:** the final `main` branch was updated to v2.0 and published as
-the [v2.0 release](https://github.com/cmh95209/Amadeus-Project/releases/tag/v2.0)
+the [v2.0 release](https://github.com/cmh95209/Amadeus-L/releases/tag/v2.0)
 with the installer scripts attached.
 
 ## Switching Tabs No Longer Gets the Same "Welcome Back" — September 22, 2026

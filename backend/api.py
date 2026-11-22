@@ -39,6 +39,7 @@ import defaults_refresh
 import feelings
 import llm
 import memory
+import memory_plan_bridge
 import remote_access
 import restart_control
 import speech_text
@@ -76,7 +77,8 @@ origin_guard.install(application)
 
 class _QuietChatGPTCallback(logging.Filter):
     def filter(self, record):
-        return "/auth/callback" not in unquote(record.getMessage())
+        message = unquote(record.getMessage())
+        return "/auth/callback" not in message and memory_plan_bridge.PATH not in message
 
 
 logging.getLogger("werkzeug").addFilter(_QuietChatGPTCallback())
@@ -1671,6 +1673,9 @@ def _chatgpt_loopback():
                  local(origin_guard._split_host(request.headers["X-Forwarded-Host"]))))
 
 
+memory_plan_bridge.register(application, _chatgpt_loopback)
+
+
 def _chatgpt_user_device():
     # Serve forwards a signed-in tailnet identity from loopback. Public
     # Funnel requests arrive without this identity.
@@ -1681,7 +1686,7 @@ def _chatgpt_user_device():
 
 @application.before_request
 def _chatgpt_check_device():
-    if request.method == "OPTIONS" or request.endpoint in (
+    if request.path == memory_plan_bridge.PATH or request.method == "OPTIONS" or request.endpoint in (
             "chatgpt_signin", "chatgpt_authorize", "chatgpt_callback"):
         return None
     if not _chatgpt_user_device() and (request.path.startswith("/chatgpt/") or chatgpt_llm.active()):

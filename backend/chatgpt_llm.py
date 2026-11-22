@@ -269,7 +269,7 @@ def _read_response(response):
     raise ChatGPTError("ChatGPT's reply ended early. Please try again.")
 
 
-def _chat_result(response):
+def _chat_result(response, access_token):
     text = []
     calls = []
     for item in response["output"]:
@@ -286,7 +286,10 @@ def _chat_result(response):
     if usage:
         timing.note_server_report({"usage": {"prompt_tokens": usage.get("input_tokens"),
                                              "completion_tokens": usage.get("output_tokens")}})
-    message = AIMessage(content=builtin_llm.strip_thoughts("".join(text)), tool_calls=calls)
+    content = builtin_llm.strip_thoughts("".join(text))
+    if access_token:
+        content = content.replace(access_token, "[redacted]")
+    message = AIMessage(content=content, tool_calls=calls)
     return ChatResult(generations=[ChatGeneration(message=message)])
 
 
@@ -295,17 +298,21 @@ class ChatGPTClient(ChatOpenAI):
     # format so SDK defaults can never add unsupported plan parameters.
     use_saved_reasoning: bool = False
     plan_timeout: float = 120.0
+    plan_model: str | None = None
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         _check_background()
-        choices = selection()
-        if not choices["model"]:
-            _, choices = models_and_selection()
-        model = choices["model"]
+        model, effort = self.plan_model, DEFAULT_LEVEL
+        if model is None or self.use_saved_reasoning:
+            choices = selection()
+            if model is None and not choices["model"]:
+                _, choices = models_and_selection()
+            model = choices["model"] if model is None else model
+            if self.use_saved_reasoning:
+                effort = choices["level"]
         if not model:
             raise ChatGPTError(NO_MODELS)
         payload = self._get_request_payload(messages, **kwargs)
-        effort = choices["level"] if self.use_saved_reasoning else DEFAULT_LEVEL
         body = _response_body(payload, model, effort)
         try:
             token = chatgpt_auth.access_token()
@@ -314,7 +321,7 @@ class ChatGPTClient(ChatOpenAI):
             with requests.post(RESPONSES_URL, json=body, stream=True, allow_redirects=False,
                                headers={"Authorization": f"Bearer {token}", "Accept": "text/event-stream"},
                                timeout=(min(5.0, timeout), timeout)) as response:
-                return _chat_result(_read_response(response))
+                return _chat_result(_read_response(response), token)
         except chatgpt_auth.ChatGPTSignInError as exc:
             raise safe_auth_error(exc) from None
         except requests.RequestException:
@@ -323,7 +330,8 @@ class ChatGPTClient(ChatOpenAI):
             raise ChatGPTError("ChatGPT sent an unreadable reply. Please try again.") from None
 
 
-def client(*, use_saved_reasoning=False, timeout=120.0):
-    return ChatGPTClient(model=selected_model() or DEFAULT_MODEL, use_saved_reasoning=use_saved_reasoning,
+def client(*, model=None, use_saved_reasoning=False, timeout=120.0):
+    return ChatGPTClient(model=model or selected_model() or DEFAULT_MODEL, plan_model=model,
+                         use_saved_reasoning=use_saved_reasoning,
                          plan_timeout=timeout, use_responses_api=False, max_retries=0,
                          base_url=chatgpt_auth.RESOURCE, api_key="unused")

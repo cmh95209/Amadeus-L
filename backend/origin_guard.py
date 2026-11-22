@@ -29,7 +29,7 @@ The memory embedder plays no part here.
 import ipaddress
 from urllib.parse import urlsplit
 
-from flask import g, jsonify, request
+from flask import current_app, g, jsonify, request
 
 # ---- TUNABLES ---------------------------------------------------------------
 # Names her page may be opened at on this PC (any port, http or https).
@@ -118,6 +118,9 @@ def _refuse(why: str):
 
 
 def _check():
+    route_check = current_app.extensions.get("origin_guard_route_checks", {}).get(request.endpoint)
+    if route_check is not None:
+        return route_check()
     if not host_allowed(request.headers.get("Host", "")):
         return _refuse("host")
     origin = request.headers.get("Origin")
@@ -155,3 +158,8 @@ def install(app) -> None:
     The gate goes FIRST, ahead of any other before_request hook."""
     app.before_request_funcs.setdefault(None, []).insert(0, _check)
     app.after_request(_add_cors_headers)
+
+
+def guard_route(app, endpoint, check) -> None:
+    """Use a stricter request gate for an internal endpoint."""
+    app.extensions.setdefault("origin_guard_route_checks", {})[endpoint] = check

@@ -310,7 +310,7 @@ export default function ChatGPTConnection({ active, disabled, connection, onSele
                 </select>
               </label>
               <div className="settings-help chatgpt-background">
-                <span>{status.background_use_allowed ? "All features are on." : "Some features are off (greetings, picture reactions)."}</span>
+                <span>{status.background_use_allowed ? "All features are on." : "Some features are off (greetings, picture reactions, memory learning)."}</span>
                 <button type="button" className={status.background_use_allowed ? "chatgpt-turn-off" : "ghost-button"}
                   disabled={busy || disabled}
                   onClick={() => void update(() => setChatGPTBackground(!status.background_use_allowed))}>
@@ -346,7 +346,7 @@ export default function ChatGPTConnection({ active, disabled, connection, onSele
           ) : (
             <>
               <p>Eligible usage in this app uses your ChatGPT plan.</p>
-              <p>Amadeus needs your consent to allow all features to work on ChatGPT, such as picture reactions and greetings.</p>
+              <p>Amadeus needs your consent to allow all features to work on ChatGPT, such as picture reactions, greetings and memory learning.</p>
               <p>If you reject, she can only chat and text normally, with some features missing.</p>
             </>
           )}

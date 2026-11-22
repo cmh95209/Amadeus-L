@@ -37,6 +37,7 @@ backend/voice_language.txt
 backend/data/api_keys.json
 backend/data/vertex_key.json
 backend/data/chatgpt_auth.json
+backend/data/memory_bridge.secret
 backend/data/chatgpt_settings.json
 backend/data/chatgpt_model.txt
 backend/data/chatgpt_reasoning.txt

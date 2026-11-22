@@ -463,7 +463,8 @@ class ChatGPTAuthTests(unittest.TestCase):
         })
         self.assertFalse(self.auth_file.exists())
 
-    def test_git_ignores_both_chatgpt_files(self):
+    def test_git_ignores_chatgpt_and_bridge_files(self):
         lines = (BACKEND.parent / ".gitignore").read_text(encoding="utf-8").splitlines()
         self.assertIn("backend/data/chatgpt_auth.json", lines)
+        self.assertIn("backend/data/memory_bridge.secret", lines)
         self.assertIn("backend/data/chatgpt_settings.json", lines)

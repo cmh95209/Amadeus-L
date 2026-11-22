@@ -40,6 +40,18 @@ class PickerStoreTests(unittest.TestCase):
             self.assertTrue(data["favourites"]["gif"][0]["local_url"].startswith("/picker/recent/media/"))
             self.assertFalse(store.toggle_favourite(current))
 
+    def test_favourite_media_survives_leaving_recents(self):
+        gif = {"source": "gif", "id": "saved", "provider": "klipy"}
+        self.assertTrue(store.toggle_favourite(gif, True, b"saved", ".gif"))
+        with patch.object(store, "RECENT_LIMIT", 1):
+            store.add_recent(gif, b"saved", ".gif")
+            store.add_recent({**gif, "id": "newer"}, b"newer", ".gif")
+        self.assertEqual(store.recent_copy(gif), b"saved")
+        url = store.state()["favourites"]["gif"][0]["local_url"]
+        self.assertEqual(store.local_media(url.rsplit("/", 1)[1]).read_bytes(), b"saved")
+        self.assertFalse(store.toggle_favourite(gif, False))
+        self.assertIsNone(store.recent_copy(gif))
+
     def test_atomic_replace_and_failed_write_preserves_previous_state(self):
         customer = store.install_id()
         path = self.root / "picker.json"

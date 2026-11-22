@@ -20,6 +20,10 @@ import { PictureViewer } from "./components/PictureViewer";
 import { DocumentViewer } from "./components/DocumentViewer";
 import { VideoViewer } from "./components/VideoViewer";
 import { useAttachments } from "./useAttachments";
+import { PickerButton } from "./picker/PickerButton";
+import { PickerSettings } from "./picker/PickerSettings";
+import { usePickerSend } from "./picker/usePickerSend";
+import type { PickerMessage } from "./picker/usePickerSend";
 import {
   PASTE_MAX_CHARS,
   REACTION_CHOICES,
@@ -534,6 +538,13 @@ export default function App() {
     conversationId: () => displayedConvIdRef.current,
     mayReact: () => !loadingRef.current && !ceremonyPendingRef.current && hasApiKey === true,
     onReaction: (reply) => showAttachReaction(reply),
+  });
+  const pickerSend = usePickerSend({
+    cards: pictures.cards, conversation: displayedConvId,
+    getConversation: () => displayedConvIdRef.current,
+    getText: () => composerRef.current?.text() ?? "",
+    unlockAudio: prepareReplyAudio, stage: pictures.addPrepared,
+    canReply: !loading && !ceremonyPending, send: (message) => void sendComposer(message),
   });
 
   function showAttachReaction(reply: ReactionReply) {
@@ -1708,10 +1719,18 @@ export default function App() {
     }
   }
 
-  async function submit(event: FormEvent) {
+  function submit(event: FormEvent) {
     event.preventDefault();
+    if (!pickerSend.locked.current) void sendComposer();
+  }
 
-    const text = (composerRef.current?.text() ?? "").trim();
+  function prepareReplyAudio() {
+    return characterRef.current?.prepareSpeech().then(() => true, () => false);
+  }
+
+  async function sendComposer(picked?: PickerMessage) {
+    const draft = (composerRef.current?.text() ?? "").trim();
+    const text = picked?.text ?? draft;
 
     // Words OR a ready picture (never while a picture is still being prepared).
     if (!canSend(text, pictures.cards) || loading) {
@@ -1731,10 +1750,7 @@ export default function App() {
 
     // Unlock Web Audio while this function still runs from a real user gesture.
     characterRef.current?.stopSpeech();
-    const speechReady = characterRef.current?.prepareSpeech().then(
-      () => true,
-      () => false
-    );
+    const speechReady = picked?.speechReady ?? prepareReplyAudio();
 
     userSpokeSeq.current += 1;
     // The ready pictures go with this message (her reaction, if not said
@@ -1749,7 +1765,7 @@ export default function App() {
       },
     ]);
 
-    composerRef.current?.clear();
+    if (draft === text) composerRef.current?.clear();
     setLoading(true);
     setStatus(sent.ids.length ? "Amadeus is looking..." : "Amadeus is thinking...");
     if (sent.ids.length) characterRef.current?.setLooking(true);
@@ -3183,7 +3199,8 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                <div className="bubble">
+                <div className={`bubble${!message.content.trim() && message.attachments?.length &&
+                  message.attachments.every((picture) => picture.media_type === "sticker") ? " picker-sticker-bubble" : ""}`}>
                   {message.role === "user" && message.attachments && message.attachments.length > 0 && (
                     <PictureStrip pictures={message.attachments} onOpen={setViewerPicture} />
                   )}
@@ -3284,13 +3301,17 @@ export default function App() {
           className={`composer${dropGlow ? " drop-glow" : ""}`}
           onSubmit={submit}
         >
-          <AttachMenu
-            caps={pictures.caps}
-            disabled={ceremonyPending}
-            onFiles={addPictureFiles}
-            onOpen={() => void pictures.refreshCaps()}
-            onNote={setAttachNote}
-          />
+          <div className="composer-tools">
+            <AttachMenu
+              caps={pictures.caps}
+              disabled={ceremonyPending}
+              onFiles={addPictureFiles}
+              onOpen={() => void pictures.refreshCaps()}
+              onNote={setAttachNote}
+            />
+            <PickerButton disabled={ceremonyPending} mediaBlocked={loading || pickerSend.busy}
+              onEmoji={(emoji) => composerRef.current?.insert(emoji)} onMedia={pickerSend.pick} />
+          </div>
           <ComposerBox
             ref={composerRef}
             onHasText={setHasText}
@@ -3344,7 +3365,7 @@ export default function App() {
 
           <button
             type="submit"
-            disabled={!canSend(hasText ? "x" : "", pictures.cards) || loading || ceremonyPending}
+            disabled={!canSend(hasText ? "x" : "", pictures.cards) || loading || ceremonyPending || pickerSend.busy}
             title={pictures.cards.some((c) => c.state === "preparing")
               ? "Waiting for your pictures to be ready" : undefined}
           >
@@ -3353,7 +3374,7 @@ export default function App() {
         </form>
         {viewerPicture && (isDocument(viewerPicture)
           ? <DocumentViewer doc={viewerPicture} onClose={() => setViewerPicture(null)} />
-          : isVideo(viewerPicture)
+          : isVideo(viewerPicture) && viewerPicture.media_type !== "sticker"
             ? <VideoViewer video={viewerPicture} onClose={() => setViewerPicture(null)} />
             : <PictureViewer picture={viewerPicture} onClose={() => setViewerPicture(null)} />)}
         {ceremonyPending && (
@@ -4088,6 +4109,7 @@ export default function App() {
 
             <div hidden={settingsSection !== "preferences"}>
               <LanguagePicker />
+              <PickerSettings />
               {/* Hidden on backends without the /voice_language route. */}
               <VoiceLanguagePicker />
               <div className="conn-section">

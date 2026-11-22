@@ -45,6 +45,7 @@ export function cardFrom(p: PictureInfo, key: string): TrayCard {
     key, name: p.name, state, id: p.id, kind: p.kind,
     thumbUrl: absoluteUrl(p.thumb_url ?? undefined),
     ...(video && p.length ? { length: p.length } : {}),
+    ...(p.gif || p.media_type ? { media: p } : {}),
     ...(state === "error" ? { message: p.warning || "This video could not be prepared." }
       : p.warning ? { warning: p.warning } : {}),
   };
@@ -103,7 +104,7 @@ export function useAttachments({ conversationId, mayReact, onReaction }: Options
       reactTimer.current = null;
       // A video: once it has arrived (she reacts to its name, like a picture's;
       // the PC may still be preparing it).
-      const ready = cardsRef.current.filter((c) => typeof c.id === "number"
+      const ready = cardsRef.current.filter((c) => !c.suppressReaction && typeof c.id === "number"
         && (c.state === "ready" || (c.kind === "video" && c.state === "preparing")));
       const fresh = ready.map((c) => c.id as number).filter((id) => !reacted.current.has(id));
       // Still uploading? The last one to finish schedules it again.
@@ -171,6 +172,14 @@ export function useAttachments({ conversationId, mayReact, onReaction }: Options
   const patchCard = (key: string, patch: Partial<TrayCard>) =>
     setCards((current) => current.map((c) => (c.key === key ? { ...c, ...patch } : c)));
 
+  const addPrepared = useCallback((picture: PictureInfo, react: boolean) => {
+    const key = `card-${++cardSeq}`;
+    if (capsRef.current?.cloud && !seenPrivacyNote()) setPrivacyNote(true);
+    setCards((current) => [...current, { ...cardFrom(picture, key), suppressReaction: !react }]);
+    if (react) scheduleReaction();
+    return key;
+  }, [scheduleReaction]);
+
   // Videos (video plan Phase 2): uploaded in pieces with a progress line;
   // taking the card off stops the upload. Then the PC prepares it (the card
   // says how far) - see the check-in below.
@@ -229,9 +238,7 @@ export function useAttachments({ conversationId, mayReact, onReaction }: Options
             return;
           }
           if (result.ok) {
-            patchCard(key, { state: "ready", id: result.picture.id, kind: result.picture.kind,
-              thumbUrl: absoluteUrl(result.picture.thumb_url ?? undefined),
-              ...(result.picture.warning ? { warning: result.picture.warning } : {}) });
+            patchCard(key, cardFrom(result.picture, key));
             scheduleReaction();
           } else {
             patchCard(key, { state: "error", message: result.message });
@@ -280,7 +287,7 @@ export function useAttachments({ conversationId, mayReact, onReaction }: Options
     return {
       ids: taken.map((c) => c.id as number),
       taken,
-      pictures: taken.map((c) => ({
+      pictures: taken.map((c) => c.media ? { ...c.media, on_desk: true } : ({
         id: c.id as number, kind: c.kind ?? "picture", name: c.name, caption: "", on_desk: true,
         number: null, turn: null, thumb_url: c.thumbUrl ?? (c.kind === "document" ? null : ""), url: "",
         ...(c.kind === "document" ? { text_url: `/attachments/${c.id}/text` } : {}),
@@ -405,7 +412,7 @@ export function useAttachments({ conversationId, mayReact, onReaction }: Options
 
   return {
     cards, desk, caps, privacyNote,
-    addFiles, removeCard, takeForSend, restore, refreshDesk, removeFromDesk, refreshCaps,
+    addFiles, addPrepared, removeCard, takeForSend, restore, refreshDesk, removeFromDesk, refreshCaps,
     closePrivacyNote, cancelReaction,
   };
 }

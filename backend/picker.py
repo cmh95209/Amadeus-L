@@ -90,7 +90,17 @@ def toggle_favourite(data):
     if "favourite" in data and type(favourite) is not bool:
         raise PickerError("picker_invalid_favourite")
     if source in ("gif", "online-sticker"):
-        value = store.toggle_favourite(_online_item(data), favourite)
+        item = _online_item(data)
+        body = extension = None
+        if favourite is not False:
+            try:
+                if store.recent_copy(item) is None:
+                    downloaded = gifs.download(item["url"])
+                    extension, _ = stickers.validate_image(downloaded)
+                    body = downloaded
+            except (PickerError, OSError):
+                pass  # A favourite still saves when its media is temporarily unavailable.
+        value = store.toggle_favourite(item, favourite, body, extension)
     elif source == "sticker":
         changes = {"favourite": favourite} if favourite is not None else {}
         value = stickers.update_sticker(data.get("pack"), data.get("id"), changes, toggle=True)["favourite"]

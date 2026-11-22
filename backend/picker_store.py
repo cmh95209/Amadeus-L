@@ -1,4 +1,4 @@
-"""Atomic picker state and local media for recently used online items."""
+"""Atomic picker state and local media for recent and favourite online items."""
 import hashlib
 import json
 import os
@@ -95,8 +95,9 @@ def _identity(item):
     return item["source"], item.get("provider"), item.get("pack"), item["id"]
 
 
-def _recent_entries(data):
-    return (item for items in data["recent"].values() for item in items if item.get("local"))
+def _cached_entries(data):
+    return (item for group in ("recent", "favourites") for items in data[group].values()
+            for item in items if item.get("local"))
 
 
 def _media_file(item):
@@ -109,7 +110,7 @@ def _media_file(item):
 
 def local_media(key):
     with _LOCK:
-        item = next((item for item in _recent_entries(_load()) if item["local"] == key), None)
+        item = next((item for item in _cached_entries(_load()) if item["local"] == key), None)
         path = _media_file(item) if item else None
         if path is None:
             raise PickerError("picker_media_not_found", 404)
@@ -119,7 +120,7 @@ def local_media(key):
 def recent_copy(item):
     """Read while locked so eviction cannot remove the file mid-read."""
     with _LOCK:
-        found = next((r for r in _recent_entries(_load()) if _identity(r) == _identity(item)), None)
+        found = next((r for r in _cached_entries(_load()) if _identity(r) == _identity(item)), None)
         path = _media_file(found) if found else None
         if path is not None:
             return path.read_bytes()
@@ -138,13 +139,20 @@ def online_reference(source, item_id, provider):
 
 
 def _prune(data):
-    keep = {item["local"] for item in _recent_entries(data)}
+    keep = {item["local"] for item in _cached_entries(data)}
     for path in _recent_dir().glob("*"):
         if _LOCAL_FILE.fullmatch(path.name) and path.name not in keep:
             try:
                 path.unlink()
             except OSError:
                 pass  # e.g. a response serving this file on Windows
+
+
+def _cache_media(item, body, extension):
+    item["local"] = hashlib.sha256(body).hexdigest() + extension
+    path = _recent_dir() / item["local"]
+    if not path.exists():
+        atomic_write(path, body)
 
 
 def add_recent(item, body=None, extension=None):
@@ -156,10 +164,10 @@ def add_recent(item, body=None, extension=None):
         entries = data["recent"][kind]
         older = [entry for entry in entries if _identity(entry) != _identity(item)]
         if body is not None:
-            item["local"] = hashlib.sha256(body).hexdigest() + extension
-            path = _recent_dir() / item["local"]
-            if not path.exists():
-                atomic_write(path, body)
+            _cache_media(item, body, extension)
+            for entry in data["favourites"].get(kind, []):
+                if _identity(entry) == _identity(item):
+                    entry["local"] = item["local"]
         data["recent"][kind] = [item, *older][:RECENT_LIMIT]
         try:
             _save(data)
@@ -167,7 +175,8 @@ def add_recent(item, body=None, extension=None):
             _prune(_load())
 
 
-def toggle_favourite(item, favourite=None):
+def toggle_favourite(item, favourite=None, body=None, extension=None):
+    item = dict(item)
     kind = ONLINE.get(item["source"], item["source"])
     with _LOCK:
         data = _load()
@@ -175,8 +184,21 @@ def toggle_favourite(item, favourite=None):
         older = [entry for entry in entries if _identity(entry) != _identity(item)]
         if favourite is None:
             favourite = len(entries) == len(older)
+        if favourite:
+            cached = next((entry for entry in _cached_entries(data)
+                           if _identity(entry) == _identity(item) and _media_file(entry)), None)
+            if cached:
+                item["local"] = cached["local"]
+            elif body is not None:
+                try:
+                    _cache_media(item, body, extension)
+                except OSError:
+                    item.pop("local", None)
         data["favourites"][kind] = ([item, *older] if favourite else older)[:FAVOURITE_LIMIT]
-        _save(data)
+        try:
+            _save(data)
+        finally:
+            _prune(_load())
         return favourite
 
 
@@ -200,7 +222,7 @@ def state():
     with _LOCK:
         data = _load()
         local = {_identity(item): "/picker/recent/media/" + item["local"]
-                 for item in _recent_entries(data) if _media_file(item)}
+                 for item in _cached_entries(data) if _media_file(item)}
         return {
             group: {kind: [{**{k: v for k, v in item.items() if k != "local"},
                             **({"local_url": local[_identity(item)]} if _identity(item) in local

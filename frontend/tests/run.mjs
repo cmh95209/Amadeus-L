@@ -24,6 +24,7 @@ try {
   await server.ssrLoadModule("/tests/linkText.test.ts");
   await server.ssrLoadModule("/tests/webStream.test.ts");
   await server.ssrLoadModule("/tests/attachments.test.ts");
+  await server.ssrLoadModule("/tests/picker.test.ts");
   await server.ssrLoadModule("/tests/systemStatus.test.ts");
   await server.ssrLoadModule("/tests/voicePacing.test.ts");
   await server.ssrLoadModule("/tests/pagePerf.test.ts");

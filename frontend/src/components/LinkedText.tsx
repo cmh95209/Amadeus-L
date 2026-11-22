@@ -1,4 +1,5 @@
 import { isKnownLink, splitLinks } from "../linkText";
+import { EmojiText } from "../picker/EmojiText";
 
 // A chat message's text with its web links clickable (opened in a new tab).
 // `known` (her messages only): the addresses this reply's searches really
@@ -8,7 +9,7 @@ import { isKnownLink, splitLinks } from "../linkText";
 export function LinkedText({ text, known }: { text: string; known?: Set<string> }) {
   const parts = splitLinks(text);
   // translate="no": chat text is never swapped by the page translator (i18n.ts).
-  if (!parts.some((p) => p.href)) return <span translate="no">{text}</span>;
+  if (!parts.some((p) => p.href)) return <span translate="no"><EmojiText text={text} /></span>;
   return (
     <>
       {parts.map((part, i) =>
@@ -16,7 +17,7 @@ export function LinkedText({ text, known }: { text: string; known?: Set<string> 
           <span key={i} className="chat-link-wrap">
             <a className="chat-link" href={part.href} target="_blank" rel="noopener noreferrer"
               title={part.href} translate="no">
-              {part.text}
+              <EmojiText text={part.text} />
             </a>
             {known && !isKnownLink(part.href, known) && (
               <span className="chat-link-unchecked"
@@ -26,7 +27,7 @@ export function LinkedText({ text, known }: { text: string; known?: Set<string> 
             )}
           </span>
         ) : (
-          <span key={i} translate="no">{part.text}</span>
+          <span key={i} translate="no"><EmojiText text={part.text} /></span>
         ),
       )}
     </>

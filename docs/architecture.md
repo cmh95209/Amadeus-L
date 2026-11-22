@@ -61,77 +61,18 @@ live in its own process.
 
 ```text
 Amadeus-Project/
-├── backend/
-│   ├── main.py                # Flask app entry point
-│   ├── api.py                 # REST API
-│   ├── chat.py                # conversation pipeline (voice-first)
-│   ├── memory.py              # SQLite conversation history
-│   ├── llm.py                 # LLM access (local or OpenRouter)
-│   ├── tts.py                 # GPT-SoVITS voice client
-│   ├── start_gptsovits.py     # voice engine startup
-│   ├── ceremony.py            # first-meeting / wake-up logic
-│   ├── ja_voice.py            # her Japanese voice rules
-│   ├── cm_bridge.py           # bridge to the memory sidecar
-│   ├── weather.py             # live weather / air quality
-│   ├── webfetch.py            # web search result reading
-│   ├── console_encoding.py    # UTF-8 console hardening
-│   ├── stats.py               # trust / relationship stats
-│   ├── environment.yml        # backend env (python 3.10)
-│   ├── requirements.in        # backend dependencies
-│   ├── assets/                # prerecorded interaction audio
-│   └── data/                  # runtime data (git-ignored)
-│
-├── frontend/
-│   ├── cubism/                # Live2D Cubism SDK (Core/Framework)
-│   ├── public/
-│   │   ├── cubism-shaders/
-│   │   ├── live2d/            # character model assets
-│   │   └── live2dcubismcore.min.js
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── Live2DCharacter.tsx
-│   │   │   └── SamplingSettings.tsx
-│   │   ├── live2d/
-│   │   │   ├── cubismBootstrap.ts
-│   │   │   ├── KurisuController.ts
-│   │   │   ├── KurisuModel.ts
-│   │   │   ├── MotionPlayer.ts
-│   │   │   └── textureLoader.ts
-│   │   ├── audio/
-│   │   │   └── SpeechPlayer.ts
-│   │   ├── App.tsx
-│   │   ├── api.ts
-│   │   ├── interactions.ts
-│   │   ├── main.tsx
-│   │   └── styles.css
-│   ├── index.html
-│   ├── package.json
-│   └── vite.config.ts
-│
-├── memory_sidecar/            # long-term memory (v2.0)
-│   ├── cm_sidecar.py          # sidecar entry point (port 9870)
-│   ├── requirements.txt       # pinned sidecar dependencies
-│   ├── lib/                   # vendored CharacterMemory engine (GPL)
-│   ├── seed_index/            # her lore, re-seeded on first start
-│   ├── LICENSE-NOTE.md
-│   └── venv/                  # built on first launch (git-ignored)
-│
-├── scripts/
-│   ├── launcher.py            # cross-platform automatic launcher
-│   ├── install_windows.ps1    # Windows one-shot installer (latest main)
-│   ├── install_linux.sh       # Linux one-shot installer (latest main)
-│   ├── install_macos.sh       # macOS one-shot installer (latest main)
-│   └── make_pinned_installers.py  # builds each release's pinned installers
-│
-├── GPT-SoVITS/                # voice engine (cloned locally, git-ignored)
-├── docs/images/
-├── start_macos.command
-├── start_windows.bat
-├── check_amadeus.bat          # backend self-test (no model needed)
-├── README.md
-├── LICENSE
-└── .gitignore
+├── backend/          # Flask backend: chat pipeline, memory, model access, voice client
+├── frontend/         # React / TypeScript page with the Live2D character
+├── memory_sidecar/   # long-term memory service (separate process)
+├── scripts/          # launcher, installers, release and language tools
+├── docs/             # these guides
+├── GPT-SoVITS/       # voice engine (cloned locally, git-ignored)
+└── start_*.bat / .sh / .command   # one-click start files
 ```
+
+For a file-by-file map of the code (what each module owns, how one message
+travels, where settings and data live, and where to start for a change), see
+[ARCHITECTURE.md](../ARCHITECTURE.md) at the top of the repository.
 
 GPT-SoVITS is cloned separately into a local `GPT-SoVITS/` directory. It is
 an external dependency rather than part of the Amadeus repository itself.
@@ -146,7 +87,7 @@ an external dependency rather than part of the Amadeus repository itself.
 - Python 3.13 (memory sidecar environment)
 - Flask
 - SQLite
-- Any OpenAI-compatible LLM server (local) or OpenRouter
+- Any OpenAI-compatible LLM server (local) or a cloud provider (OpenRouter, Google Vertex AI and others)
 - GPT-SoVITS
 - CharacterMemory (vendored, GPL-3.0 — isolated in the sidecar process)
 

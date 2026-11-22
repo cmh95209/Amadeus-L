@@ -314,12 +314,19 @@ def _save_document(name: str, data: bytes, conv: int) -> dict:
     return get(new_id)
 
 
-def save_upload(name: str, data: bytes, conversation_id=None) -> dict:
+def save_upload(name: str, data: bytes, conversation_id=None, *,
+                media_type=None, title=None, pack_name=None) -> dict:
     """prepare_picture / prepare_document + store it as a card not sent yet.
     Returns the row."""
     conv = store.load_active_conversation() if conversation_id is None else int(conversation_id)
-    if is_document_name(name):
+    if not media_type and is_document_name(name):
         return _save_document(name, data, conv)
+    if data.startswith((b"GIF87a", b"GIF89a")) or (data[:4] == b"RIFF" and data[8:12] == b"WEBP"):
+        import video
+        found = video.inspect_animation(data)
+        if found:
+            return video.save_animation(name, data, conv, found, media_type=media_type or "gif",
+                                        title=title, pack_name=pack_name)
     prepared = prepare_picture(name, data)
     ext = ".png" if prepared["mime"] == "image/png" else ".jpg"
     conn = store._connect_db()
@@ -327,10 +334,11 @@ def save_upload(name: str, data: bytes, conversation_id=None) -> dict:
         c = conn.cursor()
         store._ensure_attachments_table(c)
         c.execute("INSERT INTO attachments (conversation_id, kind, name, mime, bytes, width, "
-                  "height, created_at) VALUES (?, 'picture', ?, ?, ?, ?, ?, ?)",
-                  (conv, prepared["name"], prepared["mime"], len(prepared["bytes"]),
+                  "height, created_at, media_type, media_pack) "
+                  "VALUES (?, 'picture', ?, ?, ?, ?, ?, ?, ?, ?)",
+                  (conv, title or prepared["name"], prepared["mime"], len(prepared["bytes"]),
                    prepared["width"], prepared["height"],
-                   datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                   datetime.now().strftime("%Y-%m-%d %H:%M:%S"), media_type, pack_name))
         new_id = c.lastrowid
         rel = f"{conv}/{new_id}{ext}"
         rel_thumb = f"{conv}/{new_id}_thumb.jpg"
@@ -1293,7 +1301,7 @@ DOC_DESK_RULE = (
 # two stills - the rule says both plainly.
 VIDEO_RULE = (
     "[Video rule: you watched the video(s) above as stills, each marked with its time from "
-    "the start of the video (1:05 = 1 minute 5 seconds in), and read what is said in it. "
+    "the start of the video (1:05 = 1 minute 5 seconds in), and read any written speech. "
     "Times are those marks - never a clock or date shown inside the picture. You did not hear "
     "music, sounds or anyone's tone, and the written speech can mishear words and names and "
     "does not say who speaks. Describe only what the stills and the speech really show; never "
@@ -1303,7 +1311,7 @@ VIDEO_RULE = (
     "asked. Vary how you begin: do not open with ふむ or the same word you used before.]")
 
 VIDEO_WATCH_RULE = (
-    "[Video rule: you really watched the video(s) above, with their sound. Times are counted "
+    "[Video rule: you really watched the video(s) above, with any sound they had. Times are counted "
     "from the start of the video (1:05 = 1 minute 5 seconds in) - never a clock or date shown "
     "inside the picture. Describe only what is really in it; if something is unclear, say so "
     "instead of guessing. React as yourself, in character; give details only when asked. Vary "
@@ -1311,7 +1319,7 @@ VIDEO_WATCH_RULE = (
 
 VIDEO_TEXT_RULE = (
     "[Video rule: your current model can't see pictures, so you could not see the video(s) - "
-    "you only have what is said in them, written down by speech recognition (it can mishear). "
+    "you only have any speech written down by speech recognition (it can mishear). "
     "Say so honestly and briefly (they can pick a model that sees pictures in Settings -> "
     "Connection). Never guess what is shown.]")
 
@@ -2418,8 +2426,10 @@ def write_caption(llm, row) -> str:
     url = _data_url(row)
     if not url:
         return ""
+    media = store.picker_media_label(row)
+    prompt = CAPTION_PROMPT + (f"\nAttachment label: {media}" if media else "")
     reply = llm.invoke([{"role": "user", "content": [
-        {"type": "text", "text": CAPTION_PROMPT},
+        {"type": "text", "text": prompt},
         {"type": "image_url", "image_url": {"url": url}}]}])
     text = reply.content if isinstance(reply.content, str) else _text(reply.content)
     text = re.sub(r"<[^>]*>", " ", text or "")
@@ -2593,6 +2603,9 @@ def reaction_event(rows, history_text: str = "") -> str:
 
 def _what(row, article: str = "a") -> str:
     """"a picture named "x"", "a document named "x"", "a long pasted text"."""
+    media = store.picker_media_label(row)
+    if media:
+        return f"{article} {media}"
     if row.get("kind") == "document":
         if (row.get("name") or "").lower().startswith("pasted text"):
             return f"{article} long pasted text"
@@ -2723,5 +2736,8 @@ def labelled_line(text: str, rows) -> str:
         elif r.get("kind") == "video":
             name = meaningful_name(r.get("name"))
             what = f'a video "{name}"' if name else "a video"
+        media = store.picker_media_label(r)
+        if media:
+            what = f"a {media}"
         labels.append(f"[The user showed you {what}" + (f": {caption}]" if caption else "]"))
     return ((text or "").strip() + " " + " ".join(labels)).strip()

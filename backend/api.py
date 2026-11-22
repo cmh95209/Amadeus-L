@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, Response, send_from_directory
 from flask_cors import CORS
+from werkzeug.exceptions import RequestEntityTooLarge
 
 from chat import (
     getOutputPacked,
@@ -23,6 +24,10 @@ from chat import (
 )
 
 import attachments
+import gifs
+import picker
+import picker_store
+import stickers
 import transcribe
 import video
 import builtin_llm
@@ -711,9 +716,131 @@ def _send_attachment_file(attachment_id, thumb, original=False):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "private, max-age=3600"
         return response
-    response = send_from_directory(str(Path(full).parent), Path(full).name, conditional=True)
+    animation_mime = None
+    if original and row and row.get("kind") == "video" and row.get("media_type"):
+        animation_mime = {".gif": "image/gif", ".webp": "image/webp"}.get(Path(full).suffix)
+    response = send_from_directory(str(Path(full).parent), Path(full).name,
+                                   conditional=True, mimetype=animation_mime)
     response.headers["Cache-Control"] = "private, max-age=3600"
     return response
+
+
+# Picker routes share the attachment routes' local and Tailscale Serve access.
+def _picker_json():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        raise picker_store.PickerError("picker_invalid_request")
+    return data
+
+
+@application.errorhandler(picker_store.PickerError)
+def _picker_error(exc):
+    return jsonify({"status": "error", "error": exc.code}), exc.status
+
+
+@application.route("/picker/online/<operation>", methods=["GET"])
+def picker_online(operation):
+    kind = request.args.get("kind", "gif")
+    lang = request.args.get("lang")
+    if operation == "categories":
+        return jsonify(gifs.categories(kind, lang))
+    page = request.args.get("page", "1")
+    if not page.isascii() or not page.isdecimal() or len(page) > len(str(gifs.MAX_PAGE)):
+        raise picker_store.PickerError("picker_invalid_page")
+    if operation == "search":
+        return jsonify(gifs.search(request.args.get("q"), kind, lang, int(page)))
+    if operation == "trending":
+        return jsonify(gifs.trending(kind, lang, int(page)))
+    raise picker_store.PickerError("picker_invalid_operation", 404)
+
+
+@application.route("/picker/state", methods=["GET"])
+def picker_state():
+    return jsonify(picker.state())
+
+
+@application.route("/picker/recent", methods=["POST"])
+def picker_add_recent():
+    return jsonify(picker.add_recent(_picker_json()))
+
+
+@application.route("/picker/favourite", methods=["POST"])
+def picker_favourite():
+    return jsonify(picker.toggle_favourite(_picker_json()))
+
+
+@application.route("/picker/setting", methods=["GET", "POST"])
+def picker_setting():
+    enabled = gifs.enabled() if request.method == "GET" else gifs.set_enabled(_picker_json().get("enabled"))
+    return jsonify({"status": "ok", "enabled": enabled})
+
+
+@application.route("/picker/packs", methods=["GET"])
+def picker_packs():
+    return jsonify({"status": "ok", "packs": stickers.list_packs(request.args.get("q", ""))})
+
+
+@application.route("/picker/packs", methods=["POST"])
+@application.route("/picker/packs/import", methods=["POST"], defaults={"require_files": True})
+def picker_create_pack(require_files=False):
+    request.max_content_length = stickers.MAX_IMPORT_REQUEST_BYTES
+    try:
+        if request.is_json:
+            data = _picker_json()
+            files, name, folder = [], data.get("name"), None
+        else:
+            files = request.files.getlist("files") or request.files.getlist("file")
+            name, folder = request.form.get("name"), request.form.get("folder")
+    except RequestEntityTooLarge:
+        raise picker_store.PickerError("picker_pack_limit", 413) from None
+    return jsonify({"status": "ok", "pack": stickers.create_pack(files, name, folder, require_files)}), 201
+
+
+@application.route("/picker/packs/reorder", methods=["POST"])
+def picker_reorder_packs():
+    return jsonify({"status": "ok", "packs": stickers.reorder_packs(_picker_json().get("ids"))})
+
+
+@application.route("/picker/packs/<pack_id>", methods=["PATCH", "DELETE"])
+def picker_edit_pack(pack_id):
+    if request.method == "DELETE":
+        stickers.remove_pack(pack_id)
+        return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "pack": stickers.update_pack(pack_id, _picker_json())})
+
+
+@application.route("/picker/packs/<pack_id>/stickers/<file>", methods=["PATCH", "DELETE"])
+def picker_edit_sticker(pack_id, file):
+    if request.method == "DELETE":
+        return jsonify({"status": "ok", "pack": stickers.remove_sticker(pack_id, file)})
+    return jsonify({"status": "ok", "sticker": stickers.update_sticker(pack_id, file, _picker_json())})
+
+
+def _picker_file(path):
+    response = send_from_directory(str(path.parent), path.name, conditional=True)
+    response.headers["Cache-Control"] = "private, max-age=3600"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@application.route("/picker/packs/<pack_id>/stickers/<file>/<size>", methods=["GET"])
+def picker_sticker_file(pack_id, file, size):
+    if size not in ("thumb", "full"):
+        raise picker_store.PickerError("picker_sticker_not_found", 404)
+    return _picker_file(stickers.file_path(pack_id, file, thumb=size == "thumb"))
+
+
+@application.route("/picker/recent/media/<key>", methods=["GET"])
+def picker_recent_media(key):
+    return _picker_file(picker_store.local_media(key))
+
+
+@application.route("/picker/send", methods=["POST"])
+def picker_send():
+    try:
+        return jsonify(picker.send(_picker_json()))
+    except attachments.AttachmentError as exc:
+        return jsonify({"status": "error", "ok": False, "error": exc.code}), 400
 
 
 # A document as she read it (E4 a: the screen's text view + its original).

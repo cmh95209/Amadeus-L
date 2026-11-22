@@ -32,6 +32,7 @@ const LOADERS: Record<string, () => Promise<{ default: LangFile }>> = {
   fr: () => import("./lang/fr.json"),
   de: () => import("./lang/de.json"),
   pt: () => import("./lang/pt.json"),
+  "pt-pt": () => import("./lang/pt-pt.json"),
   ru: () => import("./lang/ru.json"),
   ar: () => import("./lang/ar.json"),
   hi: () => import("./lang/hi.json"),

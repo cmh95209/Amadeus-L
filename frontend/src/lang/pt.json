@@ -531,7 +531,7 @@
   "Send": "Enviar",
   "Sending a test message to {1}...": "Enviando uma mensagem de teste para {1}...",
   "Sep": "set.",
-  "Serve shares her only with devices signed in to your own Tailscale account. Funnel would put her on the public internet - the app has no login, so anyone with the address could talk to her and read your chats.": "O Serve compartilha ela só com aparelhos conectados à sua própria conta do Tailscale. O Funnel a colocaria na internet pública - o app não tem login, então qualquer pessoa com o endereço poderia falar com ela e ler seus chats.",
+  "Serve shares her only with devices signed in to your own Tailscale account. Funnel would put her on the public internet - the app has no login, so anyone with the address could talk to her and read your chats.": "O Serve a compartilha só com aparelhos conectados à sua própria conta do Tailscale. O Funnel a colocaria na internet pública - o app não tem login, então qualquer pessoa com o endereço poderia falar com ela e ler seus chats.",
   "Server": "Servidor",
   "service unreachable": "serviço inacessível",
   "Set it up for me": "Configurar para mim",

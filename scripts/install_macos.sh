@@ -187,7 +187,8 @@ ko|Korean|한국어
 es|Spanish|Español
 fr|French|Français
 de|German|Deutsch
-pt|Portuguese|Português
+pt|Brazilian Portuguese|Português (Brasil)
+pt-pt|European Portuguese|Português (Portugal)
 ru|Russian|Русский
 ar|Arabic|العربية
 hi|Hindi|हिन्दी
@@ -199,7 +200,7 @@ vi|Vietnamese|Tiếng Việt"
 select_app_language() {
     [ -f "$PROJ/backend/language.txt" ] && return 0   # a re-run keeps it
     [ -t 0 ] || return 0   # no one typing (scripted runs, tests): the app asks later
-    local a="" i=0 _t
+    local a="" i=0 _t n
     log ""
     log "  Which language should Amadeus show (her page and the translation of her replies)?"
     while IFS='|' read -r c en own; do
@@ -208,15 +209,16 @@ select_app_language() {
     done <<EOF_LANGS
 $APP_LANGUAGES
 EOF_LANGS
+    n=$i   # menu size
     for _t in 1 2 3 4 5 6 7 8 9 10; do
         read -r -p "  Type a number and press Enter (just Enter = English): " a || a="1"
         a="$(printf '%s' "$a" | tr -d '[:space:]')"
         [ -z "$a" ] && a="1"
         case "$a" in *[!0-9]*) continue ;; esac
-        if [ "$a" -ge 1 ] && [ "$a" -le 16 ]; then break; fi
+        if [ "$a" -ge 1 ] && [ "$a" -le "$n" ]; then break; fi
     done
     case "$a" in ''|*[!0-9]*) a=1 ;; esac
-    { [ "$a" -ge 1 ] && [ "$a" -le 16 ]; } || a=1
+    { [ "$a" -ge 1 ] && [ "$a" -le "$n" ]; } || a=1
     APP_LANGUAGE="$(printf '%s\n' "$APP_LANGUAGES" | sed -n "${a}p" | cut -d'|' -f1)"
     log "  (language: $APP_LANGUAGE)"
     return 0

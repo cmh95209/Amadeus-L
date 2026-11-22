@@ -81,9 +81,9 @@ class LanguageFileTests(_LangFile):
         self.assertEqual(len(out["languages"]), len(display_lang.LANGUAGES))
         self.assertEqual(display_lang.english_name(), "Arabic")
 
-    def test_sixteen_languages(self):
+    def test_seventeen_languages(self):
         self.assertEqual(set(display_lang.LANGUAGES),
-                         {"en", "zh", "ja", "ko", "es", "fr", "de", "pt", "ru",
+                         {"en", "zh", "ja", "ko", "es", "fr", "de", "pt", "pt-pt", "ru",
                           "ar", "hi", "ta", "ms", "id", "th", "vi"})
 
 

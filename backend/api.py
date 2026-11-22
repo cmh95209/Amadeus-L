@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, Response, send_from_directory
-from flask_cors import CORS
+import origin_guard
 
 from chat import (
     getOutputPacked,
@@ -63,7 +63,9 @@ from itertools import chain
 from pathlib import Path
 
 application = Flask(__name__)
-CORS(application)
+# Only her own page (this PC, or the user's own Tailscale name) may call the
+# backend from a browser; see origin_guard.py (was an open CORS(application)).
+origin_guard.install(application)
 
 
 # LLM provider picker (feature/provider-picker): the provider table and the

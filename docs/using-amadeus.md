@@ -62,7 +62,7 @@ she knows about you. More in [Long-term memory](long-term-memory.md).
 **Settings → Preferences** has two separate choices:
 
 - **Your language** — the language of the page, Settings and the translation
-  line under her replies (16 languages; the installer asks for it first).
+  line under her replies (17 languages; the installer asks for it first).
   With Japanese picked, the translation line is hidden. A switch applies to new
   replies at once; earlier replies keep the translation they already have.
   The setting is the first line of `backend/language.txt`, in case you picked

@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.2.1 — Brazilian and European Portuguese — November 2026
+
+**Re-run the installers (or double-click Update Amadeus.bat) to update your app.**
+
+- **NEW: Português (Brasil) and Português (Portugal)** are now two separate languages
+  (Settings → Preferences → Your language, and the installer's first question): 17 languages.
+- If you picked Portuguese before, you now get Brazilian Portuguese: her translation line
+  always uses Brazilian spelling and words.
+
 ## v3.2.0 — Multi-Language Support and Voice Selector — November 2026
 
 **Re-run the installers (or double-click Update Amadeus.bat) to update your app.**

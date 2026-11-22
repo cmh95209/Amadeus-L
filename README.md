@@ -4,7 +4,7 @@
 
 # Amadeus-L
 
-**Latest version: v3.2.0 in [`releases section`](https://github.com/cmh95209/Amadeus-L/releases)** 
+**Latest version: v3.2.1 in [`releases section`](https://github.com/cmh95209/Amadeus-L/releases)** 
 
 **Join Discord for support and discussions:** [![](https://dcbadge.limes.pink/api/server/qSYmSYkpuA)](https://discord.gg/qSYmSYkpuA)
 
@@ -27,9 +27,9 @@ She also has long-term memory,
 voice-first native-Japanese
 dialogue, web search and weather, and installers for Windows, Mac and Linux. 
 
-Amadeus is multilingual with 16 display languages (English, Chinese, Japanese, Korean,
-Spanish, French, German, Portuguese, Russian, Arabic, Hindi, Tamil, Malay, Indonesian,
-Thai and Vietnamese), and you can choose 5 different voices for her (Japanese, English,
+Amadeus is multilingual with 17 display languages (English, Chinese, Japanese, Korean,
+Spanish, French, German, Brazilian Portuguese, European Portuguese, Russian, Arabic, Hindi,
+Tamil, Malay, Indonesian, Thai and Vietnamese), and you can choose 5 different voices for her (Japanese, English,
 Mandarin, Cantonese and Korean).
 
 
@@ -165,7 +165,7 @@ call:
   would actually talk. This is what is stored in her memory, so her own
   history stays in her own voice.
 - **Display line** — a translation of that Japanese line in **your language**
-  (Settings → Preferences → Your language, 16 languages), shown in the
+  (Settings → Preferences → Your language, 17 languages), shown in the
   conversation UI.
 
 Her **voice** follows Settings → Preferences → Voice language: Japanese (the
@@ -258,7 +258,7 @@ Built-in local model (v3.0)   ✓ Windows, Linux + Apple-chip Macs, no account n
 Pictures, documents, videos   ✓ v3.0
 Closeness levels + feelings   ✓ v3.0
 Remote access (Tailscale)     ✓ v3.0, your own devices only
-Your language (v3.2)          ✓ 16 display languages
+Your language (v3.2)          ✓ 17 display languages
 Voice selector (v3.2)         ✓ Japanese, English, Mandarin, Cantonese, Korean
 Live weather lookups (v3.2)   ✓ she checks it herself, honest sources
 Busy-cloud retry (v3.2)       ✓ plus a Vertex AI Priority switch

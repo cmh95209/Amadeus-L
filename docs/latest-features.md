@@ -5,9 +5,10 @@ Everything Amadeus can do today.
 
 The current version (v3.2) includes:
 
-- **Your language** (v3.2): the page, Settings and her translation line in one of 16
-  languages (English, Chinese, Japanese, Korean, Spanish, French, German, Portuguese,
-  Russian, Arabic, Hindi, Tamil, Malay, Indonesian, Thai, Vietnamese)
+- **Your language** (v3.2): the page, Settings and her translation line in one of 17
+  languages (English, Chinese, Japanese, Korean, Spanish, French, German, Brazilian
+  Portuguese, European Portuguese, Russian, Arabic, Hindi, Tamil, Malay, Indonesian, Thai,
+  Vietnamese; both Portuguese since v3.2.1)
 - **Voice language** (v3.2): her voice in Japanese, English, Mandarin, Cantonese or Korean
 - **Live weather lookups and honest sources** (v3.2): she checks the weather herself
   when it fits, and the sources chip only shows what she really looked up

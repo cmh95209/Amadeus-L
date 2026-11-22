@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  AMADEUS - ONE-SHOT INSTALLER FOR LINUX   v3.2.0  (resumable / safe to re-run)
+#  AMADEUS - ONE-SHOT INSTALLER FOR LINUX   v3.2.1  (resumable / safe to re-run)
 #  This is the official Linux installer, served from the fork to new Linux
 #  installs. It follows the macOS installer (install_macos.sh) step for step,
 #  with the Windows installer's graphics-card rules for her built-in model.
@@ -42,6 +42,10 @@
 #     --hardware-check-only [--json]   only show which model this PC gets
 #     --skip-llm-download       all screens, but no model downloads
 #     --llm-screens-only        ONLY the model screens + its settings file
+#
+#  WHAT'S NEW IN v3.2.1 (November 2026):
+#   - The language question lists Brazilian Portuguese and European
+#     Portuguese as two choices (17 languages).
 #
 #  WHAT'S NEW IN v3.2.0 (November 2026):
 #   - The first question asks which language Amadeus shows (her page and
@@ -211,7 +215,7 @@ copy_install_log() {
 # ----------------------------------------------------------------------------
 REPO_URL="https://github.com/cmh95209/Amadeus-L"
 BRANCH="main"
-INSTALLER_VERSION="v3.2.0"
+INSTALLER_VERSION="v3.2.1"
 LEGACY_BRANCH="feature/character-memory-spike"
 GPT_REPO_URL="https://github.com/RVC-Boss/GPT-SoVITS.git"
 # Her voice's model files: only the 8 she loads (about 1.2 GB), pinned to

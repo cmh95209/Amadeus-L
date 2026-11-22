@@ -378,10 +378,14 @@ class CeremonyLineTextsTests(_FreshAppTests):
         self.assertIn("LLMサーバー", ja_display)
         self.assertIn("APIキー", ja_display)
         self.assertIn("あなたの名前も必ず入力", ja_display)
+        self.assertIn("設定の「接続」で「ChatGPTでサインイン」を押してね。", ja_display)
+        self.assertIn("\n\n", ja_display)
         # Spoken: kana for AI / LLM / API (the v3 phonetics the user A/B-tested).
         self.assertIn("アマデウス", ja_voice)
         self.assertIn("マキセ・クリス", ja_voice)
         self.assertIn("エーアイ", ja_voice)
+        self.assertIn("チャットジーピーティーのプラスかプロ", ja_voice)
+        self.assertNotRegex(ja_voice, r"[A-Za-z\n]")
         self.assertIn("エルエルエムサーバー", ja_voice)
         self.assertIn("エーピーアイキー", ja_voice)
         for text in (ja_display, ja_voice):
@@ -398,6 +402,11 @@ class CeremonyLineTextsTests(_FreshAppTests):
         self.assertIn("I've got your name", en)
         self.assertIn("press Save.", en)
         self.assertNotIn("Save connection", en)  # the button is "Save" since v3.1
+        self.assertIn('go to Connection, and click "Sign in with ChatGPT".', en)
+        self.assertIn("\n\n", en)
+        self.assertIn("「ChatGPTでサインイン」", ja_display)
+        self.assertIn("サインインしてね。", ja_voice)
+        self.assertNotIn("\n", ja_voice)
         self.assertIn("LLMサーバー", ja_display)
         self.assertIn("エルエルエムサーバー", ja_voice)
         self.assertIn("エーピーアイキー", ja_voice)
@@ -419,11 +428,13 @@ class CeremonyLineTextsTests(_FreshAppTests):
             self.ceremony.line("intro")[0],
             "Hello, I am Amadeus. An AI built on the memories of Makise "
             "Kurisu. To make my thinking work, you first need to connect "
-            "my brain. Open the settings menu, and choose whether you want "
+            "my brain.\n\nOpen the settings menu, and choose whether you want "
             "to use a built-in or local model (if you have the GGUF model "
             "file), or enter the LLM server address and API key. Make sure "
-            "the model is running. Also, I need to know who I'm talking to, "
-            "so please make sure to enter your name. Until then, I'll be "
+            "the model is running.\nIf you have a ChatGPT Plus or Pro plan, you "
+            "can also open Settings, go to Connection, and click \"Sign in with ChatGPT\".\n\n"
+            "Also, I need to know who I'm talking to, so please make sure to "
+            "enter your name.\nUntil then, I'll be "
             "right here, waiting. I don't go anywhere.")
         self.assertIn("Settings received", self.ceremony.line("trying")[0])
         self.assertIn("double-check", self.ceremony.line("reminder")[0])

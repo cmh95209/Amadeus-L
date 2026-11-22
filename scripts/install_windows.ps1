@@ -8,6 +8,7 @@
 #  WHAT'S NEW IN v3.2.1 (November 2026):
 #   - The language question lists Brazilian Portuguese and European
 #     Portuguese as two choices (17 languages).
+#   - Option C sets up Amadeus for in-app sign-in with a ChatGPT Plus or Pro plan.
 #
 #  WHAT'S NEW IN v3.2.0 (November 2026):
 #   - The first question asks which language Amadeus shows (her page and
@@ -1499,7 +1500,7 @@ function Write-Utf8File($path, $text){
     [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding $false))
 }
 
-function New-CustomChoice { return [pscustomobject]@{ mode = "custom"; chosen = (Get-Date -Format s) } }
+function New-CustomChoice($mode = "custom"){ return [pscustomobject]@{ mode = $mode; chosen = (Get-Date -Format s) } }
 
 # Option A on this PC: show what was found, then confirm (or fall back to B).
 function Confirm-LocalModel($hw){
@@ -1569,8 +1570,8 @@ function Update-KeptChoice($prev, $hw){
             simulated = [bool]$prev.simulated; chosen = $prev.chosen; kept = $true
         }
     }
-    # Option B: nothing to refresh.
-    return [pscustomobject]@{ mode = "custom"; chosen = $prev.chosen; kept = $true }
+    # Options B and C: nothing to refresh.
+    return [pscustomobject]@{ mode = $prev.mode; chosen = $prev.chosen; kept = $true }
 }
 
 # What mode the app uses NOW: its own setting (backend\data\local_llm.json
@@ -1582,7 +1583,7 @@ function Get-AppLlmMode($proj){
     if (-not (Test-Path $cfg)) { return "" }
     try {
         $m = (Get-Content $cfg -Raw | ConvertFrom-Json).mode
-        if ($m -eq "builtin" -or $m -eq "custom") { return $m }
+        if ($m -in @("builtin", "custom", "chatgpt")) { return $m }
     } catch {}
     return ""
 }
@@ -1594,16 +1595,20 @@ function Invoke-LlmChoice($hw){
     if (Test-Path $LlmChoiceFile) {
         $prev = $null
         try { $prev = Get-Content $LlmChoiceFile -Raw | ConvertFrom-Json } catch {}
-        if ($prev -and ($prev.mode -eq "custom" -or ($prev.mode -eq "builtin" -and $TierTable.models.($prev.model)))) {
+        if ($prev -and ($prev.mode -in @("custom", "chatgpt") -or ($prev.mode -eq "builtin" -and $TierTable.models.($prev.model)))) {
             if ($prev.mode -eq "builtin") { $desc = "A) her built-in local model - " + $TierTable.models.($prev.model).label }
+            elseif ($prev.mode -eq "chatgpt") { $desc = "C) use your ChatGPT plan (Plus or Pro)" }
             else { $desc = "B) you connect a model yourself" }
             Log ("  Last time you chose: " + $desc)
             # What the app uses NOW: if the user switched the mode in
             # Settings since the last install, say so (the app's mode wins).
             $appMode = Get-AppLlmMode (Join-Path $InstallDir "Amadeus-Project")
-            if ($appMode -and $appMode -ne $prev.mode) {
+            $expectedMode = if ($prev.mode -eq "chatgpt") { "custom" } else { $prev.mode }
+            if ($appMode -and $appMode -ne $expectedMode) {
                 if ($appMode -eq "custom") {
                     Log "  In the app you switched to your own model since - that stays. (The built-in model is still kept up to date, so you can switch back in Settings.)"
+                } elseif ($appMode -eq "chatgpt") {
+                    Log "  In the app you switched to ChatGPT since - that stays."
                 } else {
                     Log "  In the app you switched to her built-in model since - that stays."
                 }
@@ -1618,9 +1623,14 @@ function Invoke-LlmChoice($hw){
     Log "  How should Amadeus think?" "Cyan"
     Log "    A) Install and set up a local model automatically (private, runs on this PC, no account needed)"
     Log "    B) I'll do it myself (choose this if using a cloud model or your own local model)"
-    if ((Read-Answer "Type A or B" @("A","B")) -eq "A") { $choice = Confirm-LocalModel $hw } else { $choice = New-CustomChoice }
+    Log "    C) Use my ChatGPT plan (Plus or Pro) - no model download, you sign in inside the app"
+    $answer = Read-Answer "Type A, B or C" @("A","B","C")
+    if ($answer -eq "A") { $choice = Confirm-LocalModel $hw }
+    elseif ($answer -eq "C") { $choice = New-CustomChoice "chatgpt" }
+    else { $choice = New-CustomChoice }
     Write-Utf8File $LlmChoiceFile ($choice | ConvertTo-Json -Depth 4)
     if ($choice.mode -eq "builtin") { Log ("  Chosen: " + $TierTable.models.($choice.model).label + " - it downloads in the background while everything else installs.") "Green" }
+    elseif ($choice.mode -eq "chatgpt") { Log "  Chosen: option C - sign in with ChatGPT in Settings after the install." "Green" }
     else { Log "  Chosen: option B - you connect a model yourself in Settings after the install." "Green" }
     return $choice
 }
@@ -1773,13 +1783,16 @@ function Write-LocalLlmConfig($proj, $choice, $exe, $serverOk, $modelPath, $mode
     $cfg = Join-Path $proj "backend\data\local_llm.json"
     $old = $null
     if (Test-Path $cfg) { try { $old = Get-Content $cfg -Raw | ConvertFrom-Json } catch {} }
+    # Only in-app sign-in can set ChatGPT mode. A kept choice keeps it (other fields still refresh).
     if ($choice.mode -ne "builtin" -and -not $choice.model) {
+        if ($old -and $choice.kept -and $old.mode -eq "chatgpt") { return }
         if ($old) { try { $old.mode = "custom"; Write-Utf8File $cfg ($old | ConvertTo-Json -Depth 4) } catch {} }
+        elseif ($choice.mode -eq "chatgpt") { Write-Utf8File $cfg (@{ mode = "custom" } | ConvertTo-Json) }
         return
     }
     $m = $TierTable.models.($choice.model)
     $mode = if ($choice.mode -eq "builtin") { "builtin" } else { "custom" }
-    if ($choice.kept -and $old -and ($old.mode -eq "builtin" -or $old.mode -eq "custom")) { $mode = $old.mode }
+    if ($choice.kept -and $old -and ($old.mode -in @("builtin", "custom", "chatgpt"))) { $mode = $old.mode }
     $data = [ordered]@{
         mode = $mode
         model = $choice.model; model_label = $m.label
@@ -2415,7 +2428,7 @@ try {
                 # install_windows.ps1 next to itself, and testers drop tools
                 # into the folder - every update was refused). An update never
                 # deletes them; one it would overwrite makes git refuse.
-                $personal = "llm_server\.txt|llm_model\.txt|personality\.txt|api_key\.txt"
+                $personal = "llm_server\.txt|llm_model\.txt|personality\.txt|api_key\.txt|chatgpt_auth\.json|chatgpt_settings\.json|chatgpt_model\.txt|chatgpt_reasoning\.txt|memory_bridge\.secret"
                 $status   = & git status --porcelain --untracked-files=no | Where-Object { $_ -notmatch $personal }
                 if ($current -eq $Branch -and -not $status) {
                     & git merge --ff-only "fork/$Branch" 2>$null | Out-Null
@@ -2837,18 +2850,27 @@ try {
         Offer-StartAmadeus $proj
         exit 0
     }
-    Log "Everything is installed. Amadeus needs a model to think with:" "Green"
-    Log "  - a cloud model service (e.g. OpenRouter or OpenAI), or"
-    Log "  - a local model server on this PC (e.g. KoboldCpp, Unsloth"
-    Log "    Desktop, NInfer, Ollama or vLLM)."
+    if ($llmChoice.mode -eq "chatgpt") {
+        Log "Everything is installed." "Green"
+    } else {
+        Log "Everything is installed. Amadeus needs a model to think with:" "Green"
+        Log "  - a cloud model service (e.g. OpenRouter or OpenAI), or"
+        Log "  - a local model server on this PC (e.g. KoboldCpp, Unsloth"
+        Log "    Desktop, NInfer, Ollama or vLLM)."
+    }
     Log "Here is what to do next:" "Green"
     Log "  1) Double-click this file to START Amadeus:"
     Log ("       " + (Join-Path $proj "start_windows.bat"))
-    Log "  2) When she opens in your browser, read her introduction message -"
-    Log "     it walks you through connecting your model, step by step."
-    Log "  3) (Shortcut) You can also open Settings -> Connection, pick your"
-    Log "     provider (or type your server's address), paste its API key and"
-    Log "     press Save. Then pick your model (type to search) and press Test."
+    if ($llmChoice.mode -eq "chatgpt") {
+        Log '  2) In Amadeus, go to Settings -> Connection and click "Sign in with ChatGPT".'
+        Log "     You'll need a ChatGPT Plus or Pro plan."
+    } else {
+        Log "  2) When she opens in your browser, read her introduction message -"
+        Log "     it walks you through connecting your model, step by step."
+        Log "  3) (Shortcut) You can also open Settings -> Connection, pick your"
+        Log "     provider (or type your server's address), paste its API key and"
+        Log "     press Save. Then pick your model (type to search) and press Test."
+    }
     Log "     Also enter your name under Preferences and press Save - she waits"
     Log "     for it."
     if ($llmReady) {

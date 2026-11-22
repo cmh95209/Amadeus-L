@@ -52,32 +52,46 @@ from typing import Optional, Tuple
 import display_lang
 import memory as store
 
+_CHATGPT_EN = (
+    "If you have a ChatGPT Plus or Pro plan, you can also open Settings, "
+    "go to Connection, and click \"Sign in with ChatGPT\"."
+)
+_CHATGPT_JA = (
+    "ChatGPT PlusかProのプランを使っているなら、設定の「接続」で「ChatGPTでサインイン」を押してね。"
+)
+_CHATGPT_VOICE = (
+    "チャットジーピーティーのプラスかプロのプランを使っているなら、設定の接続画面からサインインしてね。"
+)
+
 # --- THE FOUR FIXED LINES ---------------------------------------------------
 # kind -> (EN display, JA display, JA spoken (phonetic, TTS-only))
 CEREMONY_LINES = {
-    # the approved wording, 2026-10-18: the DIY route (installer option B) can also
-    # pick the built-in model or a local GGUF, and the name is REQUIRED.
+    # The setup routes can use a local model, a server, or a ChatGPT plan.
+    # The name is required for the ceremony.
     # Her creator's name is written in katakana, display AND voice: the
     # voice engine misreads the kanji (a replay re-voices the display text).
     "intro": (
         "Hello, I am Amadeus. An AI built on the memories of Makise Kurisu. "
-        "To make my thinking work, you first need to connect my brain. Open "
-        "the settings menu, and choose whether you want to use a built-in or "
+        "To make my thinking work, you first need to connect my brain.\n\n"
+        "Open the settings menu, and choose whether you want to use a built-in or "
         "local model (if you have the GGUF model file), or enter the LLM "
-        "server address and API key. Make sure the model is running. Also, I "
-        "need to know who I'm talking to, so please make sure to enter your "
-        "name. Until then, I'll be right here, waiting. I don't go anywhere.",
+        "server address and API key. Make sure the model is running.\n"
+        f"{_CHATGPT_EN}\n\n"
+        "Also, I need to know who I'm talking to, so please make sure to enter your "
+        "name.\nUntil then, I'll be right here, waiting. I don't go anywhere.",
         "こんにちは、私はアマデウス。マキセ・クリスの記憶をもとに作られたAIよ。"
-        "私が考えられるようにするには、まず私の頭脳をつないでもらわないといけないの。\n"
+        "私が考えられるようにするには、まず私の頭脳をつないでもらわないといけないの。\n\n"
         "設定メニューを開いて、内蔵モデルやローカルモデルを使用するか、"
-        "LLMサーバーのアドレスとAPIキーを入力してね。モデルが起動していることも確認してね。"
+        "LLMサーバーのアドレスとAPIキーを入力してね。モデルが起動していることも確認してね。\n"
+        f"{_CHATGPT_JA}\n\n"
         "それと、誰と話してるのか知りたいから、あなたの名前も必ず入力してちょうだい。\n"
         "それまでは、ここで待ってるわ。どこにも行かないから。",
         "こんにちは、私はアマデウス。マキセ・クリスの記憶をもとに作られたエーアイよ。"
-        "私が考えられるようにするには、まず私の頭脳をつないでもらわないといけないの。\n"
+        "私が考えられるようにするには、まず私の頭脳をつないでもらわないといけないの。"
         "設定メニューを開いて、内蔵モデルやローカルモデルを使用するか、"
         "エルエルエムサーバーのアドレスとエーピーアイキーを入力してね。モデルが起動していることも確認してね。"
-        "それと、誰と話してるのか知りたいから、あなたの名前も必ず入力してちょうだい。\n"
+        f"{_CHATGPT_VOICE}"
+        "それと、誰と話してるのか知りたいから、あなたの名前も必ず入力してちょうだい。"
         "それまでは、ここで待ってるわ。どこにも行かないから。",
     ),
     "trying": (
@@ -106,16 +120,19 @@ CEREMONY_LINES = {
         "設定メニューを開いて、プリファレンスにあなたの名前を入力して、保存を押してね。",
     ),
     "need_connection": (
-        "Thank you, I've got your name. But my brain still isn't connected. "
+        "Thank you, I've got your name. But my brain still isn't connected.\n\n"
         "Under Connection in the settings menu, enter the LLM server address "
         "and API key, choose a model, and press Save. Make sure "
-        "the model is running.",
-        "ありがとう、名前は受け取ったわ。でも、私の頭脳はまだつながっていないの。\n"
+        "the model is running.\n"
+        f"{_CHATGPT_EN}",
+        "ありがとう、名前は受け取ったわ。でも、私の頭脳はまだつながっていないの。\n\n"
         "設定メニューの「Connection」で、LLMサーバーのアドレスとAPIキーを入力して、"
-        "モデルを選んでから「Save」を押してね。モデルが起動していることも確認してね。",
-        "ありがとう、名前は受け取ったわ。でも、私の頭脳はまだつながっていないの。\n"
+        "モデルを選んでから「保存」を押してね。モデルが起動していることも確認してね。\n"
+        f"{_CHATGPT_JA}",
+        "ありがとう、名前は受け取ったわ。でも、私の頭脳はまだつながっていないの。"
         "設定メニューのコネクションで、エルエルエムサーバーのアドレスとエーピーアイキーを入力して、"
-        "モデルを選んでから、セーブを押してね。モデルが起動していることも確認してね。",
+        "モデルを選んでから、セーブを押してね。モデルが起動していることも確認してね。"
+        f"{_CHATGPT_VOICE}",
     ),
     "fallback": (
         "I can't reach the model. Please reconfirm your settings - or "

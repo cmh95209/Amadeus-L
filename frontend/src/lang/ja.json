@@ -572,6 +572,7 @@
   "Shut down Amadeus": "アマデウスを終了",
   "Shut down works when Amadeus was started with its launcher (the Amadeus shortcut) after this update. Until then, close the launcher window to shut her down.": "このアップデート以降にランチャー（アマデウスのショートカット）から起動した場合に終了できます。それまではランチャーウィンドウを閉じて終了してください。",
   "Shutting down...": "終了中...",
+  "Sign in with ChatGPT": "ChatGPTでサインイン",
   "Sign in to the same Tailscale account on both": "両方で同じ Tailscale アカウントにサインイン",
   "Signed in to Google Vertex ({1}), {2} model{3} listed. Not tested yet - {4}": "Google Vertex にサインイン済み（{1}）、モデル {2} 件。未テスト - {4}",
   "Signed in to Google Vertex ({1}). Not tested yet - {2}": "Google Vertex にサインイン済み（{1}）。未テスト - {2}",

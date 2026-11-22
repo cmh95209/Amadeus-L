@@ -67,6 +67,9 @@ class PatchTests(unittest.TestCase):
         self.assertNotIn('"main"', out.split("PINNED INSTALLER")[0].replace('[string]$Branch = "v3.0.4"', ""))
         self.assertIn(f'$PinnedCommit  = "{SHA}"', out)
         self.assertIn("v3.0.4-pinned (installs exactly Amadeus v3.0.4)", out)
+        # the title keeps its words (v3.2.0 printed a literal "\g<1>" instead)
+        self.assertIn("ONE-SHOT INSTALLER FOR WINDOWS   v3.0.4-pinned (installs", out)
+        self.assertNotIn(r"\g<1>", out)
         # the guard runs right after the install folder is known, before any step
         self.assertLess(out.index("$InstallDir = $InstallDir.TrimEnd"), out.index("Get-PinnedState $pinnedProj"))
         self.assertIn("-eq $PinnedCommit)) {", out)
@@ -80,6 +83,8 @@ class PatchTests(unittest.TestCase):
         self.assertIn(f'PINNED_COMMIT="{SHA}"', out)
         self.assertLess(out.index('PROJ="$INSTALL_DIR/Amadeus-Project"'), out.index('_pin_state="$(pinned_state "$PROJ")"'))
         self.assertIn('elif [ -d "$PROJ/.git" ]; then', out)
+        self.assertIn("ONE-SHOT INSTALLER FOR LINUX   v3.0.4-pinned (installs exactly Amadeus v3.0.4)", out)
+        self.assertNotIn(r"\g<1>", out)
 
     def test_missing_patch_point_fails_loudly(self):
         with self.assertRaises(maker.PatchError):

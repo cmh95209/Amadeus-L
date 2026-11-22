@@ -78,8 +78,10 @@ def replace(text: str, old: str, new: str, *, count: int | None = 1, what: str =
     return text.replace(old, new)
 
 
-def sub(text: str, rx: str, new: str, *, what: str, flags=re.M) -> str:
-    out, n = re.subn(rx, lambda _m: new, text, count=1, flags=flags)
+def sub(text: str, rx: str, new, *, what: str, flags=re.M) -> str:
+    # new: the literal text, or a function of the match (to keep a captured part)
+    repl = new if callable(new) else (lambda _m: new)
+    out, n = re.subn(rx, repl, text, count=1, flags=flags)
     if n != 1:
         raise PatchError(f"{what}: pattern not found")
     return out
@@ -209,7 +211,8 @@ def pin_windows(text: str, tag: str, sha: str) -> str:
     text = replace(text, '[string]$Branch = "main",', f'[string]$Branch = "{tag}",', what="Branch default")
     text = sub(text, r'^\$InstallerVersion = "[^"]*"', f'$InstallerVersion = "{tag}-pinned"', what="InstallerVersion")
     text = replace(text, '$Branch -ne "main"', f'$Branch -ne "{tag}"', count=None, what="test-option check")
-    text = sub(text, r"(ONE-SHOT INSTALLER FOR WINDOWS\s+)v[\d.]+", r"\g<1>" + f"{tag}-pinned (installs exactly Amadeus {tag})",
+    text = sub(text, r"(ONE-SHOT INSTALLER FOR WINDOWS\s+)v[\d.]+",
+               lambda m: m.group(1) + f"{tag}-pinned (installs exactly Amadeus {tag})",
                what="title comment")
     anchor = "$InstallDir = $InstallDir.TrimEnd('\\')\n"
     guard = WIN_GUARD.replace("__TAG__", ps_quote(tag)).replace("__SHA__", sha)
@@ -302,7 +305,8 @@ def pin_sh(text: str, tag: str, sha: str, title: str) -> str:
     text = sub(text, r'^BRANCH="main"$', f'BRANCH="{tag}"', what="BRANCH default")
     text = sub(text, r'^INSTALLER_VERSION="[^"]*"$', f'INSTALLER_VERSION="{tag}-pinned"', what="INSTALLER_VERSION")
     text = replace(text, '[ "$BRANCH" != "main" ]', f'[ "$BRANCH" != "{tag}" ]', count=None, what="test-option check")
-    text = sub(text, rf"(ONE-SHOT INSTALLER FOR {title}\s+)v[\d.]+", r"\g<1>" + f"{tag}-pinned (installs exactly Amadeus {tag})",
+    text = sub(text, rf"(ONE-SHOT INSTALLER FOR {title}\s+)v[\d.]+",
+               lambda m: m.group(1) + f"{tag}-pinned (installs exactly Amadeus {tag})",
                what="title comment")
     anchor_m = re.search(r'^PROJ="\$INSTALL_DIR/Amadeus-Project"\n', text, flags=re.M)
     if not anchor_m:

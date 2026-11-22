@@ -41,6 +41,10 @@ TAILNET_SUFFIX = ".ts.net"
 # page and backend listen on 127.0.0.1 only and Vite refuses those names too,
 # so they never worked; other devices come in through Tailscale.
 ALLOWED_HOST_NAMES = ("localhost",)
+# Any *.localhost name (test copies: http://prov.localhost:5183 -> backend
+# prov.localhost:8443). Browsers always resolve *.localhost to this PC
+# (RFC 6761), so it cannot be used for DNS rebinding.
+LOCALHOST_SUFFIX = ".localhost"
 LOG_CHARS = 120  # how much of a refused Origin / Host the log line shows
 # Answered to the browser's "may I?" check (preflight).
 ALLOWED_METHODS = "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS"
@@ -75,7 +79,14 @@ def host_allowed(host_header: str) -> bool:
     name = _split_host(host_header)
     if not name:
         return True
-    return _is_ip(name) or name in ALLOWED_HOST_NAMES or name.endswith(TAILNET_SUFFIX)
+    return (_is_ip(name) or name in ALLOWED_HOST_NAMES or name.endswith(LOCALHOST_SUFFIX)
+            or name.endswith(TAILNET_SUFFIX))
+
+
+def is_local_name(name: str) -> bool:
+    """127.0.0.1 / localhost / ::1 or any *.localhost name (all this PC)."""
+    name = (name or "").lower().rstrip(".")
+    return name in LOCAL_PAGE_HOSTS or name.endswith(LOCALHOST_SUFFIX)
 
 
 def origin_allowed(origin: str, host_header: str, forwarded_host: str = "") -> bool:
@@ -86,7 +97,7 @@ def origin_allowed(origin: str, host_header: str, forwarded_host: str = "") -> b
         return False
     if parts.scheme not in ("http", "https") or not name:
         return False
-    if name in LOCAL_PAGE_HOSTS:
+    if is_local_name(name):
         return True
     if parts.scheme == "https" and name.endswith(TAILNET_SUFFIX):
         targets = {_split_host(host_header), _split_host(forwarded_host)}

@@ -89,6 +89,17 @@ class TypedAddressesOnThisPC(Base):
         self.allowed(self.get("http://127.0.0.1:5174", host="127.0.0.1:5152"), "http://127.0.0.1:5174")
         self.allowed(self.get("http://127.0.0.1:8517", host="127.0.0.1:8517"), "http://127.0.0.1:8517")
 
+    def test_test_copies_at_dot_localhost_names(self):
+        # REFERENCE: test copies open their page as http://prov.localhost:5183
+        # and call prov.localhost:8443 (never MH's :5050). *.localhost is
+        # always this PC, so rebinding can't use it.
+        for name in ("prov.localhost", "voice.localhost", "CHAT.localhost"):
+            with self.subTest(name=name):
+                origin = f"http://{name}:5183"
+                self.allowed(self.get(origin, host=f"{name}:8443"), origin)
+        self.refused(self.get("http://localhost.evil.example:5183", host="localhost.evil.example:8443"))
+        self.refused(self.get("http://evil-localhost:5183", host="127.0.0.1:8443"))
+
     def test_post_from_her_page_runs(self):
         resp = self.client.post("/thing", json={}, headers={"Origin": "http://localhost:5173",
                                                             "Host": "127.0.0.1:5050"})

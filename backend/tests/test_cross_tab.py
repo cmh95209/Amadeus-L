@@ -32,6 +32,10 @@ class _Base(unittest.TestCase):
         self._patches = [
             patch.object(store, "PATH_TO_MEMORY", str(Path(self._tmp.name) / "memory.db")),
             patch.object(store, "DATA_DIR", self._tmp.name),
+            # create_conversation() writes the active-chat pointer; its path was
+            # fixed at import (data\...), so parallel test runs raced on it.
+            patch.object(store, "PATH_TO_ACTIVE_CONV",
+                         str(Path(self._tmp.name) / "active_conversation.txt")),
             patch.object(cross_tab, "_brain", lambda: "cloud"),
         ]
         for p in self._patches:

@@ -25,6 +25,10 @@ class RegenerateMomentTests(unittest.TestCase):
         self._dir = tempfile.TemporaryDirectory()
         self.db = str(Path(self._dir.name) / "memory.db")
         self._patches = [patch.object(store, "PATH_TO_MEMORY", self.db),
+                         # own active-chat pointer: the real data\ one is shared
+                         # by parallel test runs
+                         patch.object(store, "PATH_TO_ACTIVE_CONV",
+                                      str(Path(self._dir.name) / "active_conversation.txt")),
                          patch.object(store, "load_active_conversation", return_value=1)]
         for p in self._patches:
             p.start()

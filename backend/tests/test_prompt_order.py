@@ -17,6 +17,7 @@ All LLM calls and the stores are stubbed; no network, no live data.
 """
 import contextlib
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -32,6 +33,30 @@ import stats
 import ja_voice
 
 _PERSONALITY = {"role": "system", "content": "PERSONALITY"}
+
+# Some paths here still reach the memory store (a lookup of the active chat can
+# rewrite its pointer file). Point the whole file at a temp DB + pointer, never
+# the real data\ files (parallel test runs share those).
+_TMP = None
+_STORE_PATCHES = []
+
+
+def setUpModule():
+    global _TMP, _STORE_PATCHES
+    _TMP = tempfile.TemporaryDirectory()
+    _STORE_PATCHES = [
+        mock.patch.object(store, "PATH_TO_MEMORY", str(Path(_TMP.name) / "memory.db")),
+        mock.patch.object(store, "PATH_TO_ACTIVE_CONV",
+                          str(Path(_TMP.name) / "active_conversation.txt")),
+    ]
+    for p in _STORE_PATCHES:
+        p.start()
+
+
+def tearDownModule():
+    for p in reversed(_STORE_PATCHES):
+        p.stop()
+    _TMP.cleanup()
 
 
 class _FakeStructured:

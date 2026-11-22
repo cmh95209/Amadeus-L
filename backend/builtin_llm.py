@@ -445,7 +445,7 @@ def describe() -> dict:
     available = bool(cfg) and bool(cfg.get("model_file"))
     return {
         "available": available,
-        "mode": "builtin" if active() else "custom",
+        "mode": (cfg or {}).get("mode") if (cfg or {}).get("mode") in ("builtin", "chatgpt") else "custom",
         "model_label": model_label(cfg) if available else "",
         "model_missing": available and model_missing(),
         # llama.cpp itself is missing (vs. only the model file).
@@ -460,14 +460,13 @@ def describe() -> dict:
 
 
 def save_mode(mode: str) -> None:
-    """Switch between the built-in model and the user's own. LookupError when
-    there is no built-in model on this install to switch to."""
+    """Save the active brain, including on installs without a built-in model."""
     cfg = load_config()
-    if not cfg or not cfg.get("model_file"):
+    if mode == "builtin" and not (cfg or {}).get("model_file"):
         raise LookupError("No built-in model is set up on this install. Run the "
                           "installer again and choose option A.")
-    cfg = dict(cfg)
-    cfg["mode"] = "builtin" if mode == "builtin" else "custom"
+    cfg = dict(cfg or {})
+    cfg["mode"] = mode
     save_config(cfg)
 
 
@@ -475,6 +474,7 @@ def save_config(cfg: dict) -> None:
     """Write data/local_llm.json in one step (a crash mid-write never leaves
     half a file: the launcher and the installer read it too)."""
     path = config_path()
+    os.makedirs(memory.DATA_DIR, exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=4, ensure_ascii=False)

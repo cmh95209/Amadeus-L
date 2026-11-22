@@ -8,6 +8,9 @@ import {
   useState,
 } from "react";
 import type { ClipboardEvent } from "react";
+import { CHATGPT_USAGE_URL } from "../api";
+import ChatGPTComposerPicker from "./ChatGPTComposerPicker";
+import type { useChatGPTConnection } from "./ChatGPTConnection";
 
 // The message being typed, kept across a reload: Android may close the app in
 // the background (a call, the gallery) and it reloads when you come back.
@@ -32,6 +35,9 @@ export type ComposerBoxHandle = {
 };
 
 type Props = {
+  chatgptMode: boolean;
+  chatGPTConnection: ReturnType<typeof useChatGPTConnection>;
+  chatGPTModelDisabled: boolean;
   disabled: boolean;
   placeholder: string;
   /** Called only when the box goes from empty to not empty or back. */
@@ -48,7 +54,7 @@ type Props = {
  * this box only; App hears about it only when the box turns empty or not.
  */
 const ComposerBox = memo(forwardRef<ComposerBoxHandle, Props>(function ComposerBox(
-  { disabled, placeholder, onHasText, onPaste, getList }, ref,
+  { chatgptMode, chatGPTConnection, chatGPTModelDisabled, disabled, placeholder, onHasText, onPaste, getList }, ref,
 ) {
   const [input, setInput] = useState(readDraft);
   const boxRef = useRef<HTMLTextAreaElement>(null);
@@ -104,6 +110,7 @@ const ComposerBox = memo(forwardRef<ComposerBoxHandle, Props>(function ComposerB
   }, [input]);
 
   return (
+    <>
     <textarea
       ref={boxRef}
       value={input}
@@ -120,6 +127,14 @@ const ComposerBox = memo(forwardRef<ComposerBoxHandle, Props>(function ComposerB
       rows={1}
       aria-disabled={disabled}
     />
+    {chatgptMode && (
+      <div className="composer-plan">
+        <span>Using ChatGPT plan ·</span>
+        <a href={CHATGPT_USAGE_URL} target="_blank" rel="noreferrer">Check your ChatGPT usage</a>
+        <ChatGPTComposerPicker connection={chatGPTConnection} disabled={chatGPTModelDisabled} />
+      </div>
+    )}
+    </>
   );
 }));
 

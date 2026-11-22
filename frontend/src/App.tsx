@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { refreshLanguage } from "./i18n";
 import Live2DCharacter from "./components/Live2DCharacter";
 import SamplingSettings from "./components/SamplingSettings";
+import ChatGPTConnection, { useChatGPTConnection } from "./components/ChatGPTConnection";
 import MoodPanel from "./components/MoodPanel";
 import { SystemPanel } from "./components/SystemPanel";
 import MobileAccess from "./components/MobileAccess";
@@ -283,6 +284,8 @@ export default function App() {
   const [visionBusy, setVisionBusy] = useState(false);
   const [brainSwitching, setBrainSwitching] = useState(false);
   const builtinMode = brain?.mode === "builtin";
+  const chatgptMode = brain?.mode === "chatgpt";
+  const customMode = !builtinMode && !chatgptMode;
   // A Mac with an Apple chip: her model shares the Mac's memory (no
   // graphics card) - Settings words it that way.
   const onMac = brain?.shared_memory === true;
@@ -314,6 +317,7 @@ export default function App() {
   // launch), the connection probe re-runs it once the backend answers.
   const initState = useRef<"pending" | "ok" | "failed">("pending");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const builtinSetupDialogRef = useRef<HTMLDialogElement>(null);
   // Phone layouts only: the conversations list is a pull-out menu (☰).
   const [railOpen, setRailOpen] = useState(false);
   // Settings -> Quit: the choice under the heading (closed with Settings).
@@ -404,6 +408,8 @@ export default function App() {
   const [settingsError, setSettingsError] = useState("");
   const [settingsNotice, setSettingsNotice] = useState("");
   const [settingsSection, setSettingsSection] = useState<"connection" | "preferences" | "personality" | "sampling" | "mobile" | "system">("connection");
+  const chatGPTSettingsOpen = settingsOpen && settingsSection === "connection" && !!brain;
+  const chatGPTConnection = useChatGPTConnection(chatgptMode, chatGPTSettingsOpen);
   const [statsInfo, setStatsInfo] = useState<StatInfo[]>([]);
   const [personality, setPersonalityText] = useState("");
   const [savedPersonality, setSavedPersonality] = useState("");
@@ -515,7 +521,7 @@ export default function App() {
   // ceremony is unfinished the chat box stays locked: she cannot answer
   // until she has generated her first line.
   const [ceremonyState, setCeremonyState] = useState<string | null>(null);
-  const ceremonyPending = ceremonyState !== null && ceremonyState !== "done";
+  const ceremonyPending = !chatgptMode && ceremonyState !== null && ceremonyState !== "done";
   const ceremonyPendingRef = useRef<boolean>(false);
   ceremonyPendingRef.current = ceremonyPending;
 
@@ -845,7 +851,7 @@ export default function App() {
   // active row is selected, its address filled in, and it is checked when a
   // check makes sense (a local server, or a saved key / pass).
   useEffect(() => {
-    if (!settingsOpen || builtinMode) return;
+    if (!settingsOpen || !customMode) return;
     let cancelled = false;
     void (async () => {
       void refreshHasApiKey();
@@ -893,7 +899,7 @@ export default function App() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settingsOpen, builtinMode]);
+  }, [settingsOpen, customMode]);
 
   useEffect(() => {
     if (!settingsOpen || builtinModel?.state !== "loading") return;
@@ -1225,7 +1231,7 @@ export default function App() {
       // Apply the address being edited first, so the test matches what
       // "Save connection" would store (not in built-in mode: the address
       // field is hidden there and the test checks her built-in model).
-      if (!builtinMode) await setLLMServer(serverAddress);
+      if (customMode) await setLLMServer(serverAddress);
       setConnStatus(await testConnection());
     } catch {
       setConnStatus(null);
@@ -1761,6 +1767,9 @@ export default function App() {
       setWebStatus("");
       const turn = await sendMessage(text, {
         onStatus: (line) => setWebStatus(line),
+        onTranslationError: (message) => setMessages((current) => [
+          ...current, { role: "assistant", content: message },
+        ]),
         onAside: (aside) => {
           setMessages((current) => {
             const next = [...current];
@@ -1960,8 +1969,10 @@ export default function App() {
       } else {
         setReadingNote("Couldn't suggest one right now - type it in katakana instead.");
       }
-    } catch {
-      setReadingNote("Couldn't suggest one right now - type it in katakana instead.");
+    } catch (error) {
+      setReadingNote(chatgptMode && error instanceof Error
+        ? error.message
+        : "Couldn't suggest one right now - type it in katakana instead.");
     } finally {
       setReadingSuggesting(false);
     }
@@ -1977,7 +1988,7 @@ export default function App() {
     // No model chosen yet: everything else is still saved (2026-10-24 -
     // the name may come before the connection; she then asks for the
     // connection, and the notice below points at the Model row).
-    const noModelYet = !nextModel && !builtinMode;
+    const noModelYet = !nextModel && customMode;
     const namesProblem = nameListProblem(nameRows);
     if (namesProblem) {
       setSettingsError(namesProblem);
@@ -1997,7 +2008,7 @@ export default function App() {
     // the connection's own words are shown.
     let connectionError = "";
     try {
-      if (!builtinMode) {
+      if (customMode) {
        try {
         // The provider row the panel shows (its address is filled from the
         // table; a custom address rides along). A newly typed key is stored
@@ -2125,7 +2136,7 @@ export default function App() {
         setSettingsError(connectionError + " Everything else was saved.");
         return;
       }
-      setStatus(builtinMode || noModelYet ? "Settings saved" : `Model set to ${nextModel}`);
+      setStatus(!customMode || noModelYet ? "Settings saved" : `Model set to ${nextModel}`);
       setSettingsNotice(
         (profileSaved
           ? "Settings saved."
@@ -2147,9 +2158,9 @@ export default function App() {
   // Settings -> Connection: "Built-in" / "Custom Model". Saved at once; the
   // launcher starts (or stops) her built-in model only when Amadeus starts,
   // so the note asks for a restart.
-  async function chooseBrain(mode: "builtin" | "custom") {
-    if (brainSwitching || !brain || brain.mode === mode) return;
-    if (mode === "builtin" && !brain.available) return;
+  async function chooseBrain(mode: BrainMode["mode"]) {
+    if (brainSwitching || !brain) return;
+    if ((mode === "builtin" && !brain.available) || brain.mode === mode) return;
     setBrainSwitching(true);
     setSettingsError("");
     setSettingsNotice("");
@@ -2164,7 +2175,9 @@ export default function App() {
         setContextBudgetState(budget.budget);
       }
       setSettingsNotice(
-        mode !== "builtin"
+        mode === "chatgpt"
+          ? ""
+          : mode === "custom"
           ? "Switched to your own model. Her built-in model was unloaded (its graphics memory is free)."
           : next.model_missing
             ? "Switched to her built-in model. Add a model file (see Model below) and press Load."
@@ -3278,6 +3291,9 @@ export default function App() {
           onClosePrivacyNote={pictures.closePrivacyNote}
         />
         {attachNote && <p className="attach-note" role="status">{attachNote}</p>}
+        {chatgptMode && !chatGPTSettingsOpen && chatGPTConnection.error && (
+          <p className="attach-note settings-error" role="alert">{chatGPTConnection.error}</p>
+        )}
 
         {/* Message Input */}
         <form
@@ -3293,6 +3309,9 @@ export default function App() {
           />
           <ComposerBox
             ref={composerRef}
+            chatgptMode={chatgptMode}
+            chatGPTConnection={chatGPTConnection}
+            chatGPTModelDisabled={brainSwitching || settingsBusy || loading}
             onHasText={setHasText}
             getList={() => bottomRef.current?.parentElement ?? null}
             onPaste={(event) => {
@@ -3477,38 +3496,68 @@ export default function App() {
             </nav>
 
             <div hidden={settingsSection !== "connection"}>
-              {brain && (
+              {brain && settingsSection === "connection" && (
                 <div className="brain-choice" role="group" aria-label="How she thinks">
                   <span className="brain-choice-label">How she thinks</span>
-                  <div className="brain-choice-buttons">
+                  <ChatGPTConnection active={chatgptMode} disabled={brainSwitching || settingsBusy || loading}
+                    connection={chatGPTConnection}
+                    onSelect={() => chooseBrain("chatgpt")}
+                    onConnectionChanged={() => { void refreshConnection(); void refreshHasApiKey(); }}>
                     <button
                       type="button"
                       aria-pressed={builtinMode}
-                      disabled={brainSwitching || settingsBusy || !brain.available}
-                      title={brain.available ? "Her own model, running on this PC" : "Set up by the installer"}
-                      onClick={() => void chooseBrain("builtin")}
+                      disabled={brain.available && (brainSwitching || settingsBusy)}
+                      aria-disabled={brain.available ? undefined : true}
+                      aria-haspopup={brain.available ? undefined : "dialog"}
+                      title={brain.available ? "Her own model, running on this PC" : "Set up by running the installer"}
+                      onClick={() => {
+                        if (brain.available) void chooseBrain("builtin");
+                        else builtinSetupDialogRef.current?.showModal();
+                      }}
                     >
                       Built-in
                     </button>
                     <button
                       type="button"
-                      aria-pressed={!builtinMode}
+                      aria-pressed={customMode}
                       disabled={brainSwitching || settingsBusy}
                       onClick={() => void chooseBrain("custom")}
                     >
                       Custom Model (your own local or Cloud model)
                     </button>
-                  </div>
+                  </ChatGPTConnection>
                   {!brain.available && (
-                    <p className="settings-help">
-                      Built-in is set up by the installer: run it again and
-                      choose option A to give her a model that runs on this PC.
-                    </p>
+                    <dialog
+                      className="modal native-modal"
+                      ref={builtinSetupDialogRef}
+                      aria-labelledby="builtin-setup-title"
+                      aria-describedby="builtin-setup-description"
+                      onKeyDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        if (event.target !== event.currentTarget) return;
+                        const { left, right, top, bottom } = event.currentTarget.getBoundingClientRect();
+                        const { clientX, clientY } = event;
+                        if (clientX < left || clientX > right || clientY < top || clientY > bottom) {
+                          event.currentTarget.close();
+                        }
+                      }}
+                    >
+                      <div className="modal-heading">
+                        <h2 id="builtin-setup-title">Built-in isn't set up yet</h2>
+                      </div>
+                      <p id="builtin-setup-description">Her built-in model runs on this PC. To set it up, run the Amadeus installer again and choose option A.</p>
+                      <div className="modal-actions">
+                        <button type="button" className="primary-button" onClick={() => builtinSetupDialogRef.current?.close()}>
+                          OK
+                        </button>
+                      </div>
+                    </dialog>
                   )}
                 </div>
               )}
 
-              {/* Server / Model / Status - the same three rows in both modes. */}
+              {!chatgptMode && <>
+              {/* Server / Model / Status for Built-in and Custom Model. */}
               <div className="conn-section">
                 <span className="conn-section-title">Server</span>
                 {builtinMode ? (
@@ -3525,6 +3574,7 @@ export default function App() {
                     API key. Press Save to connect - it replaces the
                     connection she uses now.
                   </p>
+                  <p className="settings-help">Have ChatGPT Plus? Use Sign in with ChatGPT above.</p>
                   <label>
                     Provider
                     <select
@@ -3976,6 +4026,7 @@ export default function App() {
                 )}
               </div>
               )}
+              </>}
 
               <label>
                 Conversation memory (tokens)
@@ -4014,49 +4065,51 @@ export default function App() {
                 )}
               </p>
 
-              <div className="settings-reasoning" aria-label="Reasoning">
-                <label>
-                  Reasoning: her replies ({builtinMode ? "built-in model" : "your model"})
-                  <select
-                    value={reasoning ? reasoning[builtinMode ? "replies_builtin" : "replies_custom"] : "off"}
-                    disabled={!reasoning || reasoningBusy}
-                    onChange={(event) => void changeReasoning(
-                      builtinMode ? "replies_builtin" : "replies_custom",
-                      event.target.value as ReasoningLevel)}
-                    aria-describedby="reasoning-help"
-                  >
-                    {REASONING_CHOICES.map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Reasoning: translations
-                  <select
-                    value={reasoning ? reasoning.translations : "off"}
-                    disabled={!reasoning || reasoningBusy}
-                    onChange={(event) => void changeReasoning(
-                      "translations", event.target.value as ReasoningLevel)}
-                    aria-describedby="reasoning-help"
-                  >
-                    {REASONING_CHOICES.map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
-                  </select>
-                </label>
-                <p className="settings-help" id="reasoning-help">
-                  Lets her think before she answers: better thought-through,
-                  but slower (on cloud models a few seconds more per level; on
-                  the built-in model much more on {onMac ? "Macs with less memory" : "smaller graphics cards"}), and
-                  cloud services charge for the thinking too. "Her replies"
-                  also covers greetings and deciding whether to search the
-                  web; "translations" covers the translation line and what her
-                  memory learns. Some cloud models can't turn reasoning off
-                  completely - they use their lowest level instead. If her
-                  replies look cut off or broken with reasoning on, raise Max
-                  output tokens in the Sampling tab.
-                </p>
-              </div>
+              {!chatgptMode && (
+                <div className="settings-reasoning" aria-label="Reasoning">
+                  <label>
+                    Reasoning: her replies ({builtinMode ? "built-in model" : "your model"})
+                    <select
+                      value={reasoning ? reasoning[builtinMode ? "replies_builtin" : "replies_custom"] : "off"}
+                      disabled={!reasoning || reasoningBusy}
+                      onChange={(event) => void changeReasoning(
+                        builtinMode ? "replies_builtin" : "replies_custom",
+                        event.target.value as ReasoningLevel)}
+                      aria-describedby="reasoning-help"
+                    >
+                      {REASONING_CHOICES.map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Reasoning: translations
+                    <select
+                      value={reasoning ? reasoning.translations : "off"}
+                      disabled={!reasoning || reasoningBusy}
+                      onChange={(event) => void changeReasoning(
+                        "translations", event.target.value as ReasoningLevel)}
+                      aria-describedby="reasoning-help"
+                    >
+                      {REASONING_CHOICES.map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="settings-help" id="reasoning-help">
+                    Lets her think before she answers: better thought-through,
+                    but slower (on cloud models a few seconds more per level; on
+                    the built-in model much more on {onMac ? "Macs with less memory" : "smaller graphics cards"}), and
+                    cloud services charge for the thinking too. "Her replies"
+                    also covers greetings and deciding whether to search the
+                    web; "translations" covers the translation line and what her
+                    memory learns. Some cloud models can't turn reasoning off
+                    completely - they use their lowest level instead. If her
+                    replies look cut off or broken with reasoning on, raise Max
+                    output tokens in the Sampling tab.
+                  </p>
+                </div>
+              )}
 
               {!userName.trim() && (
                 <p className="settings-help">
@@ -4527,6 +4580,7 @@ export default function App() {
             </section>
 
             <section hidden={settingsSection !== "sampling"} aria-label="Model sampling">
+              {chatgptMode && <p className="settings-help">These settings aren't used with ChatGPT.</p>}
               <SamplingSettings busy={settingsBusy || loading} />
             </section>
 

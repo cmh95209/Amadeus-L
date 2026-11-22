@@ -150,6 +150,7 @@ export type MessageTurn = {
 
 /** What a live web-ON reply reports while it is being written. */
 export type StreamHooks = {
+  onTranslationError?: (message: string) => void;
   /** A real step: "Searching the web: ...", "Reading game8.co...", ... */
   onStatus?: (text: string, step: string) => void;
   /** Her "hold on, let me check" line (saved; speak it at once). */
@@ -322,6 +323,7 @@ export async function readVoiceFirstStream(
             } else if (event.phase === "text") {
               if (typeof event.response === "string") text = event.response;
               textFailed = event.translation_failed === true;
+              if (event.message) hooks.onTranslationError?.(event.message);
               settleText(text);
             } else if (event.phase === "status") {
               if (typeof event.text === "string") hooks.onStatus?.(event.text, event.step ?? "");
@@ -1023,7 +1025,7 @@ export type ConnectionStatus = {
 export type BrainMode = {
   /** The installer set a built-in model up on this install (option A). */
   available: boolean;
-  mode: "builtin" | "custom";
+  mode: "builtin" | "custom" | "chatgpt";
   model_label: string;
   model_missing: boolean;
   /** llama.cpp itself is missing (not only a model file). */
@@ -1038,7 +1040,7 @@ export type BrainMode = {
 function toBrainMode(data: Record<string, unknown>): BrainMode {
   return {
     available: data.available === true,
-    mode: data.mode === "builtin" ? "builtin" : "custom",
+    mode: data.mode === "builtin" || data.mode === "chatgpt" ? data.mode : "custom",
     model_label: typeof data.model_label === "string" ? data.model_label : "",
     model_missing: data.model_missing === true,
     runner_missing: data.runner_missing === true,
@@ -1052,7 +1054,7 @@ export async function getBrainMode(): Promise<BrainMode> {
   return toBrainMode(await parseResponse(await fetch(`${API_BASE}/brainMode`, { cache: "no-store" })));
 }
 
-export async function setBrainMode(mode: "builtin" | "custom"): Promise<BrainMode> {
+export async function setBrainMode(mode: BrainMode["mode"]): Promise<BrainMode> {
   return toBrainMode(
     await parseResponse(
       await fetch(`${API_BASE}/setBrainMode`, {
@@ -1062,6 +1064,72 @@ export async function setBrainMode(mode: "builtin" | "custom"): Promise<BrainMod
       })
     )
   );
+}
+
+export const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
+
+export const CHATGPT_REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type ChatGPTReasoningLevel = typeof CHATGPT_REASONING_LEVELS[number];
+
+type ChatGPTSelection = {
+  model: string;
+  level: ChatGPTReasoningLevel;
+  reasoning_levels: Record<string, ChatGPTReasoningLevel[]>;
+};
+
+export type ChatGPTStatus = ChatGPTSelection & {
+  signed_in: boolean;
+  email: string;
+  background_use_allowed: boolean;
+  welcome_seen: boolean;
+  sign_in_error?: string;
+};
+
+export type ChatGPTModel = { id: string; name: string; reasoning_levels?: ChatGPTReasoningLevel[] };
+
+async function chatgptRequest(path: string, options?: RequestInit) {
+  return parseResponse(await fetch(`${API_BASE}/chatgpt/${path}`, { cache: "no-store", ...options }));
+}
+
+export function getChatGPTStatus(signal?: AbortSignal): Promise<ChatGPTStatus> {
+  return chatgptRequest("status", { signal });
+}
+
+export function getChatGPTModels(signal?: AbortSignal): Promise<ChatGPTSelection & { models: ChatGPTModel[] }> {
+  return chatgptRequest("models", { signal });
+}
+
+function postChatGPT(path: string, body?: object, signal?: AbortSignal) {
+  return chatgptRequest(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+    signal,
+  });
+}
+
+export function startChatGPTSignIn(signal: AbortSignal): Promise<{ url: string }> {
+  return postChatGPT("signin", undefined, signal);
+}
+
+export function signOutChatGPT(): Promise<ChatGPTStatus> {
+  return postChatGPT("signout");
+}
+
+export function setChatGPTModel(model: string): Promise<ChatGPTSelection> {
+  return postChatGPT("model", { model });
+}
+
+export function setChatGPTReasoning(level: ChatGPTReasoningLevel): Promise<{ level: ChatGPTReasoningLevel }> {
+  return postChatGPT("reasoning", { level });
+}
+
+export function setChatGPTBackground(allowed: boolean): Promise<{ background_use_allowed: boolean }> {
+  return postChatGPT("background", { allowed });
+}
+
+export function seeChatGPTWelcome(): Promise<{ welcome_seen: boolean }> {
+  return postChatGPT("welcome-seen");
 }
 
 // ---- Model providers (Settings -> Connection -> Custom Model) ----------------

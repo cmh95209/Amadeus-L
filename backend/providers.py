@@ -18,6 +18,7 @@ import threading
 import time
 
 import builtin_llm
+import chatgpt_llm
 import llm
 import memory
 import vertex_auth
@@ -552,10 +553,24 @@ def test_model(pid: str, address: str = "", model: str = "") -> dict:
     """
     import chat  # lazy: chat imports llm and api wires providers - a
                  # top-level import here would be a circle
+    started = time.time()
+    if chatgpt_llm.active():
+        client = llm.client_for("", "", "")
+        model = chatgpt_llm.selected_model() or chatgpt_llm.DEFAULT_MODEL
+        try:
+            reply = chat._structured(client, chat.AmadeusPack, [
+                {"role": "system", "content": "You are Amadeus. This is a connection test. Reply with one short greeting."},
+                {"role": "user", "content": "Hello"},
+            ])
+        except chatgpt_llm.ChatGPTError as exc:
+            return _test_result(False, "error", str(exc), model, started)
+        return _test_result(bool(reply), "ok" if reply else "wrong_format",
+                            "ChatGPT answered in Amadeus's reply format." if reply else
+                            "ChatGPT did not answer in Amadeus's reply format.",
+                            chatgpt_llm.selected_model() or model, started)
     row = get(pid)
     if row is None:
         raise ValueError(f"Unknown provider: {pid}")
-    started = time.time()
     model = (model or "").strip()
     if not model:
         return _test_result(False, "no_model", "Pick a model first.", "", started)

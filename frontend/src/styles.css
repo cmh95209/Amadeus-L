@@ -892,6 +892,133 @@ button {
   color: #596477;
 }
 
+.composer-plan {
+  position: relative;
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding-inline: 4px;
+  color: #99a5b7;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.composer-plan a, .chatgpt-connection a { color: inherit; }
+
+.composer-plan a {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chatgpt-composer-picker {
+  margin-inline-start: auto;
+  min-width: 0;
+  max-width: 70%;
+}
+
+.composer .chatgpt-picker-trigger {
+  display: flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  background: #0b1017;
+  color: #c9d2df;
+}
+
+.chatgpt-picker-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chatgpt-picker-chevron {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  margin-inline-start: 7px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.chatgpt-picker-popover {
+  position: absolute;
+  z-index: 7;
+  inset-inline-end: 4px;
+  bottom: calc(100% + 6px);
+  display: flex;
+  flex-direction: column;
+  width: min(17rem, calc(100% - 8px));
+  max-height: min(19rem, 50dvh);
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: #10151e;
+  color: #edf1f7;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.36);
+  white-space: normal;
+}
+
+.chatgpt-model-options {
+  min-height: 34px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.composer .chatgpt-model-options button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 5px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+.composer .chatgpt-picker-trigger:hover,
+.composer .chatgpt-model-options button:hover,
+.composer .chatgpt-model-options button[aria-pressed="true"] {
+  background: #1a2432;
+}
+
+.chatgpt-composer-picker :focus-visible {
+  outline: 1px solid #91aed7;
+  outline-offset: -2px;
+}
+
+.chatgpt-picker-reasoning {
+  flex: none;
+  margin-top: 4px;
+  padding: 8px 8px 3px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.chatgpt-picker-reasoning label {
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+.chatgpt-picker-reasoning input {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  accent-color: #91aed7;
+}
+
 .composer button,
 .primary-button {
   padding: 0 20px;
@@ -1258,16 +1385,16 @@ button {
   }
 }
 
-/* Dropdowns (pronouns / what she calls you) match the text inputs. */
+/* Dropdowns match the text inputs. */
 .modal select {
-  width: 100%;
-  padding: 12px;
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 7px;
   outline: none;
   font: inherit;
   color: #edf1f7;
   background: #0b1017;
+  width: 100%;
+  padding: 12px;
 }
 
 .modal select:focus {
@@ -1325,7 +1452,8 @@ button {
 .brain-choice { margin-bottom: 20px; }
 .brain-choice-label { display: block; margin-bottom: 8px; color: #c9d2df; font-size: 13px; }
 .brain-choice-buttons {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   padding: 4px;
   border: 1px solid rgba(255, 255, 255, 0.07);
@@ -1333,7 +1461,6 @@ button {
   background: #0b1017;
 }
 .brain-choice-buttons button {
-  flex: 1;
   min-height: 38px;
   border: 0;
   border-radius: 6px;
@@ -1341,8 +1468,34 @@ button {
   color: #8fa0b8;
 }
 .brain-choice-buttons button[aria-pressed="true"] { background: #202c3b; color: #edf1f7; }
-.brain-choice-buttons button:disabled { cursor: not-allowed; opacity: 0.5; }
-.brain-choice-buttons button[aria-pressed="true"]:disabled { opacity: 1; }
+.brain-choice-buttons button:is(:disabled, [aria-disabled="true"]) { cursor: not-allowed; opacity: 0.5; }
+.brain-choice-buttons button[aria-pressed="true"]:is(:disabled, [aria-disabled="true"]) { opacity: 1; }
+.brain-choice-buttons .chatgpt-brain-choice {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.chatgpt-brain-choice img { flex: none; }
+.chatgpt-connection { margin-top: 16px; color: #c9d2df; font-size: 13px; }
+.chatgpt-connection .chatgpt-sign-in { display: block; }
+.chatgpt-connection label + label { margin-top: 12px; }
+.chatgpt-account { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.chatgpt-account span { overflow-wrap: anywhere; }
+.chatgpt-background { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.chatgpt-background .ghost-button { padding: 3px 8px; }
+.chatgpt-turn-off {
+  padding: 2px 4px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-decoration: underline;
+}
+.chatgpt-background button:disabled { opacity: 0.5; }
+.native-modal { width: min(480px, calc(100% - 40px)); color: #edf1f7; }
+.native-modal::backdrop { background: rgba(3, 5, 9, 0.74); }
 
 .unsaved-dot {
   display: inline-block;
@@ -1421,7 +1574,7 @@ button {
 }
 .settings-notice p { margin: 0 0 8px; }
 
-.settings-modal button:disabled {
+.settings-modal button:is(:disabled, [aria-disabled="true"]) {
   opacity: 0.4;
   cursor: not-allowed;
 }
@@ -2226,6 +2379,8 @@ button {
   font-size: 12px;
 }
 
+.attach-note.settings-error { color: #f0a6a6; }
+
 /* Above the box: privacy note, her desk, the tray of cards not sent yet. */
 .attachments-area {
   display: grid;
@@ -2695,6 +2850,10 @@ button {
 /* A phone-narrow chat column: Poke shrinks to its icon so "Web off" and
    Send keep one line each. */
 @container (max-width: 420px) {
+  .composer-plan > span {
+    display: none;
+  }
+
   .composer > button,
   .composer > .attach,
   .composer .attach-button {

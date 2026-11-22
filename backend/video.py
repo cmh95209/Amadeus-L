@@ -41,6 +41,7 @@ from datetime import datetime
 from pathlib import Path
 
 import attachments
+import chatgpt_llm
 import memory as store
 import transcribe
 
@@ -1066,7 +1067,8 @@ def notes_progress(row) -> dict:
 
 def start_notes(row) -> bool:
     """Queue her watch notes once the video is ready and its speech written."""
-    if not row or row.get("kind") != "video" or row.get("notes") == store.NOTES_DONE:
+    if (not chatgpt_llm.background_allowed() or not row
+            or row.get("kind") != "video" or row.get("notes") == store.NOTES_DONE):
         return False
     meta = load_meta(row)
     if meta.get("state") != READY or (meta.get("speech") or {}).get("state") in ("writing", "waiting"):

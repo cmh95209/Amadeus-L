@@ -23,6 +23,7 @@ its own - chat.py wires it up, tests pass fakes.
 from __future__ import annotations
 
 import concurrent.futures
+from chatgpt_llm import ChatGPTError
 import math
 import re
 import time
@@ -342,6 +343,8 @@ def read_pages(question, query, pages, reader, deadline, today, page_chars,
             try:
                 notes = fut.result()
                 p["notes"], p["status"] = notes, ("notes" if notes else "none")
+            except ChatGPTError:
+                raise
             except Exception:
                 p["status"] = "failed"
             done += 1

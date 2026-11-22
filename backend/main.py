@@ -102,7 +102,7 @@ tqdm.disable = True
 def run_flask():
     # Google Vertex: keep the sign-in pass fresh while it is the chosen provider.
     providers.start_vertex_keeper()
-    application.run(port=5050)
+    application.run(port=application.config["BACKEND_PORT"])
 if __name__ == "__main__":
     run_flask()
 

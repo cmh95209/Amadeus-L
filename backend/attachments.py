@@ -35,6 +35,7 @@ from datetime import datetime, timedelta
 import requests
 
 import meaning
+import chatgpt_llm
 import memory as store
 import source_tags
 
@@ -838,9 +839,12 @@ def _notes_llm():
     return chat._translation_llm()
 
 
+@chatgpt_llm.background_task
 def notes_job(attachment_id) -> None:
     """One document's reading notes, or a video's watch notes (the worker's
     job)."""
+    if not chatgpt_llm.background_allowed():
+        return
     row = get(attachment_id)
     if row is None or row.get("notes") == store.NOTES_DONE:
         return
@@ -872,7 +876,7 @@ def _notes_worker() -> None:
 def start_notes(row) -> None:
     """Queue a document's reading notes or a video's watch notes (one
     worker: her model runs one note at a time next to her replies)."""
-    if row.get("notes") == store.NOTES_DONE:
+    if not chatgpt_llm.background_allowed() or row.get("notes") == store.NOTES_DONE:
         return
     if row.get("notes") != store.NOTES_WRITING:
         _set_notes_state(row["id"], store.NOTES_WRITING)
@@ -888,7 +892,8 @@ def start_notes(row) -> None:
 
 def maybe_start_notes(row, conversation_id=None) -> bool:
     """G1 a: notes only for a document too long for her to read in full."""
-    if not row or row.get("kind") != "document" or row.get("notes") == store.NOTES_DONE:
+    if (not chatgpt_llm.background_allowed() or not row or row.get("kind") != "document"
+            or row.get("notes") == store.NOTES_DONE):
         return False
     conv = conversation_id if conversation_id is not None else row.get("conversation_id")
     if row.get("read_tokens") is not None:
@@ -905,6 +910,8 @@ def maybe_start_notes(row, conversation_id=None) -> bool:
 
 def resume_notes() -> int:
     """Startup: notes that were being written when the app closed go on."""
+    if not chatgpt_llm.background_allowed():
+        return 0
     rows = store.attachments_where("kind IN ('document', 'video') AND notes = ?",
                                    (store.NOTES_WRITING,))
     for row in rows:
@@ -1106,6 +1113,8 @@ def _probe(url: str, model: str):
 
 def can_see_pictures():
     """True / False / None (unknown: try, and an image error says no)."""
+    if chatgpt_llm.active():
+        return True
     try:
         key = _brain()
     except Exception:
@@ -1157,6 +1166,8 @@ def _probe_video(url: str, model: str) -> bool:
 
 
 def can_watch_videos() -> bool:
+    if chatgpt_llm.active():
+        return False
     try:
         key = _brain()
     except Exception:

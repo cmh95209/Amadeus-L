@@ -11,6 +11,7 @@ import requests
 from langchain_openai import ChatOpenAI
 
 import builtin_llm
+import chatgpt_llm
 import cloud_retry
 import memory
 import timing
@@ -50,6 +51,8 @@ def _port_alive(host: str, port: int, timeout: float = 1.5) -> bool:
 def _configured_server_url() -> str:
     """The server the user set (or her built-in one), WITHOUT probing ports -
     enough to tell a cloud service from a local one, and instant."""
+    if chatgpt_llm.active():
+        return chatgpt_llm.chatgpt_auth.RESOURCE
     if builtin_llm.active():
         return builtin_llm.server_url()
     try:
@@ -724,6 +727,8 @@ def reasoning_for(kind: str) -> str:
     """The level for one kind of call right now: "replies" (her replies, the
     web-search decision, greetings) follows the active brain; "translations"
     (English line, repair passes) is one setting. Anything else: "off"."""
+    if kind in ("replies", "translations") and chatgpt_llm.active():
+        return chatgpt_llm.selection()["level"]
     try:
         levels = reasoning_levels()
     except Exception:
@@ -915,6 +920,12 @@ def get_llm(api_key: str, model: str, enable_thinking: bool = False, reasoning: 
     translations; helper calls use "off"). enable_thinking=True is the old
     shape and means "medium".
     """
+    if chatgpt_llm.active():
+        use_saved = reasoning in chatgpt_llm.chatgpt_auth.REASONING_LEVELS or enable_thinking and reasoning != "off"
+        return chatgpt_llm.client(use_saved_reasoning=use_saved)
+    if reasoning not in REASONING_LEVELS:
+        reasoning = "medium" if enable_thinking else "off"
+
     # Re-probe the local server on every call. When the saved port is alive
     # this is a single fast localhost check; it only matters when the port
     # has changed. If the address moved since we built the client, rebuild it
@@ -923,11 +934,6 @@ def get_llm(api_key: str, model: str, enable_thinking: bool = False, reasoning: 
     builtin = builtin_llm.active()
     if builtin:
         model = builtin_llm.model_name()
-
-    # reasoning: one of REASONING_LEVELS. None = the old call shape:
-    # enable_thinking=True means "medium", otherwise "off" (helper calls).
-    if reasoning not in REASONING_LEVELS:
-        reasoning = "medium" if enable_thinking else "off"
 
     # The user's Model Sampling settings are part of the client identity:
     # changing them rebuilds the client, so new values apply to the next
@@ -1119,6 +1125,8 @@ def client_for(base_url: str, api_key: str, model: str, reasoning: str = None,
     """
     if reasoning is None:
         reasoning = reasoning_for("replies")
+    if chatgpt_llm.active():
+        return chatgpt_llm.client(use_saved_reasoning=reasoning != "off", timeout=timeout)
     if reasoning not in REASONING_LEVELS:
         reasoning = "off"
     client, _ = _build_client(base_url, api_key, model, reasoning,

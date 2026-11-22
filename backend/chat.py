@@ -994,6 +994,7 @@ def _aside_messages(topic: str, context, local: bool, avoid=None):
                            [], ctx, right_now=_right_now_note())
 
 
+@chatgpt_llm.background_task
 def _write_aside(run: "_AsideRun", topic: str, context, conv, emit) -> None:
     started = time.monotonic()
     try:
@@ -5165,6 +5166,15 @@ ATTACH_REACTION_INSTRUCTION = {
         "conversation above shows that. Do not search for anything."),
 }
 
+ATTACH_PREVIEW_REACTION_INSTRUCTION = {
+    "role": "system",
+    "content": (
+        "The user just attached files that are waiting to be sent. Say one short, natural line "
+        "as yourself about something you can see or read in the available previews. "
+        "Use details from those previews and don't guess about files without one. "
+        "If none are ready, react to the fact they attached something. Do not search for anything."),
+}
+
 
 # The user took back what they had attached, after she had already reacted
 # to it (MH 2026-10-27: she notices, in her own words - "didn't you want to
@@ -5192,6 +5202,9 @@ def generate_attach_reaction(attachment_ids, conversation_id=None):
         return None
     ctx = list(store.build_prompt_messages(conversation_id=conv))
     history = " ".join(_content_text(m.get("content")) for m in ctx)
+    if chatgpt_llm.active():
+        return _attach_line(conv, ctx, attachments.reaction_preview(rows, history),
+                            ATTACH_PREVIEW_REACTION_INSTRUCTION)
     return _attach_line(conv, ctx, attachments.reaction_event(rows, history),
                         ATTACH_REACTION_INSTRUCTION)
 
@@ -5238,6 +5251,7 @@ def _attach_line(conv, ctx, event_line, instruction):
     return pack, assistant_id, conv_id
 
 
+@chatgpt_llm.user_message
 def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
     llm = _reply_llm()
     # This reply's searches (saved with its row) + the chat its lookups go to.
@@ -5459,6 +5473,7 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
 #   assistant_reply_JPS and an EMPTY assistant_reply_ENG - the English display
 #   line is written by call 2 (getOutputPackedVoiceFirst's background
 #   backfill) while her voice is already playing
+@chatgpt_llm.user_message
 def getResponsePackedVoiceFirst(message_context, internal_context=None) -> AmadeusPack:
     llm = _reply_llm()
     plain = _is_local(llm)
@@ -5478,8 +5493,15 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
     picture_index = attachments.picture_index_message(picture_conv)
     found = cross_tab.search_block(_content_text(last_user), picture_conv)   # cross_tab.py
 
+    rules = _lang_rules(_PLAIN_RULES_JA) if plain else _PACK_RULES_JA_ONLY
+    if isinstance(llm, chatgpt_llm.ChatGPTClient):
+        rules = {**rules, "content": (
+            "Every sentence in assistant_reply_JPS must be natural spoken Japanese from start to finish. "
+            "Understand the user in whichever language they write. Use Japanese grammar and wording "
+            "throughout the voice line, even if the user's language shares characters with Japanese. "
+            "The user's display language is handled in a separate translation.\n\n" + rules["content"])}
     messages = _ordered_prompt(
-        _lang_rules(_PLAIN_RULES_JA) if plain else _PACK_RULES_JA_ONLY,
+        rules,
         NO_WEB_BLOCK,
         book_messages
         + ([memory_block] if memory_block else [])
@@ -6003,6 +6025,7 @@ def _translate_retry_wait(exc) -> float:
     return TRANSLATE_RETRY_WAIT_S
 
 
+@chatgpt_llm.deferred_translation
 def _backfill_english(turn: "VoiceFirstTurn", llm, context_lines) -> None:
     """Call 2, in a background thread: write the English display line for the
     Japanese line call 1 already stored, then publish it (the stored row and
@@ -6023,6 +6046,8 @@ def _backfill_english(turn: "VoiceFirstTurn", llm, context_lines) -> None:
     try:
         try:
             en = _translate_reply_en(llm, jps, context_lines)
+        except chatgpt_llm.ChatGPTError:
+            raise
         except Exception as exc:
             if getattr(exc, "amadeus_retried", False):
                 raise

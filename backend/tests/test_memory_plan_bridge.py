@@ -128,7 +128,7 @@ def test_post_uses_low_reasoning_and_selected_model(bridge, override, monkeypatc
     assert sent["timeout"] == (5.0, 180.0)
     assert sent["json"] == {"stream": True, "store": False, "reasoning": {"effort": "low"},
                             "model": override or "chosen-chat-model",
-                            "input": [{**MESSAGES[0], "role": "developer"}, *MESSAGES[1:]]}
+                            "instructions": "Extract memories", "input": MESSAGES[1:]}
     logs = capsys.readouterr().out
     assert "[memory-bridge] learning call ok" in logs
     assert TOKEN not in logs and "Private transcript" not in logs and "learned facts" not in logs
@@ -165,6 +165,12 @@ def test_plan_http_errors_use_safe_messages(bridge, status, code, expected, caps
     check(response, expected)
     if expected == 429:
         assert response.json == {"message": bridge.plan.LIMIT}
+        bridge.token.reset_mock()
+        paused = bridge.client.post(bridge.path, headers=bridge.headers, json={"messages": MESSAGES})
+        check(paused, 429)
+        assert paused.json == response.json
+        bridge.token.assert_not_called()
+        assert bridge.client.get(bridge.path, headers=bridge.headers).json == {"route": "chatgpt"}
     http.assert_called_once()
     logs = capsys.readouterr().out
     assert TOKEN not in logs and "Private transcript" not in logs

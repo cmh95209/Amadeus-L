@@ -4,14 +4,15 @@ The flow: a picture is uploaded the moment it is attached (POST /attachments):
 checked, shrunk (longest side <= 1568 px), its metadata (GPS, camera, ...)
 removed, a thumbnail made, saved as user data next to memory.db - a "card"
 not sent yet. On send its id rides with the message (attachment_ids) and the
-card is linked to the user's message and put on her desk. Only her REPLY
-calls see pictures for real (with_pictures): the newest message's pictures
-plus the ones on her desk; every helper call and the stored history stay
-text, where a picture is a label "[Picture 3 (turn 5) from the user:
+card is linked to the user's message and put on her desk. Reply calls see
+pictures from the conversation (with_pictures): the newest message's pictures
+plus the ones on her desk. Stored history uses labels such as
+"[Picture 3 (turn 5) from the user:
 <caption>]" (its number in the chat + the turn it came in). After her reply
 one short background call writes that caption. She also gets a short list of
 the chat's pictures, and an earlier picture the user clearly asks about
 ("picture 2", "yesterday's photo") is shown to her again for that reply.
+ChatGPT attachment reactions can also show previews of cards waiting to send.
 
 Documents (Phase 4, 2026-10-28; MH E1 B, E2 a, E3 4,000, E4 a, E5 a): a PDF,
 Word .docx or text/code file (and long pasted text, sent as a "Pasted text"
@@ -44,6 +45,8 @@ try:  # Pillow: installed with the app (both installers); tests need it too
 except ImportError:  # pragma: no cover - the upload route answers honestly
     Image = None
 
+# ---- TUNABLES ----
+REACTION_DOCUMENT_TOKENS = 800  # Text preview per waiting document.
 
 MAX_FILE_BYTES = 20 * 1024 * 1024      # per file (MH P2: no count limit)
 MAX_SIDE = 1568                        # longest side she is shown
@@ -2493,6 +2496,8 @@ def caption_message(llm, message_id: int) -> list:
             save_caption(row["id"], row["caption"])
         except Exception as exc:
             print(f"[Amadeus] Attachment #{row['id']}: caption failed:", repr(exc))
+            if isinstance(exc, chatgpt_llm.ChatGPTError) and str(exc) == chatgpt_llm.LIMIT:
+                break
     return rows
 
 
@@ -2582,7 +2587,7 @@ def meaningful_name(name: str) -> str:
     return stem[:80]
 
 
-def reaction_event(rows, history_text: str = "") -> str:
+def reaction_event(rows, history_text: str = "", *, preview=False) -> str:
     """The prompt line for her reaction: what is attached (type + name only)."""
     named = [_what(r) for r in rows]
     if len(named) == 1:
@@ -2597,9 +2602,39 @@ def reaction_event(rows, history_text: str = "") -> str:
     kinds = {r.get("kind") for r in rows}
     seen = ("watched" if kinds == {"video"} else "seen or read" if "document" in kinds
             else "seen")
-    return ("[Attachment event: the user just attached " + what + ". It is NOT sent yet and "
-            f"you have not {seen} it." + ("" if mentioned else " It was not mentioned "
-                                           "before in this conversation.") + "]")
+    status = "It is not sent yet. Use the previews below where available." if preview else (
+        f"It is NOT sent yet and you have not {seen} it.")
+    before = "" if mentioned else " It was not mentioned before in this conversation."
+    return f"[Attachment event: the user just attached {what}. {status}{before}]"
+
+
+def reaction_preview(rows, history_text: str) -> list:
+    """Build a reaction from the waiting cards without claiming them."""
+    import video
+
+    parts = [{"type": "text", "text": reaction_event(rows, history_text, preview=True)}]
+    for row in rows:
+        try:
+            if row.get("kind") == "document":
+                excerpt = cut_text(read_part(row), REACTION_DOCUMENT_TOKENS)
+                if excerpt:
+                    parts.append({"type": "text", "text": f"[Preview of {_what(row)}]\n{excerpt}"})
+                    continue
+            elif row.get("kind") == "video":
+                meta = video.load_meta(row)
+                if meta.get("frames") or meta.get("state") == video.READY:
+                    parts.extend(video.video_block(row, video.FRAMES))
+                    continue
+            else:
+                url = _data_url(row)
+                if url:
+                    parts.extend([{"type": "text", "text": f"[Preview of {_what(row)}]"},
+                                  {"type": "image_url", "image_url": {"url": url}}])
+                    continue
+        except (OSError, UnicodeError):
+            pass  # One file can disappear while the other previews are built.
+        parts.append({"type": "text", "text": f"[No preview available for {_what(row)} yet.]"})
+    return parts
 
 
 def _what(row, article: str = "a") -> str:

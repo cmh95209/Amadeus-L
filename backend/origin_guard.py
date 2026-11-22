@@ -105,6 +105,22 @@ def origin_allowed(origin: str, host_header: str, forwarded_host: str = "") -> b
     return False
 
 
+def is_local_page_origin(origin: str) -> bool:
+    """Recognize a local app page's browser Origin, including test ports."""
+    try:
+        parts = urlsplit(origin)
+        name = parts.hostname
+        port = parts.port
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https") or not is_local_name(name) or port == 0:
+        return False
+    authority = f"[{name}]" if name == "::1" else name
+    if port is not None:
+        authority = f"{authority}:{port}"
+    return origin.lower() == f"{parts.scheme}://{authority}"
+
+
 def _refuse(why: str):
     # Only the two headers this check is about, cut short; never any other
     # request header (Authorization, Cookie, keys). The answer is fixed text.

@@ -1,7 +1,8 @@
 """The ChatGPT plan connection, using Amadeus's existing LangChain bindings."""
 import json
 import os
-import threading
+import re
+import time
 from contextvars import ContextVar
 from functools import wraps
 from pathlib import Path
@@ -16,25 +17,43 @@ import chatgpt_auth
 import memory
 import timing
 
+# ---- TUNABLES ----
+PLAN_LIMIT_COOLDOWN = 30 * 60  # Seconds to pause background calls after a plan limit.
+PERSONA_PLACEMENT = "instructions"  # "developer" keeps each system message in input.
+
 RESPONSES_URL = chatgpt_auth.RESOURCE + "/responses"
 DEFAULT_MODEL = "gpt-6-luna"
 MODEL_FILE = "chatgpt_model.txt"
 REASONING_FILE = "chatgpt_reasoning.txt"
 DEFAULT_LEVEL = "low"
 UNSUPPORTED_LEVEL = "This model doesn't support that reasoning level. Pick a lower one."
+UNSUPPORTED_CAPABILITY = "This model can't handle something in this message. Try another model in Settings."
 SIGNED_OUT = "You're signed out of ChatGPT. Sign in again in Settings -> Connection."
 LIMIT = "Usage limit reached. Check your plan or this app's limit in ChatGPT settings."
 INELIGIBLE = ("Your ChatGPT plan can't be used in other apps. This needs ChatGPT Plus or Pro. "
               "You can use an API key in Custom Model instead.")
 BACKGROUND_DISABLED = "ChatGPT background use is off."
 NO_MODELS = "There are no ChatGPT models available for this account."
-_model_lock = threading.Lock()
 _model_levels = {}
-_background = ContextVar("chatgpt_background", default=False)
+_model_generation = None
+_limit_pause = None
+_task = ContextVar("chatgpt_task", default=None)
 
 
 class ChatGPTError(chatgpt_auth.ChatGPTSignInError):
     """Safe to display. Stops the app's generic provider fallback ladders."""
+
+
+class _RejectedToken(ChatGPTError):
+    pass
+
+
+class _WithdrawnScope(ChatGPTError):
+    pass
+
+
+class _PlanLimit(ChatGPTError):
+    pass
 
 
 def active() -> bool:
@@ -42,45 +61,74 @@ def active() -> bool:
 
 
 def background_allowed() -> bool:
-    return not active() or chatgpt_auth.get_background_use_allowed()
+    return not active() or (chatgpt_auth.get_background_use_allowed() and not plan_paused())
 
 
-def background_task(fn):
-    """Carry the background designation through model calls in this task."""
-    @wraps(fn)
-    def run(*args, **kwargs):
-        marker = _background.set(True)
-        try:
-            return fn(*args, **kwargs)
-        finally:
-            _background.reset(marker)
-    return run
+def plan_paused() -> bool:
+    with chatgpt_auth.session_lock:
+        return (_limit_pause is not None and _limit_pause[0] == chatgpt_auth.session_generation()
+                and time.monotonic() < _limit_pause[1])
+
+
+def _update_pause(generation, *, limited):
+    global _limit_pause
+    with chatgpt_auth.session_lock:
+        if generation == chatgpt_auth.session_generation():
+            _limit_pause = (generation, time.monotonic() + PLAN_LIMIT_COOLDOWN) if limited else None
+
+
+def _task_context(kind):
+    def decorate(fn):
+        @wraps(fn)
+        def run(*args, **kwargs):
+            marker = _task.set(kind)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                _task.reset(marker)
+        return run
+    return decorate
+
+
+background_task = _task_context("background")
+user_message = _task_context("user_message")
+# The display line is part of a normal reply even when optional features are off.
+deferred_translation = _task_context("deferred_translation")
 
 
 def _check_background():
     # Check again before every plan call, in case consent was revoked while
     # the background task was queued or processing earlier items.
-    if _background.get() and not chatgpt_auth.get_background_use_allowed():
+    task = _task.get()
+    if task not in ("background", "deferred_translation"):
+        return
+    if task == "background" and not chatgpt_auth.get_background_use_allowed():
         raise ChatGPTError(BACKGROUND_DISABLED)
+    if plan_paused():
+        raise ChatGPTError(LIMIT)
 
 
 def _plan_error(code, status=None):
     if code == "subscription_sharing_usage_limit_exceeded":
-        return ChatGPTError(LIMIT)
+        return _PlanLimit(LIMIT)
+    if chatgpt_auth.scope_withdrawn(code):
+        return _WithdrawnScope(SIGNED_OUT)
+    if chatgpt_auth.token_rejected(code, status):
+        return _RejectedToken(SIGNED_OUT)
     if code in (
         "subscription_sharing_user_not_eligible", "subscription_sharing_usage_unavailable",
         "subscription_sharing_user_unavailable", "subscription_sharing_invalid_user",
-        "subscription_sharing_route_not_supported", "chatpass_v2_scope_not_authorized",
+        "subscription_sharing_route_not_supported",
     ):
         return ChatGPTError(INELIGIBLE)
-    if status == 401 or code in ("invalid_token", "token_expired", "chatpass_v2_invalid_authorization_context"):
-        return ChatGPTError(SIGNED_OUT)
     if code == "subscription_sharing_unsupported_capability":
-        return ChatGPTError("This ChatGPT model doesn't support something Amadeus sent. Try another model in Settings.")
+        return ChatGPTError(UNSUPPORTED_CAPABILITY)
     return None
 
 
 def safe_auth_error(exc):
+    if isinstance(exc, ChatGPTError):
+        return exc
     mapped = _plan_error(getattr(exc, "code", None), getattr(exc, "status_code", None))
     if mapped:
         return mapped
@@ -88,6 +136,13 @@ def safe_auth_error(exc):
                     "Permission to use your ChatGPT plan was withdrawn. Sign in again."):
         return ChatGPTError(SIGNED_OUT)
     return ChatGPTError(str(exc))
+
+
+def _call_error(exc, generation):
+    mapped = safe_auth_error(exc)
+    if isinstance(mapped, _PlanLimit):
+        _update_pause(generation, limited=True)
+    return mapped
 
 
 def _load_choice(filename):
@@ -114,7 +169,7 @@ def _load_level():
 
 
 def _supported_level(model, level):
-    supported = _model_levels.get(model)
+    supported = _model_capabilities().get(model)
     if not supported or level in supported:
         return level
     lower = chatgpt_auth.REASONING_LEVELS[:chatgpt_auth.REASONING_LEVELS.index(level)]
@@ -123,23 +178,26 @@ def _supported_level(model, level):
 
 def selection():
     """Read the local choices and model capabilities from the last model listing."""
-    with _model_lock:
+    with chatgpt_auth.session_lock:
         model = selected_model()
         return {"model": model, "level": _supported_level(model, _load_level()),
-                "reasoning_levels": _model_levels}
+                "reasoning_levels": _model_capabilities()}
 
 
-def clear_model_capabilities():
-    global _model_levels
-    with _model_lock:
+def _model_capabilities():
+    global _model_levels, _model_generation
+    generation = chatgpt_auth.session_generation()
+    if _model_generation != generation:
         _model_levels = {}
+        _model_generation = generation
+    return _model_levels
 
 
 def set_reasoning_level(level):
     if level not in chatgpt_auth.REASONING_LEVELS:
         raise ChatGPTError("Choose a ChatGPT reasoning level from the list.")
-    with _model_lock:
-        supported = _model_levels.get(selected_model())
+    with chatgpt_auth.session_lock:
+        supported = _model_capabilities().get(selected_model())
         if supported is not None and level not in supported:
             raise ChatGPTError(UNSUPPORTED_LEVEL)
         _save_choice(REASONING_FILE, level, "reasoning level")
@@ -148,14 +206,18 @@ def set_reasoning_level(level):
 
 def models_and_selection(model=None):
     """Refresh available models and save a valid selection or the default."""
-    global _model_levels
+    global _model_levels, _model_generation
     _check_background()
+    with chatgpt_auth.session_lock:
+        generation = chatgpt_auth.session_generation()
     try:
-        models = chatgpt_auth.list_models()
+        models = chatgpt_auth.list_models(before_request=_check_background)
     except chatgpt_auth.ChatGPTSignInError as exc:
-        raise safe_auth_error(exc) from None
+        raise _call_error(exc, generation) from None
     ids = [item["id"] for item in models]
-    with _model_lock:
+    with chatgpt_auth.session_lock:
+        if generation != chatgpt_auth.session_generation():
+            raise ChatGPTError(SIGNED_OUT)
         saved = selected_model()
         if model is not None and model not in ids:
             raise ChatGPTError("Choose a ChatGPT model from the list.")
@@ -163,6 +225,7 @@ def models_and_selection(model=None):
         if selected not in ids:
             selected = DEFAULT_MODEL if DEFAULT_MODEL in ids else next(iter(ids), "")
         _model_levels = {item["id"]: item["reasoning_levels"] for item in models if "reasoning_levels" in item}
+        _model_generation = generation
         saved_level = _load_level()
         level = _supported_level(selected, saved_level)
         if level != saved_level:
@@ -211,8 +274,25 @@ def _response_input(messages):
 
 
 def _response_body(payload, model, effort):
-    body = {"model": model, "input": list(_response_input(payload["messages"])),
+    messages = payload["messages"]
+    leading = 0
+    instructions = []
+    if PERSONA_PLACEMENT == "instructions":
+        for message in messages:
+            content = message.get("content")
+            if message["role"] != "system":
+                break
+            if isinstance(content, list):
+                if any(part["type"] != "text" for part in content):
+                    break
+                content = "\n\n".join(part["text"] for part in content)
+            leading += 1
+            if content:
+                instructions.append(content)
+    body = {"model": model, "input": list(_response_input(messages[leading:])),
             "stream": True, "store": False, "reasoning": {"effort": effort}}
+    if instructions:
+        body["instructions"] = "\n\n".join(instructions)
     if payload.get("tools"):
         body["tools"] = [{"type": "function", **tool["function"]} for tool in payload["tools"]]
     choice = payload.get("tool_choice")
@@ -241,13 +321,18 @@ def _response_error(error, status=None):
     if not isinstance(error, dict):
         error = {}
     code = error.get("code")
-    if status in (400, None) and (
-        code == "subscription_sharing_unsupported_capability"
-        or any(isinstance(value, str) and "reasoning" in value.lower()
-               for value in (code, error.get("param"), error.get("message")))
+    mapped = _plan_error(code, status)
+    if mapped and str(mapped) != UNSUPPORTED_CAPABILITY:
+        return mapped
+    param, message = error.get("param"), error.get("message")
+    if (mapped or status in (400, None)) and (
+        isinstance(param, str) and re.match(r"^reasoning(?:$|[._]|\[)", param, re.I)
+        or isinstance(code, str) and re.search(r"(?:^|_)reasoning(?:_|$)", code, re.I)
+        or not param and isinstance(message, str)
+        and re.search(r"\breasoning (?:effort|level|is not supported)\b", message, re.I)
     ):
         return ChatGPTError(UNSUPPORTED_LEVEL)
-    return _plan_error(code, status)
+    return mapped
 
 
 def _read_response(response):
@@ -302,6 +387,8 @@ class ChatGPTClient(ChatOpenAI):
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         _check_background()
+        with chatgpt_auth.session_lock:
+            generation = chatgpt_auth.session_generation()
         model, effort = self.plan_model, DEFAULT_LEVEL
         if model is None or self.use_saved_reasoning:
             choices = selection()
@@ -315,15 +402,27 @@ class ChatGPTClient(ChatOpenAI):
         payload = self._get_request_payload(messages, **kwargs)
         body = _response_body(payload, model, effort)
         try:
-            token = chatgpt_auth.access_token()
-            _check_background()
+            token = chatgpt_auth.access_token(generation=generation)
             timeout = min(self.plan_timeout, kwargs.get("timeout") or self.plan_timeout)
-            with requests.post(RESPONSES_URL, json=body, stream=True, allow_redirects=False,
-                               headers={"Authorization": f"Bearer {token}", "Accept": "text/event-stream"},
-                               timeout=(min(5.0, timeout), timeout)) as response:
-                return _chat_result(_read_response(response), token)
+            for attempt in range(2):
+                _check_background()
+                try:
+                    with requests.post(RESPONSES_URL, json=body, stream=True, allow_redirects=False,
+                                       headers={"Authorization": f"Bearer {token}", "Accept": "text/event-stream"},
+                                       timeout=(min(5.0, timeout), timeout)) as response:
+                        result = _chat_result(_read_response(response), token)
+                except (_RejectedToken, _WithdrawnScope) as exc:
+                    if attempt or isinstance(exc, _WithdrawnScope):
+                        chatgpt_auth.discard_session(token, generation)
+                        raise
+                    _check_background()
+                    token = chatgpt_auth.access_token(token, generation=generation)
+                else:
+                    if _task.get() == "user_message":
+                        _update_pause(generation, limited=False)
+                    return result
         except chatgpt_auth.ChatGPTSignInError as exc:
-            raise safe_auth_error(exc) from None
+            raise _call_error(exc, generation) from None
         except requests.RequestException:
             raise ChatGPTError("Could not reach ChatGPT. Please try again.") from None
         except (AttributeError, KeyError, TypeError, ValueError, RecursionError):

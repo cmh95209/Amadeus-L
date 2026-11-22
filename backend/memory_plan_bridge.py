@@ -103,6 +103,8 @@ def _route():
     try:
         if not _on_plan():
             return _error("unavailable", _UNAVAILABLE, 403)
+        if chatgpt_llm.plan_paused():
+            return _error("plan limit", chatgpt_llm.LIMIT, 429)
         messages, size = _parse_messages()
         if not messages:
             return _error("invalid messages", "Send 1 to 40 text messages (up to 200,000 characters).", 400)

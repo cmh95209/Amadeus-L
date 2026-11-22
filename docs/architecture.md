@@ -65,13 +65,18 @@ Amadeus-Project/
 │   ├── main.py                # Flask app entry point
 │   ├── api.py                 # REST API
 │   ├── chat.py                # conversation pipeline (voice-first)
+│   ├── attachments.py         # attachment preparation and model previews
 │   ├── memory.py              # SQLite conversation history
 │   ├── llm.py                 # LLM access (local or OpenRouter)
+│   ├── chatgpt_auth.py         # ChatGPT sign-in, token renewal and consent
+│   ├── chatgpt_llm.py          # ChatGPT Responses requests and background call limits
+│   ├── origin_guard.py         # browser and local sign-in request checks
 │   ├── tts.py                 # GPT-SoVITS voice client
 │   ├── start_gptsovits.py     # voice engine startup
 │   ├── ceremony.py            # first-meeting / wake-up logic
 │   ├── ja_voice.py            # her Japanese voice rules
 │   ├── cm_bridge.py           # bridge to the memory sidecar
+│   ├── memory_plan_bridge.py   # local endpoint for sidecar learning on the ChatGPT plan
 │   ├── weather.py             # live weather / air quality
 │   ├── webfetch.py            # web search result reading
 │   ├── console_encoding.py    # UTF-8 console hardening
@@ -135,6 +140,23 @@ Amadeus-Project/
 
 GPT-SoVITS is cloned separately into a local `GPT-SoVITS/` directory. It is
 an external dependency rather than part of the Amadeus repository itself.
+
+## ChatGPT plan connection
+
+Sign-in starts from a local app page and finishes on the backend's loopback
+callback. Consent and the welcome screen belong to one sign-in. Replies send
+the leading persona and fixed rules as Responses `instructions` by default.
+Later system notes stay in order as developer input. Voice-first replies write
+the Japanese line before a separate display translation. Attachment reactions
+can see ready pictures, document excerpts, and ready video stills before send
+when the user allows optional features on the ChatGPT plan.
+If OpenAI rejects an access token early, the backend refreshes it once and
+retries the request with the current saved token.
+
+When ChatGPT reports a plan limit, background model calls pause for 30 minutes
+or until a user-message call succeeds. The memory bridge returns HTTP 429
+during the pause so the sidecar can keep the batch for a future attempt. Stored
+voice replay accepts audio files beneath `backend/generated/` and `backend/assets/`.
 
 ---
 

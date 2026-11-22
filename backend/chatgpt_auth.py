@@ -59,6 +59,7 @@ _DEAD_REFRESH_CODES = frozenset({
     "invalid_grant", "invalid_client", "invalid_refresh_token", "token_expired",
     "refresh_token_expired", "refresh_token_invalidated", "refresh_token_reused",
 })
+_WITHDRAWN_SCOPE_CODES = ("invalid_scope", "chatpass_v2_scope_not_authorized")
 # Unrecognized codes could contain arbitrary text from the response.
 _SAFE_ERROR_CODES = _DEAD_REFRESH_CODES | {
     "access_denied", "invalid_request", "invalid_scope", "invalid_token",
@@ -72,8 +73,9 @@ _SAFE_ERROR_CODES = _DEAD_REFRESH_CODES | {
 }
 _SIGNED_OUT = "signed out - sign in again"
 _log = logging.getLogger(__name__)
-_lock = threading.Lock()  # Covers credential reads, updates, and token rotation.
-_settings_lock = threading.Lock()
+session_lock = threading.RLock()  # Covers credentials, consent, and session-scoped caches.
+_session_generation = 0
+_had_session = False
 
 
 @dataclass(frozen=True, repr=False)
@@ -96,6 +98,7 @@ class ChatGPTSignInError(Exception):
 
 class _OpenAIError(ChatGPTSignInError):
     def __init__(self, status_code: int, code: str):
+        self.status_code = status_code
         self.code = code
         detail = f" ({code})" if code else ""
         super().__init__(f"OpenAI answered HTTP {status_code}{detail}.")
@@ -183,7 +186,7 @@ def _has_text(value) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
-def _load_auth() -> dict:
+def _read_auth() -> dict:
     try:
         record = _read_json(AUTH_FILE, protected=True)
         host = record.get("ext_agent_host_id")
@@ -210,8 +213,54 @@ def _load_auth() -> dict:
         return {}
 
 
+def _load_auth() -> dict:
+    global _had_session
+    record = _read_auth()
+    has_session = "session" in record
+    if not has_session:
+        _reset_session_preferences(invalidate=_had_session)
+    _had_session = has_session
+    return record
+
+
 def _save_auth(record: dict) -> None:
+    global _had_session
     _write_json(AUTH_FILE, record, protected=True)
+    _had_session = "session" in record
+
+
+def session_generation() -> int:
+    """Read under session_lock when publishing session-scoped results."""
+    return _session_generation
+
+
+def _reset_session_preferences(*, invalidate: bool = True) -> None:
+    global _session_generation
+    settings = _load_settings()
+    had_preferences = settings.get("background_use_allowed") or settings.get("welcome_seen")
+    if invalidate or had_preferences:
+        _session_generation += 1
+    if had_preferences:
+        settings.update(background_use_allowed=False, welcome_seen=False)
+        _write_json(SETTINGS_FILE, settings)
+
+
+def _end_session(record: dict) -> None:
+    record.pop("session", None)
+    try:
+        _reset_session_preferences()
+    finally:
+        _save_auth(record)
+
+
+def discard_session(token: str, generation: int) -> None:
+    """Drop a rejected session only if it still owns the rejected token."""
+    with session_lock:
+        if generation != _session_generation:
+            return
+        record = _load_auth()
+        if record.get("session", {}).get("access_token") == token:
+            _end_session(record)
 
 
 # ---------- OpenAI replies and ID token ----------
@@ -220,6 +269,14 @@ def _error_code(payload) -> str:
     if isinstance(payload, dict):
         payload = payload.get("code")
     return payload if isinstance(payload, str) and payload in _SAFE_ERROR_CODES else ""
+
+
+def token_rejected(code, status) -> bool:
+    return status == 401 or code in ("invalid_token", "token_expired", "chatpass_v2_invalid_authorization_context")
+
+
+def scope_withdrawn(code) -> bool:
+    return code in _WITHDRAWN_SCOPE_CODES
 
 
 def _request(send, url: str, *, timeout: float = HTTP_TIMEOUT, **kwargs):
@@ -358,7 +415,7 @@ def start_sign_in(port: int) -> str:
     global _pending
     if type(port) is not int or not 1 <= port <= 65535:
         raise ChatGPTSignInError("Choose a valid local port for ChatGPT sign-in.")
-    with _lock:
+    with session_lock:
         record = _load_auth()
         if not record:
             record = {"ext_agent_host_id": uuid.uuid4().urn}
@@ -404,7 +461,7 @@ def _callback_client_id(query: dict, pending: _PendingSignIn) -> str:
 def finish_sign_in(query: dict) -> dict:
     """Check the browser callback, exchange its code, and return Settings status."""
     global _pending
-    with _lock:
+    with session_lock:
         pending = _pending
         if pending is None or time.monotonic() >= pending.expires_at:
             _pending = None
@@ -436,12 +493,13 @@ def finish_sign_in(query: dict) -> dict:
         claims = _verify_id_token(body.get("id_token"), client_id, pending.nonce)
         if record.get("subject", claims["sub"]) != claims["sub"]:
             if record.get("session"):
+                _reset_session_preferences()
                 raise ChatGPTSignInError("OpenAI signed in a different ChatGPT account.")
             # Signed out, now a different account: the saved app ID belongs to
             # the old account, so forget it; the next attempt registers anew.
             record.pop("client_id", None)
             record.pop("subject", None)
-            _save_auth(record)
+            _end_session(record)
             raise ChatGPTSignInError(
                 "That is a different ChatGPT account. Press Sign in with ChatGPT once more to set it up.")
         scope = body.get("scope")
@@ -450,18 +508,21 @@ def finish_sign_in(query: dict) -> dict:
         email = claims.get("email")
         session.update(id_token=body["id_token"], email=email if isinstance(email, str) else "", scope=scope)
         record.update(client_id=client_id, subject=claims["sub"], session=session)
+        _reset_session_preferences()
         _save_auth(record)
         return _status(session)
 
 
-def access_token() -> str:
-    """Return a usable access token, renewing the saved passes together if needed."""
-    with _lock:
+def access_token(rejected_token: str | None = None, *, generation: int | None = None) -> str:
+    """Renew the saved passes when due or when the current access token was rejected."""
+    with session_lock:
         record = _load_auth()
         session = record.get("session")
-        if not session:
+        if not session or (generation is not None and generation != _session_generation):
             raise ChatGPTSignInError(_SIGNED_OUT)
-        if time.time() < session["refresh_at"]:
+        if rejected_token is not None and rejected_token != session["access_token"]:
+            return session["access_token"]  # Another request already refreshed it.
+        if rejected_token is None and time.time() < session["refresh_at"]:
             return session["access_token"]
 
         try:
@@ -470,18 +531,19 @@ def access_token() -> str:
                 "refresh_token": session["refresh_token"], "resource": RESOURCE,
             })
         except _OpenAIError as exc:
-            if exc.code not in _DEAD_REFRESH_CODES:
+            if scope_withdrawn(exc.code):
+                _end_session(record)
+                raise ChatGPTSignInError("Permission to use your ChatGPT plan was withdrawn. Sign in again.") from None
+            if exc.code not in _DEAD_REFRESH_CODES and not token_rejected(exc.code, exc.status_code):
                 raise
-            del record["session"]
-            _save_auth(record)
+            _end_session(record)
             raise ChatGPTSignInError(_SIGNED_OUT) from None
 
-        fresh = _token_fields(body)
         scope = body.get("scope", session["scope"])
         if not _has_plan_scope(scope):
-            del record["session"]
-            _save_auth(record)
+            _end_session(record)
             raise ChatGPTSignInError("Permission to use your ChatGPT plan was withdrawn. Sign in again.")
+        fresh = _token_fields(body)
         session.update(fresh, scope=scope)
         _save_auth(record)
         return session["access_token"]
@@ -490,12 +552,14 @@ def access_token() -> str:
 def sign_out() -> bool:
     """Clear local passes and return whether remote revocation was confirmed or unnecessary."""
     global _pending
-    with _lock:
+    with session_lock:
         _pending = None
         record = _load_auth()
-        session = record.pop("session", None)
+        session = record.get("session")
         if not session:
+            _reset_session_preferences()
             return True
+        _end_session(record)
         try:
             endpoint = _discovered_endpoint("revocation_endpoint", REVOKE_TIMEOUT)
             _request(requests.post, endpoint, timeout=REVOKE_TIMEOUT, data={
@@ -505,8 +569,6 @@ def sign_out() -> bool:
         except ChatGPTSignInError as exc:
             _log.warning("Could not confirm ChatGPT revocation. %s", exc)
             return False
-        finally:
-            _save_auth(record)
         return True
 
 
@@ -521,13 +583,33 @@ def _status(session) -> dict:
 
 def status() -> dict:
     """Return the Settings fields without contacting OpenAI."""
-    with _lock:
+    with session_lock:
         return _status(_load_auth().get("session"))
 
 
-def list_models() -> list[dict]:
+def list_models(*, before_request=None) -> list[dict]:
     """Return the models OpenAI marks for display, in the order it sends them."""
-    body = _json_reply(requests.get, MODELS_URL, headers={"Authorization": "Bearer " + access_token()})
+    with session_lock:
+        token = access_token()
+        generation = session_generation()
+    for attempt in range(2):
+        if before_request is not None:
+            before_request()
+        try:
+            body = _json_reply(requests.get, MODELS_URL, headers={"Authorization": "Bearer " + token})
+            break
+        except _OpenAIError as exc:
+            if scope_withdrawn(exc.code):
+                discard_session(token, generation)
+                raise
+            if not token_rejected(exc.code, exc.status_code):
+                raise
+            if attempt:
+                discard_session(token, generation)
+                raise ChatGPTSignInError(_SIGNED_OUT) from None
+            if before_request is not None:
+                before_request()
+            token = access_token(token, generation=generation)
     items = body.get("models", body.get("data"))
     if not isinstance(items, list):
         raise ChatGPTSignInError("OpenAI sent an unreadable model list.")
@@ -560,7 +642,7 @@ def _load_settings() -> dict:
 def _set_setting(key: str, enabled: bool) -> bool:
     if type(enabled) is not bool:
         raise ChatGPTSignInError("Choose on or off for this ChatGPT setting.")
-    with _settings_lock:
+    with session_lock:
         settings = _load_settings()
         settings[key] = enabled
         _write_json(SETTINGS_FILE, settings)

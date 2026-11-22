@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, Response, send_from_directory
+from flask import Flask, abort, request, jsonify, Response, send_from_directory
 import origin_guard
 
 from chat import (
@@ -68,6 +68,11 @@ from urllib.parse import unquote
 from itertools import chain
 from pathlib import Path
 
+# ---- TUNABLES ----
+MESSAGE_AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg"}  # Formats allowed for replay.
+
+_CALLBACK_PATH = "/auth/callback"
+
 application = Flask(__name__)
 application.config["BACKEND_PORT"] = 5050
 # Only her own page (this PC, or the user's own Tailscale name) may call the
@@ -78,7 +83,7 @@ origin_guard.install(application)
 class _QuietChatGPTCallback(logging.Filter):
     def filter(self, record):
         message = unquote(record.getMessage())
-        return "/auth/callback" not in message and memory_plan_bridge.PATH not in message
+        return _CALLBACK_PATH not in message and memory_plan_bridge.PATH not in message
 
 
 logging.getLogger("werkzeug").addFilter(_QuietChatGPTCallback())
@@ -1696,7 +1701,7 @@ def _chatgpt_check_device():
 
 @application.after_request
 def _chatgpt_private_response(response):
-    if request.path.startswith("/chatgpt/") or request.path == "/auth/callback":
+    if request.path.startswith(("/chatgpt/", _CALLBACK_PATH)):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Referrer-Policy"] = "no-referrer"
     return response
@@ -1709,7 +1714,10 @@ def _chatgpt_error(exc):
 
 @application.route("/chatgpt/signin", methods=["POST"])
 def chatgpt_signin():
-    if not _chatgpt_loopback():
+    if (not _chatgpt_loopback() or not origin_guard.is_local_page_origin(request.headers.get("Origin", ""))
+            or any(name.lower().startswith("x-forwarded-")
+                   or name.lower() in ("forwarded", "tailscale-user-login")
+                   for name, _ in request.headers)):
         return jsonify({"message": _SIGN_IN_HERE}), 403
     global _chatgpt_launch, _chatgpt_sign_in_error
     port = application.config["BACKEND_PORT"]
@@ -1736,7 +1744,7 @@ def chatgpt_authorize(launch_id):
     return Response(status=302, headers={"Location": launch[1]})
 
 
-@application.route("/auth/callback", methods=["GET"])
+@application.route(_CALLBACK_PATH, methods=["GET"], strict_slashes=False, merge_slashes=False)
 def chatgpt_callback():
     global _chatgpt_sign_in_error
     status = 200
@@ -1760,10 +1768,11 @@ def chatgpt_callback():
 
 @application.route("/chatgpt/status", methods=["GET"])
 def chatgpt_status():
-    return jsonify({**chatgpt_auth.status(), **chatgpt_llm.selection(),
-                    "background_use_allowed": chatgpt_auth.get_background_use_allowed(),
-                    "welcome_seen": chatgpt_auth.get_welcome_seen(),
-                    "sign_in_error": _chatgpt_sign_in_error})
+    with chatgpt_auth.session_lock:
+        return jsonify({**chatgpt_auth.status(), **chatgpt_llm.selection(),
+                        "background_use_allowed": chatgpt_auth.get_background_use_allowed(),
+                        "welcome_seen": chatgpt_auth.get_welcome_seen(),
+                        "sign_in_error": _chatgpt_sign_in_error})
 
 
 @application.route("/chatgpt/models", methods=["GET"])
@@ -1796,9 +1805,6 @@ def chatgpt_signout():
         _chatgpt_launch = None
         _chatgpt_sign_in_error = ""
         chatgpt_auth.sign_out()
-        chatgpt_llm.clear_model_capabilities()
-        chatgpt_auth.set_background_use_allowed(False)
-        chatgpt_auth.set_welcome_seen(False)
     return chatgpt_status()
 
 
@@ -1806,7 +1812,7 @@ def chatgpt_signout():
 def chatgpt_background():
     data = request.get_json(silent=True)
     allowed = data.get("allowed") if isinstance(data, dict) else None
-    with _chatgpt_launch_lock:
+    with chatgpt_auth.session_lock:
         if allowed is True and not chatgpt_auth.status()["signed_in"]:
             return jsonify({"message": chatgpt_llm.SIGNED_OUT}), 400
         return jsonify({"background_use_allowed": chatgpt_auth.set_background_use_allowed(allowed)})
@@ -1814,7 +1820,7 @@ def chatgpt_background():
 
 @application.route("/chatgpt/welcome-seen", methods=["POST"])
 def chatgpt_welcome_seen():
-    with _chatgpt_launch_lock:
+    with chatgpt_auth.session_lock:
         if not chatgpt_auth.status()["signed_in"]:
             return jsonify({"message": chatgpt_llm.SIGNED_OUT}), 400
         return jsonify({"welcome_seen": chatgpt_auth.set_welcome_seen(True)})
@@ -2440,15 +2446,26 @@ def _voice_engine_reachable(timeout: float = 2.0) -> bool:
 
 # pre: relpath points inside the backend folder (generated/ or assets/)
 # post: a stored voice line is streamed back for replay
-@application.route("/message_audio/<path:relpath>", methods=["GET"])
+@application.route("/message_audio/<path:relpath>", methods=["GET"], merge_slashes=False)
 def message_audio(relpath):
+    parts = relpath.split("/")
+    if (parts[0] not in ("generated", "assets") or len(parts) < 2
+            or any(part in ("", ".", "..") for part in parts)
+            or any(char in relpath for char in ("\\", ":", "\x00"))
+            or Path(parts[-1]).suffix.lower() not in MESSAGE_AUDIO_EXTENSIONS):
+        abort(404)
+    root = Path(__file__).resolve().parent / parts[0]
+    try:
+        target = root.joinpath(*parts[1:]).resolve()
+    except (OSError, RuntimeError, ValueError):
+        abort(404)
+    if not target.is_relative_to(root) or target.suffix.lower() not in MESSAGE_AUDIO_EXTENSIONS:
+        abort(404)
     # Lines saved before v2.1.2 kept the engine's "0 bytes" WAV header, which
     # Firefox will not replay: write the real sizes in on first replay.
-    if relpath.startswith("generated/") and relpath.endswith(".wav"):
-        target = (Path(__file__).resolve().parent / relpath).resolve()
-        if target.parent == (Path(__file__).resolve().parent / "generated").resolve():
-            tts_module.fix_wav_sizes(target)
-    response = send_from_directory(Path(__file__).resolve().parent, relpath, conditional=True)
+    if parts[0] == "generated" and target.parent == root and target.suffix.lower() == ".wav":
+        tts_module.fix_wav_sizes(target)
+    response = send_from_directory(root, target.relative_to(root).as_posix(), conditional=True)
     response.headers["Cache-Control"] = "no-store"
     return response
 

@@ -96,6 +96,7 @@ class ChatGPTAuthTests(unittest.TestCase):
         self.models_body = {"models": []}
         self._patch(auth.memory, "DATA_DIR", self.data_dir)
         self._patch(auth, "_pending", None)
+        self._patch(auth, "_had_session", False)
         self._patch(auth, "time", SimpleNamespace(time=lambda: self.now, monotonic=lambda: self.now))
         self.get = self._patch(auth.requests, "get", side_effect=self._get)
         self.post = self._patch(auth.requests, "post", side_effect=self._post)
@@ -149,6 +150,21 @@ class ChatGPTAuthTests(unittest.TestCase):
     def _sign_in(self):
         self._start()
         return auth.finish_sign_in(self._callback())
+
+    def _allow_background(self):
+        import chatgpt_llm as plan
+        self.models_body = {"models": [{"id": "model", "visibility": "list",
+                                        "supported_reasoning_levels": ["low"]}]}
+        plan.models_and_selection()
+        auth.set_background_use_allowed(True)
+        auth.set_welcome_seen(True)
+        self.assertTrue(plan.selection()["reasoning_levels"])
+
+    def _assert_session_preferences_reset(self):
+        import chatgpt_llm as plan
+        self.assertFalse(auth.get_background_use_allowed())
+        self.assertFalse(auth.get_welcome_seen())
+        self.assertEqual(plan.selection()["reasoning_levels"], {})
 
     def _assert_safe(self, message):
         for value in (CODE, ACCESS, REFRESH, CLIENT_ID, EMAIL, SUBJECT,
@@ -275,15 +291,25 @@ class ChatGPTAuthTests(unittest.TestCase):
 
     def test_retains_the_session_when_returning_identity_differs(self):
         self._sign_in()
+        self._allow_background()
         self._start()
         query = self._callback(claims={"sub": "different"})
         self._assert_error("different ChatGPT account", auth.finish_sign_in, query)
         self.assertEqual(auth._load_auth()["subject"], SUBJECT)
         self.assertEqual(auth.access_token(), ACCESS)
+        self._assert_session_preferences_reset()
+
+    def test_same_account_sign_in_requires_new_consent(self):
+        self._sign_in()
+        self._allow_background()
+        self._sign_in()
+        self._assert_session_preferences_reset()
 
     def test_after_sign_out_a_different_account_can_register(self):
         self._sign_in()
+        self._allow_background()
         auth.sign_out()
+        self._assert_session_preferences_reset()
         self._start()
         query = self._callback(claims={"sub": "different"})
         self._assert_error("different ChatGPT account", auth.finish_sign_in, query)
@@ -295,6 +321,7 @@ class ChatGPTAuthTests(unittest.TestCase):
         self.assertEqual(self.params["client_id"], "dynamic_agent_client")
         self.assertTrue(auth.finish_sign_in(self._callback(claims={"sub": "different"}))["signed_in"])
         self.assertEqual(auth._load_auth()["subject"], "different")
+        self._assert_session_preferences_reset()
 
     def test_module_imports_without_windows_ctypes(self):
         source = (BACKEND / "chatgpt_auth.py").read_text(encoding="utf-8")
@@ -370,17 +397,162 @@ class ChatGPTAuthTests(unittest.TestCase):
         self.assertEqual(auth.status()["expires_in_s"], 3600)
 
     def test_terminal_refresh_errors_clear_tokens_but_keep_registration(self):
-        for error in ("invalid_grant", "refresh_token_reused", "invalid_client"):
-            with self.subTest(error=error):
+        for status, error in [(400, "invalid_grant"), (400, "refresh_token_reused"), (400, "invalid_client"),
+                              (400, "invalid_token"), (401, "")]:
+            with self.subTest(status=status, error=error):
                 self.post.side_effect = self._post
                 self._sign_in()
+                self._allow_background()
                 self.now += 3600
-                self.post.side_effect = lambda *args, **kwargs: _Reply(400, {"error": error, "error_description": REFRESH})
+                self.post.side_effect = lambda *args, **kwargs: _Reply(status, {"error": error, "error_description": REFRESH})
                 self._assert_error("^signed out - sign in again$", auth.access_token)
                 self.assertFalse(auth.status()["signed_in"])
+                self._assert_session_preferences_reset()
                 self.assertEqual(auth._load_auth(), {
                     "ext_agent_host_id": self.params["ext_agent_host_id"], "client_id": CLIENT_ID, "subject": SUBJECT,
                 })
+
+    def test_withdrawn_scope_resets_session_preferences(self):
+        self._sign_in()
+        self._allow_background()
+        self.now += 3600
+        self.refresh_body = {"scope": "openid"}
+        self._assert_error("withdrawn", auth.access_token)
+        self.assertFalse(auth.status()["signed_in"])
+        self._assert_session_preferences_reset()
+
+    def test_missing_saved_session_resets_preferences(self):
+        self._sign_in()
+        self._allow_background()
+        self.auth_file.unlink()
+        self.assertFalse(auth.status()["signed_in"])
+        self._assert_session_preferences_reset()
+
+    def test_stale_preferences_are_reset_when_starting_signed_out(self):
+        auth.set_background_use_allowed(True)
+        auth.set_welcome_seen(True)
+        self.assertFalse(auth.status()["signed_in"])
+        self._assert_session_preferences_reset()
+
+    def test_inflight_model_listing_cannot_publish_after_signout(self):
+        import chatgpt_llm as plan
+        self._sign_in()
+        self._allow_background()
+        request_sent = threading.Event()
+        release = threading.Event()
+
+        def get(url, **kwargs):
+            if url == MODELS:
+                request_sent.set()
+                self.assertTrue(release.wait(5))
+            return self._get(url, **kwargs)
+
+        self.get.side_effect = get
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            listing = pool.submit(plan.models_and_selection)
+            try:
+                self.assertTrue(request_sent.wait(5))
+                self.assertTrue(auth.sign_out())
+            finally:
+                release.set()
+            with self.assertRaisesRegex(plan.ChatGPTError, "signed out"):
+                listing.result(timeout=5)
+        self._assert_session_preferences_reset()
+
+    def test_two_early_token_rejections_share_one_refresh(self):
+        from test_chatgpt_llm import FakeResponse, plan
+        self._sign_in()
+        rejected = threading.Barrier(2)
+        calls = []
+
+        def post(url, **kwargs):
+            if url == TOKEN_URL:
+                calls.append("refresh")
+                return self._post(url, **kwargs)
+            self.assertEqual(url, plan.RESPONSES_URL)
+            if kwargs["headers"]["Authorization"] == "Bearer " + ACCESS:
+                calls.append("initial")
+                rejected.wait(5)
+                return FakeResponse(401, {})
+            self.assertTrue(kwargs["headers"]["Authorization"] == "Bearer " + self.refresh_body["access_token"])
+            calls.append("retry")
+            return FakeResponse(body={"output": []})
+
+        self.post.side_effect = post
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            replies = [pool.submit(plan.client(model="model").invoke, "Hello") for _ in range(2)]
+            for reply in replies:
+                reply.result(timeout=5)
+        self.assertEqual(calls, ["initial", "initial", "refresh", "retry", "retry"])
+
+    def test_early_refresh_network_error_preserves_session(self):
+        from test_chatgpt_llm import FakeResponse, plan
+        self._sign_in()
+        self._allow_background()
+
+        def post(url, **kwargs):
+            if url == TOKEN_URL:
+                raise auth.requests.ConnectionError()
+            return FakeResponse(400, {"error": {"code": "token_expired"}})
+
+        self.post.reset_mock()
+        self.post.side_effect = post
+        with self.assertRaisesRegex(plan.ChatGPTError, "Could not reach OpenAI"):
+            plan.client(model="model").invoke("Hello")
+        self.assertEqual(self.post.call_count, 2)
+        self.assertTrue(auth.status()["signed_in"])
+        self.assertTrue(auth.get_background_use_allowed())
+        self.assertTrue(auth.get_welcome_seen())
+
+    def test_two_rejections_sign_out_after_one_refresh(self):
+        from test_chatgpt_llm import FakeResponse, plan
+        self._sign_in()
+        self._allow_background()
+
+        def post(url, **kwargs):
+            if url == TOKEN_URL:
+                return self._post(url, **kwargs)
+            return FakeResponse(400, {"error": {"code": "invalid_token"}})
+
+        self.post.reset_mock()
+        self.post.side_effect = post
+        with self.assertRaisesRegex(plan.ChatGPTError, "signed out"):
+            plan.client(model="model").invoke("Hello")
+        self.assertEqual(self.post.call_count, 3)
+        self.assertFalse(auth.status()["signed_in"])
+        self._assert_session_preferences_reset()
+
+    def test_resource_scope_withdrawal_clears_the_session_without_refresh(self):
+        from test_chatgpt_llm import FakeResponse, plan
+        self._sign_in()
+        self._allow_background()
+        self.post.reset_mock()
+        self.post.side_effect = None
+        self.post.return_value = FakeResponse(403, {"error": {"code": "chatpass_v2_scope_not_authorized"}})
+        with self.assertRaisesRegex(plan.ChatGPTError, "signed out"):
+            plan.client(model="model").invoke("Hello")
+        self.post.assert_called_once()
+        self.assertFalse(auth.status()["signed_in"])
+        self._assert_session_preferences_reset()
+
+    def test_model_listing_retries_with_the_refreshed_token(self):
+        self._sign_in()
+        requests = []
+
+        def get(url, **kwargs):
+            self.assertEqual(url, MODELS)
+            if kwargs["headers"]["Authorization"] == "Bearer " + ACCESS:
+                requests.append("initial")
+                return _Reply(401)
+            self.assertTrue(kwargs["headers"]["Authorization"] == "Bearer " + self.refresh_body["access_token"])
+            requests.append("retry")
+            return self._get(url, **kwargs)
+
+        self.post.reset_mock()
+        self.get.side_effect = get
+        self.assertEqual(auth.list_models(), [])
+        self.assertEqual(requests, ["initial", "retry"])
+        self.post.assert_called_once()
 
     def test_transient_and_unknown_openai_errors_are_safe(self):
         self._sign_in()

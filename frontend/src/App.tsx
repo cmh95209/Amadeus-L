@@ -38,8 +38,12 @@ import {
 } from "./attachments";
 import type { PictureInfo, ReactionChoice, ReactionReply } from "./attachments";
 import { knownLinkKeys } from "./linkText";
-import { deriveFooter, placeGreeting, isCeremonyWaitLine, waitUntilQuiet } from "./greetingFlow";
+import {
+  canRequestGreeting, chatGPTGreetingState, createGreetingRequestQueue, deriveFooter,
+  greetingLine, isCeremonyPending, placeGreeting, waitUntilQuiet,
+} from "./greetingFlow";
 import type { GreetPhase } from "./greetingFlow";
+import { brainSwitchNotice } from "./brainSwitchNotice";
 import type { Live2DCharacterHandle } from "./components/Live2DCharacter";
 import ComposerBox, { readDraft } from "./components/ComposerBox";
 import { MESSAGE_WINDOW, firstShownIndex } from "./messageWindow";
@@ -275,6 +279,8 @@ export default function App() {
   const [connStatus, setConnStatus] = useState<ConnectionStatus | null>(null);
   // How she thinks (built-in model vs the user's own); null = unknown.
   const [brain, setBrain] = useState<BrainMode | null>(null);
+  // Greeting probes and queued saves can outlive the render that started them.
+  const brainModeRef = useRef<BrainMode["mode"] | undefined>(undefined);
   // Settings -> Connection -> Built-in: her model's server and the file picker.
   const [builtinModel, setBuiltinModel] = useState<BuiltinModel | null>(null);
   const [modelChoice, setModelChoice] = useState<string>("");
@@ -410,6 +416,10 @@ export default function App() {
   const [settingsSection, setSettingsSection] = useState<"connection" | "preferences" | "personality" | "sampling" | "mobile" | "system">("connection");
   const chatGPTSettingsOpen = settingsOpen && settingsSection === "connection" && !!brain;
   const chatGPTConnection = useChatGPTConnection(chatgptMode, chatGPTSettingsOpen);
+  const chatGPTGreeting = chatGPTGreetingState(chatGPTConnection.status);
+  const chatGPTGreetingRef = useRef(chatGPTGreeting);
+  chatGPTGreetingRef.current = chatGPTGreeting;
+  const chatGPTGreetingsDisabled = chatgptMode && chatGPTGreeting === "disabled";
   const [statsInfo, setStatsInfo] = useState<StatInfo[]>([]);
   const [personality, setPersonalityText] = useState("");
   const [savedPersonality, setSavedPersonality] = useState("");
@@ -439,7 +449,7 @@ export default function App() {
     missingKey,
     conn: connStatus,
     notListedForMs: notListedSince.current === null ? null : Date.now() - notListedSince.current,
-    greetPhase,
+    greetPhase: chatGPTGreetingsDisabled ? "done" : greetPhase,
     restarting: sys.restarting,
   });
   const connStatusText = !connStatus
@@ -501,13 +511,12 @@ export default function App() {
     typeof sessionStorage !== "undefined" && sessionStorage.getItem("amadeusGreeted") === "1"
   );
   const modelWasFound = useRef<boolean | null>(null);
-  const greetingInFlight = useRef<boolean>(false);
+  const [greetingRequests] = useState(createGreetingRequestQueue);
   // Save stores its settings one by one: a probe must not ask /greet in
   // between (it would see e.g. the model but not yet the name and answer
   // with a "still missing" line). A Save that lands while a greet is in
   // flight is remembered and re-asked once that call returns.
   const saveInProgress = useRef<boolean>(false);
-  const pendingSavedGreet = useRef<boolean>(false);
   const switchGreetingInFlight = useRef<boolean>(false);
   // Bumped on every message the user sends. A greeting compares it before
   // and after its request: a change means the user spoke while she was
@@ -521,7 +530,7 @@ export default function App() {
   // ceremony is unfinished the chat box stays locked: she cannot answer
   // until she has generated her first line.
   const [ceremonyState, setCeremonyState] = useState<string | null>(null);
-  const ceremonyPending = !chatgptMode && ceremonyState !== null && ceremonyState !== "done";
+  const ceremonyPending = isCeremonyPending(ceremonyState, chatGPTGreetingsDisabled);
   const ceremonyPendingRef = useRef<boolean>(false);
   ceremonyPendingRef.current = ceremonyPending;
 
@@ -977,18 +986,15 @@ export default function App() {
   }
 
   async function fireGreeting(justSaved = false, isRetry = false) {
-    if (greetedThisSession.current) return;
-    if (greetingInFlight.current) {
-      if (justSaved) pendingSavedGreet.current = true; // re-asked when it returns
-      return;
-    }
-    if (loading) {
+    if (greetedThisSession.current || saveInProgress.current ||
+        !canRequestGreeting(initState.current === "ok", brainModeRef.current, chatGPTGreetingRef.current)) return;
+    if (loadingRef.current) {
       // Do not interrupt an in-flight turn. A retry that cannot run must
       // still settle the footer (her reply will prove the line works).
       if (isRetry) settleGreetPhase("failed");
       return;
     }
-    greetingInFlight.current = true;
+    if (!greetingRequests.start(justSaved)) return;
     const spokeBefore = userSpokeSeq.current;
     setGreetPhase((p) => (p === "slow" ? p : "waking"));
     if (slowGreetTimer.current === null) {
@@ -1030,8 +1036,8 @@ export default function App() {
         settleGreetPhase("done");
         return;
       }
-      const line = g.response;
-      if (!line || (!g.ready && !isCeremonyWaitLine(g.kind, g.wait))) {
+      const line = greetingLine(g);
+      if (!line) {
         // Nothing to say this probe (model not servable yet, or the
         // ceremony is waiting): back to idle, and let the next probe that
         // finds the model re-fire it.
@@ -1047,20 +1053,12 @@ export default function App() {
       // ready=false (the model is down by definition on a fresh install) and
       // still must be shown: they are what teach a first-time user to
       // connect their model.
-      const ceremonialWait = isCeremonyWaitLine(g.kind, g.wait);
-      if (!ceremonialWait) {
+      if (!line.waiting) {
         greetedThisSession.current = true;
         sessionStorage.setItem("amadeusGreeted", "1");
       }
-      settleGreetPhase(ceremonialWait ? "idle" : "done");
-      // Scripted first-launch lines (intro / trying / reminder / fallback,
-      // and their built-in variants) can never be regenerated; ordinary
-      // greetings and the wake-up can.
-      const regenerable = g.kind === undefined || g.kind === "wake";
-      setMessages((current) => placeGreeting(current, {
-        role: "assistant", content: line, id: g.assistantId, is_greeting: true,
-        greeting_regenerable: regenerable,
-      }));
+      settleGreetPhase(line.waiting ? "idle" : "done");
+      setMessages((current) => placeGreeting(current, line.message));
       if (g.speechUrl) rememberVoiceLine(g.assistantId); // the Replay button
       // The user spoke while she was writing: the line is shown (above
       // their message) but not voiced - her reply to them speaks instead.
@@ -1075,20 +1073,15 @@ export default function App() {
       // what happened instead (after the one retry).
       failed = true;
     } finally {
-      greetingInFlight.current = false;
-    }
-    if (pendingSavedGreet.current) {
-      // Settings were saved while this call was out: the backend answered
-      // the OLD settings - ask again with the saved ones.
-      pendingSavedGreet.current = false;
-      void fireGreeting(true);
-      return;
-    }
-    if (failed) {
-      if (isRetry) {
-        settleGreetPhase("failed");
-      } else {
-        window.setTimeout(() => void fireGreeting(false, true), 10000);
+      if (greetingRequests.finish()) {
+        // Even a silent response may reflect the settings before Save.
+        void fireGreeting(true);
+      } else if (failed) {
+        if (isRetry) {
+          settleGreetPhase("failed");
+        } else {
+          window.setTimeout(() => void fireGreeting(false, true), 10000);
+        }
       }
     }
   }
@@ -1164,6 +1157,12 @@ export default function App() {
       setBackendDown(true);
     }
   }
+
+  useEffect(() => {
+    if (chatgptMode && chatGPTGreeting === "ready") void fireGreeting(true);
+    // Sign-in and the welcome choice can complete before the next health probe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatgptMode, chatGPTGreeting]);
 
   // Gentle background probe so the footer dot reflects the model server's
   // real state (a dead server shows red without waiting for a failed message).
@@ -1670,6 +1669,7 @@ export default function App() {
       setContextBudgetState(budgetInfo.budget);
       setBuiltinBudgetCap(budgetInfo.builtinCap);
       setDefaultBudget(budgetInfo.defaultBudget);
+      brainModeRef.current = brainInfo?.mode;
       setBrain(brainInfo);
       setServerAddressState(serverAddr);
       setUserName(savedName.name);
@@ -2111,8 +2111,9 @@ export default function App() {
       } catch {
         profileSaved = false;
       }
-      // Everything is stored: from here on a probe may ask /greet again.
+      // The saved name and connection can advance the first-launch ceremony.
       saveInProgress.current = false;
+      void fireGreeting(true);
       void refreshConnection();
       // A name with no reading yet: let the backend suggest how she says it
       // (one short model call). Never overwrites what the user typed meanwhile.
@@ -2123,14 +2124,6 @@ export default function App() {
           })
           .catch(() => undefined);
       }
-      // The connection settings were JUST saved: during the first-launch
-      // ceremony this is a fresh attempt - ask the backend to re-check the
-      // line at once (she re-says "checking the line" / wakes up if the
-      // model is already answering). Outside the ceremony this is a no-op
-      // (already greeted this session, or the model not being servable is
-      // the probe's job).
-      void fireGreeting(true);
-
       if (connectionError) {
         setStatus("Settings saved");
         setSettingsError(connectionError + " Everything else was saved.");
@@ -2155,9 +2148,7 @@ export default function App() {
     }
   }
 
-  // Settings -> Connection: "Built-in" / "Custom Model". Saved at once; the
-  // launcher starts (or stops) her built-in model only when Amadeus starts,
-  // so the note asks for a restart.
+  // Settings -> Connection: the mode takes effect as soon as it is saved.
   async function chooseBrain(mode: BrainMode["mode"]) {
     if (brainSwitching || !brain) return;
     if ((mode === "builtin" && !brain.available) || brain.mode === mode) return;
@@ -2166,23 +2157,15 @@ export default function App() {
     setSettingsNotice("");
     try {
       const next = await setBrainMode(mode);
+      brainModeRef.current = next.mode;
       setBrain(next);
-      // Each mode keeps its own conversation number: show the new mode's.
       const budget = await getContextBudgetInfo().catch(() => null);
       if (budget) {
         setBuiltinBudgetCap(budget.builtinCap);
         setDefaultBudget(budget.defaultBudget);
         setContextBudgetState(budget.budget);
       }
-      setSettingsNotice(
-        mode === "chatgpt"
-          ? ""
-          : mode === "custom"
-          ? "Switched to your own model. Her built-in model was unloaded (its graphics memory is free)."
-          : next.model_missing
-            ? "Switched to her built-in model. Add a model file (see Model below) and press Load."
-            : "Switched to her built-in model - it is loading now."
-      );
+      setSettingsNotice(brainSwitchNotice(brain.mode, next));
       void refreshConnection();
       void refreshBuiltinModel();
       // The brain changed what a key is needed for: the Send gate re-reads

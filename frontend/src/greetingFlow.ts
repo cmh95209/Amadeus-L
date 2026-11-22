@@ -1,7 +1,48 @@
-import type { ConnectionStatus, MemoryMessage } from "./api";
+import type { BrainMode, ChatGPTStatus, ConnectionStatus, GreetingReply, MemoryMessage } from "./api";
 
 /** Where the startup greeting stands - the footer's proof of life. */
 export type GreetPhase = "idle" | "waking" | "slow" | "done" | "failed";
+
+export type ChatGPTGreetingState = "waiting" | "disabled" | "ready";
+
+export function chatGPTGreetingState(
+  status: Pick<ChatGPTStatus, "signed_in" | "welcome_seen" | "background_use_allowed"> | null,
+): ChatGPTGreetingState {
+  if (!status?.signed_in || !status.welcome_seen) return "waiting";
+  return status.background_use_allowed ? "ready" : "disabled";
+}
+
+export function canRequestGreeting(
+  historyReady: boolean, mode: BrainMode["mode"] | undefined, chatGPT: ChatGPTGreetingState,
+): boolean {
+  // Load the initial history first so it can't overwrite a newly voiced greeting.
+  return historyReady && (mode !== "chatgpt" || chatGPT === "ready");
+}
+
+export function isCeremonyPending(state: string | null, greetingsDisabled = false): boolean {
+  return !greetingsDisabled && state !== null && state !== "done";
+}
+
+export function createGreetingRequestQueue() {
+  let inFlight = false;
+  let savedWhileWaiting = false;
+  return {
+    start(justSaved: boolean): boolean {
+      if (inFlight) {
+        savedWhileWaiting ||= justSaved;
+        return false;
+      }
+      inFlight = true;
+      return true;
+    },
+    finish(): boolean {
+      inFlight = false;
+      const recheck = savedWhileWaiting;
+      savedWhileWaiting = false;
+      return recheck;
+    },
+  };
+}
 
 export type FooterState = {
   text: string;
@@ -119,6 +160,19 @@ export async function waitUntilQuiet(
  *  newer backends flag them with wait=true, older ones by name. */
 export function isCeremonyWaitLine(kind: string | undefined, wait: boolean | undefined): boolean {
   return wait === true || kind === "intro" || kind === "trying" || kind === "reminder";
+}
+
+export function greetingLine(report: GreetingReply): { message: MemoryMessage; waiting: boolean } | null {
+  const { response, ready, kind, wait, assistantId } = report;
+  const waiting = isCeremonyWaitLine(kind, wait);
+  if (!response || (!ready && !waiting)) return null;
+  return {
+    message: {
+      role: "assistant", content: response, id: assistantId, is_greeting: true,
+      greeting_regenerable: kind === undefined || kind === "wake",
+    },
+    waiting,
+  };
 }
 
 /**

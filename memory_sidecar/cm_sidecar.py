@@ -19,9 +19,8 @@ Design decisions:
   supported - the thinking budget otherwise truncates the extraction
   JSON); servers that reject the parameter get one plain retry (mirrors
   the app's maybe_strip_rejected_params). The LLM is NOT required at
-  startup: context serving is pure local retrieval, and if the model is
-  not loaded, learning simply pauses with turns queued - so switching
-  servers between launches can never kill the service.
+  startup: context serving is pure local retrieval. The learning worker
+  waits for an available local model and retries failed jobs independently.
 - Embeddings: Qwen3-Embedding-0.6B IN-PROCESS on CPU (zero VRAM; the GPU
   stays free for the 27 B).
 - LAZY ENGINE (2026-10-07, launch #4 in the 18 GB test box): the HTTP
@@ -186,7 +185,7 @@ def _is_local_host(server: str) -> bool:
     return bool(addr.is_private or addr.is_loopback or addr.is_link_local)
 
 
-def llm_ready(server, model, key, timeout=5.0):
+def llm_ready(server, model, key, timeout=5.0, *, raise_auth=False):
     """Read-only /models probe (the app does the same in test_server). True
     only when the server answers AND the configured model is actually
     loaded - the guard that prevents hitting a downloaded-but-not-loaded
@@ -211,33 +210,14 @@ def llm_ready(server, model, key, timeout=5.0):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             loaded = [m["id"] for m in json.load(r)["data"]]
         return model in loaded, loaded
-    except Exception:
+    except Exception as exc:
+        if raise_auth and _is_auth_rejection(exc):
+            raise
         return False, []
-
-
-def startup_llm_note():
-    """Best-effort startup note: is the configured LLM reachable RIGHT NOW?
-    Never fatal - the service starts either way; learning just resumes
-    once the model is loaded (llm_ready guards every learning batch)."""
-    server, model, key = _read_app_llm()
-    if not model:
-        log("LLM target not configured yet (no model selected in the app) - "
-            "starting anyway; long-term memory begins learning once the user "
-            "connects a model in Settings (the app's LLM settings are re-read "
-            "on every learning batch).")
-        return
-    ok, loaded = llm_ready(server, model, key)
-    if ok:
-        log(f"LLM target OK: {server} model={model} (loaded: {loaded})")
-    else:
-        log(f"LLM target not reachable/loaded yet: {server} model={model} - "
-            f"starting anyway; learning resumes once it is (the app's LLM "
-            f"settings are re-read on every learning batch).")
 
 
 log("== amadeus charactermemory sidecar starting ==")
 t_start = time.time()
-startup_llm_note()
 
 # Light imports only: the HTTP surface below must come up in seconds. The
 # heavy engine (torch + 16-bit embedder + lore cache) is built later in a
@@ -248,6 +228,7 @@ from pydantic import BaseModel
 from character_memory.llm.embedding_base import EmbeddingProvider
 from character_memory.llm.openai_client import OpenAICompatibleLLM
 from character_memory.config import LLMConfig
+from character_memory.memory.learning_jobs import LearningJobs, LearningUnavailable, UNAVAILABLE_DELAY
 
 # Engine state (see _build_engine). The 30 s stagger keeps the engine's
 # load-time peak out of the window in which the voice engine is still
@@ -348,9 +329,7 @@ def _reasoning_body(server: str, level: str) -> dict:
 #     jitter - spreads out the calls, never 0);
 #   * a Retry-After header (seconds form) replaces the computed wait,
 #     capped at 30 s, and still counts against the budget;
-#   * one log line per wait; when nothing more may be tried the last error
-#     is re-raised - learning just pauses and the turns stay queued (the
-#     service is never killed by a busy provider).
+#   * the last error is re-raised for the learning queue to schedule.
 _SIDECAR_RETRY_STATUSES = (429, 503)
 _SIDECAR_BACKOFF_FIRST_S = 5.0
 _SIDECAR_BACKOFF_FACTOR = 2.0
@@ -411,7 +390,7 @@ def _sidecar_backoff_wait(attempt, exc) -> float:
     return random.uniform(lo, hi) * nominal
 
 
-def _sidecar_call_with_backoff(fn, *, sleep=time.sleep, label=""):
+def _sidecar_call_with_backoff(fn, *, sleep=time.sleep, label=None):
     """Call ``fn()``; on a retryable "busy" error wait and try again until
     it succeeds, the try count or the wait budget is spent, or the error is
     not retryable (raised at once, unmarked). See the block header above."""
@@ -431,12 +410,14 @@ def _sidecar_call_with_backoff(fn, *, sleep=time.sleep, label=""):
             wait = _sidecar_backoff_wait(attempt, exc)
             if spent + wait > budget:
                 break
-            log(f"[Amadeus-sidecar] {label or 'cloud'} busy - waiting "
-                f"{wait:.1f} s, try {attempt + 1} of {total}")
+            if label:
+                log(f"[Amadeus-sidecar] {label} busy - waiting "
+                    f"{wait:.1f} s, try {attempt + 1} of {total}")
             sleep(wait)
             spent += wait
-    log(f"[Amadeus-sidecar] {label or 'cloud'} busy - giving up; learning "
-        f"pauses and turns stay queued")
+    if label:
+        log(f"[Amadeus-sidecar] {label} busy - giving up; learning "
+            f"pauses and turns stay queued")
     raise last_exc
 
 
@@ -505,7 +486,7 @@ class NonThinkingLLM(OpenAICompatibleLLM):
         if level != "off" and kw["max_tokens"]:
             # Thinking counts against the cap: keep the extraction's own room.
             kw["max_tokens"] += _THINKING_BUDGETS[level]
-        server = _read_app_llm()[0]
+        server = self.config.base_url
         body = _reasoning_body(server, level)
         headers = _sidecar_priority_headers(server)
         if headers:
@@ -516,11 +497,8 @@ class NonThinkingLLM(OpenAICompatibleLLM):
                 return self._client.chat.completions.create(
                     extra_body=body, **kw)
             except Exception as e:
-                msg = repr(e)
-                if not ("400" in msg or "422" in msg
-                        or "Bad Request" in msg or "Unprocessable" in msg):
+                if getattr(e, "status_code", None) not in (400, 422):
                     raise
-                log("server rejected the thinking-off parameter - plain retry")
                 return self._client.chat.completions.create(**kw)
 
         if _is_local_host(server):
@@ -528,8 +506,7 @@ class NonThinkingLLM(OpenAICompatibleLLM):
             # attempt, no retry (a second copy would only slow the GPU).
             resp = attempt()
         else:
-            host = server.split("//", 1)[-1].split("/")[0]
-            resp = _sidecar_call_with_backoff(attempt, label=host)
+            resp = _sidecar_call_with_backoff(attempt)
         return resp.choices[0].message.content or ""
 
 
@@ -537,29 +514,45 @@ _llm = None
 _llm_sig = None
 
 
-def get_llm():
+def get_llm(settings=None):
     """LLM client built from the app's LIVE settings (hot reload: any change
     of server, model or key in the app is picked up on the next learning
     batch). The key may be empty (a keyless local / LAN server is a valid
-    target): the LLM is OPTIONAL - context serving is pure local retrieval
-    and learning just stays paused (the llm_ready gate) until the target
-    answers. A keyless probe and the client both send the same placeholder
-    the app sends (llm.py, "unsloth"); for a cloud target the gate keeps
-    learning paused until a real key is saved."""
+    target). A keyless probe and the client both send the same placeholder
+    the app sends (llm.py, "unsloth")."""
     global _llm, _llm_sig
-    server, model, key = _read_app_llm()
-    sig = (server, model, key)
+    sig = _read_app_llm() if settings is None else settings
+    server, model, key = sig
     if _llm is None or _llm_sig != sig:
         _llm = NonThinkingLLM(LLMConfig(base_url=server, api_key=key or "unsloth",
                                         model=model, temperature=0.0, max_tokens=2048,
                                         timeout=240.0))
         _llm_sig = sig
-        if model:
-            log(f"LLM client -> {server} model={model}")
-        else:
-            log("LLM client pending: no model selected yet (it follows the "
-                "app's settings and is rebuilt on the next learning batch)")
     return _llm
+
+
+def _is_auth_rejection(exc):
+    status = getattr(exc, "status_code", None)
+    return (getattr(exc, "code", None) if status is None else status) in (401, 403)
+
+
+def _extract_with_current_llm(collect):
+    settings = _read_app_llm()
+    server, model, key = settings
+    local = _is_local_host(server)
+    if not model or (not local and not key):
+        raise LearningUnavailable()
+    try:
+        if local and not llm_ready(server, model, key, raise_auth=True)[0]:
+            raise LearningUnavailable()
+        return collect(get_llm(settings))
+    except Exception as exc:
+        if not _is_auth_rejection(exc):
+            raise
+        updated = _read_app_llm()
+        if updated[2] == key:
+            raise
+        return collect(get_llm(updated))
 
 
 def _seed_index():
@@ -630,7 +623,7 @@ def _build_engine():
     with >= EMBED_32BIT_MIN_RAM_GB load 32-bit instead (3-6x faster
     lookups, see _embedder_bits).
     """
-    global store, memories, agent, _emb
+    global store, memories, agent, _emb, _learning_jobs
     with _engine_lock:
         if _engine_state["ready"]:
             return
@@ -669,10 +662,11 @@ def _build_engine():
                 UserDirectiveMemory(store, HybridSearch(_emb)),
             ]
             agent = CharacterAgent(directory=ASSETS, name="Amadeus", save_directory=DATA_DIR,
-                                   persona=_persona_with_pronouns())
+                                   persona=_persona_with_pronouns(), store=store)
             agent.load(llm=get_llm(), embedder=_emb, memories=memories)
             t1 = time.time()
             agent.build()
+            _learning_jobs = LearningJobs(store)
             log(f"agent built in {time.time()-t1:.1f}s (a ~508s number would mean a lore REBUILD)")
 
             # Flush the turns that /save queued while the engine loaded
@@ -688,70 +682,73 @@ def _build_engine():
                     _process_save(item)
                 except ValueError as e:
                     log(f"dropping queued turn for chat {item.chat_id} ({e})")
-            for _c in agent.list_chats():
-                if _c.unextracted():
-                    _start_background_extract(_c.id)
-
             _engine_state.update(status="ready", ready=True, seconds=time.time()-t0)
+            threading.Thread(target=_run_learning_worker, daemon=True, name="cm-learning").start()
             log(f"== memory engine ready in {time.time()-t0:.0f}s ==")
         except Exception as e:
-            _engine_state.update(status="failed", error=repr(e))
-            log(f"WARNING: memory engine failed to load ({e!r}) - the service "
+            error = type(e).__name__
+            _engine_state.update(status="failed", error=error)
+            log(f"WARNING: memory engine failed to load ({error}) - the service "
                 "keeps serving the no-memory baseline and /save keeps "
                 "queuing turns; relaunching Amadeus retries the load")
 
 
 # --------------------------------------------------------------------------- #
-# Extraction worker (background; idempotent, resumable, one thread per chat)
+# Extraction worker (background; one batch at a time across chats)
 # --------------------------------------------------------------------------- #
 _write_lock = threading.Lock()
-_extract_lock = threading.Lock()
+_extract_condition = threading.Condition()
 _extracting_chats: set = set()
+_extract_requests: dict = {}
+_learning_jobs = None
 
 
 def _start_background_extract(chat_id: str) -> bool:
-    with _extract_lock:
-        if chat_id in _extracting_chats:
+    with _extract_condition:
+        if chat_id in _extract_requests:
             return False
-        _extracting_chats.add(chat_id)
+        _extract_requests[chat_id] = None
+        _extract_condition.notify()
+        return True
 
-    def work():
-        t0 = time.time()
+
+def _run_learning_worker():
+    initialized = False
+    while True:
+        chat_id = None
         try:
-            while True:
-                chat = agent.load_chat(chat_id)
-                if chat is None or not chat.unextracted():
-                    break
-                ok = False
-                server, model, key = _read_app_llm()
-                ok = bool(model)   # an unconfigured target is never "ready"
-                if ok:
-                    for _attempt in range(5):   # bounded wait: the model server
-                        ok, _loaded = llm_ready(server, model, key)  # may start after the app
-                        if ok:
-                            break
-                        time.sleep(30)
-                if not ok:
-                    if model:
-                        log(f"extraction paused for chat {chat_id}: LLM not ready "
-                            f"({server} model={model}) - turns stay queued; they "
-                            f"resume on the next learning trigger")
-                    else:
-                        log(f"extraction paused for chat {chat_id}: no model "
-                            f"selected yet - turns stay queued; they resume once "
-                            f"the user connects a model in Settings")
-                    break
-                agent.llm = get_llm()   # follow any app-side server switch
-                agent.extract(target=chat)
-            log(f"extraction complete for chat {chat_id} ({time.time()-t0:.0f}s)")
-        except Exception as e:
-            log(f"extraction ERROR for chat {chat_id}: {e!r}")
-        finally:
-            with _extract_lock:
-                _extracting_chats.discard(chat_id)
+            if not initialized:
+                _learning_jobs.enqueue_catchup()
+                for chat_id in _learning_jobs.unassigned_chats():
+                    _start_background_extract(chat_id)
+                initialized = True
+            with _extract_condition:
+                chat_id = next(iter(_extract_requests), None)
+                if chat_id is not None:
+                    del _extract_requests[chat_id]
+            if chat_id is not None:
+                _learning_jobs.enqueue_chat(chat_id)
+                if _learning_jobs.unassigned_count(chat_id):
+                    _start_background_extract(chat_id)
+            job = _learning_jobs.next_due()
+            if job is not None:
+                with _extract_condition:
+                    _extracting_chats.add(job["chat_id"])
+                try:
+                    _learning_jobs.run(job, agent, _extract_with_current_llm, log)
+                finally:
+                    with _extract_condition:
+                        _extracting_chats.discard(job["chat_id"])
+                continue
 
-    threading.Thread(target=work, daemon=True, name=f"extract-{chat_id[:8]}").start()
-    return True
+            with _extract_condition:
+                if not _extract_requests:
+                    _extract_condition.wait(_learning_jobs.seconds_until_due())
+        except Exception as exc:
+            log(f"learning worker error={type(exc).__name__}")
+            if chat_id is not None:
+                _start_background_extract(chat_id)
+            time.sleep(UNAVAILABLE_DELAY)
 
 
 # --------------------------------------------------------------------------- #
@@ -834,7 +831,8 @@ def _process_save(req) -> "tuple[int, bool]":
         chat.add_message(req.role, req.content, occurred_at=req.occurred_at)
     un = len(chat.unextracted())
     started = False
-    if req.role == "user" and un >= EXTRACT_INTERVAL:
+    if (req.role == "user" and un >= EXTRACT_INTERVAL
+            and _learning_jobs.unassigned_count(chat.id) >= EXTRACT_INTERVAL):
         started = _start_background_extract(chat.id)
     return un, started
 
@@ -944,7 +942,7 @@ def extract_now(chat_id: Optional[str] = None, min_new: int = 0):
     started = 0
     for t in targets:
         chat = agent.load_chat(t)
-        if chat is not None and len(chat.unextracted()) >= max(0, int(min_new)):
+        if chat is not None and _learning_jobs.unassigned_count(t) >= max(1, int(min_new)):
             started += 1 if _start_background_extract(t) else 0
     return {"ok": True, "targets": targets, "started": started}
 

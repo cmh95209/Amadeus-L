@@ -79,6 +79,8 @@ Amadeus-Project/
 │   ├── environment.yml        # backend env (python 3.10)
 │   ├── requirements.in        # backend dependencies
 │   ├── assets/                # prerecorded interaction audio
+│   ├── tests/
+│   │   └── test_cm_learning.py  # offline learning and recovery tests
 │   └── data/                  # runtime data (git-ignored)
 │
 ├── frontend/
@@ -112,6 +114,8 @@ Amadeus-Project/
 │   ├── cm_sidecar.py          # sidecar entry point (port 9870)
 │   ├── requirements.txt       # pinned sidecar dependencies
 │   ├── lib/                   # vendored CharacterMemory engine (GPL)
+│   │   └── character_memory/memory/
+│   │       └── learning_jobs.py  # SQLite queue, extraction checkpoints, legacy catch-up
 │   ├── seed_index/            # her lore, re-seeded on first start
 │   ├── LICENSE-NOTE.md
 │   └── venv/                  # built on first launch (git-ignored)
@@ -135,6 +139,15 @@ Amadeus-Project/
 
 GPT-SoVITS is cloned separately into a local `GPT-SoVITS/` directory. It is
 an external dependency rather than part of the Amadeus repository itself.
+
+The memory sidecar's background worker reloads provider settings for each
+extraction and resumes due SQLite jobs after startup. It checkpoints model
+results before applying them and marks source messages processed after the
+memory writes and index publication succeed. A one-time migration queues a
+bounded window of previously processed messages for recovery.
+The queue lives in
+[`learning_jobs.py`](../memory_sidecar/lib/character_memory/memory/learning_jobs.py).
+Its offline coverage lives in [`test_cm_learning.py`](../backend/tests/test_cm_learning.py).
 
 ---
 

@@ -35,22 +35,20 @@ class UserSummaryMemory(StructuredMemory):
     default_importance: float = 1.0
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        """Initialise the memory and migrate the profile refresh timestamp.
-
-        ``updated_at`` is intentionally not part of ``extra_columns``: it is
-        managed by this memory, not exposed as an editor field. Existing
-        databases get the column lazily when the character is loaded.
-        """
+        """Add the internal profile refresh and learning source timestamps."""
         super().__init__(*args, **kwargs)
-        if "updated_at" not in self.store.columns(self.table):
+        existing = self.store.columns(self.table)
+        for column in ("updated_at", "source_at"):
+            if column in existing:
+                continue
             try:
                 self.store.execute(
-                    f"ALTER TABLE {self.table} ADD COLUMN updated_at REAL"
+                    f"ALTER TABLE {self.table} ADD COLUMN {column} REAL"
                 )
             except self.store.operational_errors:
                 # Another process may have completed the same additive
                 # migration between the column check and ALTER TABLE.
-                if "updated_at" not in self.store.columns(self.table):
+                if column not in self.store.columns(self.table):
                     raise
         self.store.execute(
             f"UPDATE {self.table} SET updated_at = created_at "
@@ -132,6 +130,7 @@ class UserSummaryMemory(StructuredMemory):
         """Write a profile row and stamp the refresh time."""
         updated = dict(row)
         updated["updated_at"] = self._now()
+        updated["source_at"] = None
         super().update_row(updated)
 
     def get_summary(self, user_id: str) -> Optional[dict[str, Any]]:

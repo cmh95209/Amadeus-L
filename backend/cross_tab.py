@@ -419,6 +419,21 @@ def _distinct_cues(cues):
     )
 
 
+def _cue_group_count(terms, cues):
+    """Count matched words and runs of overlapping bigrams in query order."""
+    count = 0
+    previous = ""
+    for term in terms:
+        if term not in cues:
+            previous = ""
+            continue
+        if not (previous and _unspaced(previous[0]) and _unspaced(term[0])
+                and previous[-1] == term[0]):
+            count += 1
+        previous = term
+    return count
+
+
 def _passage(text, terms):
     # Preserve original offsets while scoring language-neutral word/bigram cues.
     if len(text) <= PASSAGE_CHARS:
@@ -502,10 +517,11 @@ class ReplySearch:
             self.semantic = vectors.begin_query(self.query, frozenset(), store.PATH_TO_MEMORY,
                                                 prefetch=True)
 
-    def _rank(self, verbatim_message_ids):
+    def _rank(self, verbatim_message_ids, *, include_direct_fallback=False):
         visible = frozenset(verbatim_message_ids)
-        if visible in self.ranks:
-            return self.ranks[visible]
+        cache_key = visible, include_direct_fallback
+        if cache_key in self.ranks:
+            return self.ranks[cache_key]
         if self.tabs is None:
             rows = _candidates()
             if self.answering_id is not None:
@@ -536,9 +552,17 @@ class ReplySearch:
                     all_scores[row["id"]] = cosine
                     if cosine > semantic.get(i, (-1.0, 0))[0]:
                         semantic[i] = (cosine, row["id"])
-        semantic_rank = sorted(
-            (i for i in semantic if semantic[i][0] >= moment.DIRECT_COSINE),
+        semantic_order = sorted(
+            semantic,
             key=lambda i: (semantic[i][0], units[i]["first"]["id"]), reverse=True)
+        semantic_rank = [i for i in semantic_order if semantic[i][0] >= moment.DIRECT_COSINE]
+        # Keep a single well-separated match for a direct request when both ranks are empty.
+        if include_direct_fallback and not (keyword or semantic_rank) and semantic_order:
+            best = semantic_order[0]
+            rival = semantic[semantic_order[1]][0] if len(semantic_order) > 1 else 0.0
+            cosine = semantic[best][0]
+            if cosine >= moment.DIRECT_FALLBACK_COSINE and cosine >= rival + moment.SCENE_LEAD:
+                semantic_rank.append(best)
         fused = {}
         for ranking in (keyword, semantic_rank):
             for rank, i in enumerate(ranking, start=1):
@@ -555,11 +579,11 @@ class ReplySearch:
                 matched = max(rows, key=lambda row: sum(test(_normal(_her_line(row))) for test in tests))["id"]
             ranked.append(_Anchor(tab, index, rows, matched, semantic.get(i, (0.0,))[0],
                                   fused[i], i in keyword_set, lexical, lexical & rare))
-        self.ranks[visible] = ranked, all_scores
+        self.ranks[cache_key] = ranked, all_scores
         return ranked, all_scores
 
     def _scenes(self, verbatim_message_ids, prompt_messages, direct):
-        anchors, scores = self._rank(verbatim_message_ids)
+        anchors, scores = self._rank(verbatim_message_ids, include_direct_fallback=direct is not False)
         if not anchors:
             return
         embedded = getattr(self.semantic, "embedded", None)
@@ -630,9 +654,14 @@ class ReplySearch:
             scene_rows = {row["id"] for exchange in scene for row in exchange.rows}
             rival = max((cosine for mid, cosine in scores.items() if mid not in scene_rows), default=0.0)
             lexical = bool(candidate.rare_cues and _distinct_cues(candidate.cues))
+            # A weaker cosine needs a ranked keyword hit with three separate cue groups.
             strong = ((candidate.cosine >= moment.STRONG_COSINE
                        and candidate.cosine >= rival + moment.SCENE_LEAD)
-                      or (candidate.cosine >= moment.LEXICAL_COSINE and lexical))
+                      or (candidate.cosine >= moment.LEXICAL_COSINE and lexical)
+                      or (candidate.cosine >= moment.CORROBORATED_COSINE
+                          and candidate.cosine >= rival + moment.CORROBORATED_LEAD
+                          and candidate.keyword
+                          and _cue_group_count(terms, candidate.cues) >= moment.CORROBORATED_CUE_GROUPS))
             if direct or strong or (moment.FAINT_MEMORIES and candidate.keyword):
                 choices.append((candidate, scene, not strong))
         if not choices:

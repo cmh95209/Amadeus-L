@@ -21,13 +21,16 @@ PARTNER_CLIP_SHARE = 0.30
 MIN_MATCH_CHARS = 24
 TOPIC_TERM_CHARS = 4
 
-# Initial, tune in live test. Retrieval thresholds reflect the live model's
-# 0.53–0.69 same-language and 0.50–0.57 cross-language correct-match ranges.
+# Retrieval thresholds reflect live cosine scores and independent evidence.
 STRONG_COSINE = 0.62
 SCENE_LEAD = 0.08
 LEXICAL_COSINE = 0.55
 LEXICAL_CUES = 2
+CORROBORATED_COSINE = 0.515
+CORROBORATED_LEAD = 0.04
+CORROBORATED_CUE_GROUPS = 3
 DIRECT_COSINE = 0.50
+DIRECT_FALLBACK_COSINE = 0.48
 CLOSE_TIE = 0.025
 TOPIC_BREAK_COSINE = 0.25
 RECALL_INTENT_COSINE = 0.45

@@ -448,6 +448,27 @@ class MomentPolicyTests(_Base):
         return cross_tab.prepare_search(query, tab or self.current, answering_id=mid).block(
             verbatim_message_ids=(mid,), prompt_messages=[{"role": "user", "content": query}])
 
+    def test_direct_cross_language_fallback_requires_intent_and_a_clear_lead(self):
+        birthday = "My birthday is April 23. We celebrate on the observatory roof."
+        anchor = self._user(birthday)
+        rival = self._user("The lantern was on the workshop shelf.")
+        question = "私の誕生日は何月何日だったか覚えてる？天文台の屋上で青いランタンとレモンケーキの話をしたときに言ったよ。"
+        asked = self._user(question)
+        self.scores = {anchor: 0.48147429159436395, rival: 0.29800287006880216}
+
+        self.assertIsNone(self._block(question, asked))
+        self.intent = [0, 1]
+        block = self._block(question, asked)
+        self.assertIsNotNone(block)
+        self.assertIn("earlier in this chat", block["content"])
+        self.assertIn(f"[matched] {birthday} [/matched]", block["content"])
+        self.assertIn(cross_tab.moment.HEDGE, block["content"])
+
+        self.scores[rival] = 0.41
+        self.assertIsNone(self._block(question, asked))
+        self.scores = {anchor: 0.479, rival: 0.29800287006880216}
+        self.assertIsNone(self._block(question, asked))
+
     def test_spontaneous_lead_uses_distinct_scenes_and_lexical_corroboration(self):
         tab = store.create_conversation("Observatory")
         found = self._user("I bought a violet telescope yesterday.", tab)
@@ -467,6 +488,41 @@ class MomentPolicyTests(_Base):
         turn = self._user(query)
         self.scores = {alternate: 0.56, found: 0.54}
         self.assertIn("maple workbench", self._block(query, turn)["content"])
+
+    def test_corroborated_callback_uses_measured_scores_and_keeps_cooldown(self):
+        tab = store.create_conversation("Observatory")
+        birthday = "私の誕生日は4月23日です。天文台の屋上で青いランタンを灯して、レモンケーキを切り分けて祝うんだ。"
+        anchor = self._user(birthday, tab)
+        rival = self._user("屋上に行く階段の手すりを直した。")
+        query = "荷ほどきしたら青いランタンが出てきた。レモンケーキと一緒に天文台の屋上へ持っていくつもり。"
+        first = self._user(query, tab)
+        self.scores = {anchor: 0.5162939149161831, rival: 0.47179512080305663}
+
+        self.private.add(anchor)
+        self.assertIsNone(self._block(query, first, tab))
+        self.private.remove(anchor)
+        self.scores[rival] = 0.48
+        self.assertIsNone(self._block(query, first, tab))
+        self.scores[rival] = 0.47179512080305663
+        block = self._block(query, first, tab)
+        self.assertIsNotNone(block)
+        self.assertIn(f"[matched] {birthday} [/matched]", block["content"])
+        self.assertNotIn(cross_tab.moment.HEDGE, block["content"])
+
+        follow_up = "青いランタンを磨いて、天文台の屋上へ上がる階段のそばにレモンケーキを置いたよ。"
+        second = self._user(follow_up, tab)
+        self.scores = {anchor: 0.5228755792900182, rival: 0.4800520425416377}
+        with patch.object(self.callbacks, "claim", wraps=self.callbacks.claim) as claim:
+            self.assertIsNone(self._block(follow_up, second, tab))
+        claim.assert_called_once()
+
+    def test_overlapping_bigrams_are_one_cue_group_for_corroborated_callbacks(self):
+        tab = store.create_conversation("Observatory")
+        anchor = self._user("今日はレモンケーキを焼いたよ。", tab)
+        query = "レモンケーキを切り分けよう。"
+        turn = self._user(query)
+        self.scores = {anchor: 0.5162939149161831}
+        self.assertIsNone(self._block(query, turn))
 
     def test_two_lexical_cues_dont_allow_a_callback_without_cosine(self):
         tab = store.create_conversation("Observatory")

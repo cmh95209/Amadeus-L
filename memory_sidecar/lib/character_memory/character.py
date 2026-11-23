@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 from ._timing import time_memory
 from character_memory.llm.base import LLMClient
 from character_memory.prompts import INTERMEDIATE_PROMPT_PREFIX, PromptConfig
 from .memory.extract import Extractor, ExtractionContext, build_extraction
 from .memory.base import Memory, MemoryItem, RecallResult
 from .memory.structured import StructuredMemory
+from .concurrency import object_lock
 from .rag.base import Query
 from .temporal import TemporalResolution
 from .reranking import (
@@ -218,6 +219,8 @@ class Character:
         llm: Optional[LLMClient] = None,
         participants: Optional[list[str]] = None,
         chat_id: Optional[str] = None,
+        *,
+        handle: Optional[Callable] = None,
     ) -> Optional[dict]:
         """Run extraction over `turns`.
 
@@ -232,10 +235,13 @@ class Character:
         chat-scoped memories (``user_facts``, ``episodic``) stamp it onto their
         rows so the knowledge graph can link facts and episodes of the same
         chat. ``None`` ⇒ legacy / single-user behaviour.
+
+        A durable caller can supply ``handle(collect, apply)`` to checkpoint
+        the extracted values before passing them to the memory writers.
         """
         if llm is None:
             llm = self.llm
-        if llm is None:
+        if llm is None and handle is None:
             raise ValueError("No LLM specified. Character.extract needs a LLM configured")
         parts = participants if participants else None
         context = self._extraction_context(user_id, participants=parts)
@@ -250,18 +256,22 @@ class Character:
         if not participating:
             return None
         schema, instruction = build_extraction([spec for _, spec in participating], context=context)
-        extracted = Extractor(llm).extract(turns, schema=schema, instruction=instruction, context=context)
-        added: dict[str, list[MemoryItem]] = {}
-        for mem, spec in participating:
-            from .concurrency import object_lock
-            with object_lock(mem):
-                items = mem.apply_extraction(extracted.get(spec.field), user_id, chat_id=chat_id)
-            if items:
-                added[mem.name] = items
-        # Carry the freshly-added items so the caller (e.g. a deduplicator)
-        # can act on them without re-querying the memories.
-        extracted["__added__"] = added
-        return extracted
+
+        def collect(client: LLMClient) -> dict:
+            return Extractor(client).extract(turns, schema, instruction, context=context)
+
+        def apply(extracted: dict) -> dict:
+            added: dict[str, list[MemoryItem]] = {}
+            for mem, spec in participating:
+                with object_lock(mem):
+                    items = mem.apply_extraction(extracted.get(spec.field), user_id, chat_id=chat_id)
+                if items:
+                    added[mem.name] = items
+            return {**extracted, "__added__": added}
+
+        if handle is not None:
+            return handle(collect, apply)
+        return apply(collect(llm))
 
     def build_context_snapshot(
         self,

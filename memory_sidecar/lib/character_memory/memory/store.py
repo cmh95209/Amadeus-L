@@ -24,16 +24,17 @@ class SQLiteStore(Store):
         # Allow concurrency
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._write_thread = None
 
     def create_table(self, name: str, columns: dict[str, str], pk: str = "id") -> None:
         cols_sql = ", ".join(f"{c} {t}" for c, t in columns.items())
-        with self._lock:
-            self._conn.execute(f"CREATE TABLE IF NOT EXISTS {name} ({cols_sql})")
-            self._conn.commit()
+        self.execute(f"CREATE TABLE IF NOT EXISTS {name} ({cols_sql})")
 
     def execute(self, sql: str, params: Optional[list[Any]] = None) -> list[dict[str, Any]]:
         with self._lock:
+            if self.in_atomic_write:
+                return [dict(r) for r in self._conn.execute(sql, params or []).fetchall()]
             try:
                 rows = self._conn.execute(sql, params or []).fetchall()
                 self._conn.commit()
@@ -42,15 +43,28 @@ class SQLiteStore(Store):
                 raise
         return [dict(r) for r in rows]
 
+    @property
+    def in_atomic_write(self) -> bool:
+        return self._write_thread == threading.get_ident()
+
+    @contextmanager
+    def atomic_writes(self) -> Iterator[None]:
+        """Group existing store writes into one transaction on this thread."""
+        with self.transaction(immediate=True):
+            self._write_thread = threading.get_ident()
+            try:
+                yield
+            finally:
+                self._write_thread = None
+
     @contextmanager
     def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         """Yield the connection inside one store-wide transaction.
 
         This is intentionally a small escape hatch for persistence code that
-        must update several related rows atomically.  Callers execute SQL on
-        the yielded connection directly; nesting regular ``SQLiteStore``
-        methods inside the block would try to acquire the same non-reentrant
-        lock and is therefore unsupported.
+        must update several related rows atomically. Callers execute SQL on
+        the yielded connection directly. Use ``atomic_writes`` when grouping
+        regular ``SQLiteStore`` methods.
 
         ``immediate=True`` obtains SQLite's write reservation up front.  It is
         useful for snapshot-style writers such as the knowledge graph, where
@@ -61,11 +75,10 @@ class SQLiteStore(Store):
             self._conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
             try:
                 yield self._conn
+                self._conn.commit()
             except BaseException:
                 self._conn.rollback()
                 raise
-            else:
-                self._conn.commit()
 
     def columns(self, table: str) -> list[str]:
         """Column names of `table` (empty if the table does not exist)."""

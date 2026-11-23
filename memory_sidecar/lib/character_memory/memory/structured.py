@@ -161,6 +161,8 @@ class StructuredMemory(Memory):
             **fields,
         }
         row_id = self.store.upsert(self.table, row)
+        if getattr(self.store, "in_atomic_write", False):
+            return row_id
         # Index the new row so BM25+similarity can find it.
         stored = self.store.select(self.table, {"id": row_id})[0]
         if getattr(self.hybrid, "remote", False):
@@ -188,6 +190,8 @@ class StructuredMemory(Memory):
                     },
                 )
             )
+        if getattr(self.store, "in_atomic_write", False):
+            return row_ids
         if row_ids and getattr(self.hybrid, "remote", False):
             self.hybrid.refresh()
             return row_ids
@@ -214,6 +218,8 @@ class StructuredMemory(Memory):
         appended in one embedding batch. Backends without deletion retain the
         legacy one-shot rebuild fallback.
         """
+        if getattr(self.store, "in_atomic_write", False):
+            return
         if getattr(self.hybrid, "remote", False):
             self.hybrid.refresh()
             return

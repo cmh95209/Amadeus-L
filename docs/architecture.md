@@ -84,6 +84,8 @@ Amadeus-Project/
 │   ├── environment.yml        # backend env (python 3.10)
 │   ├── requirements.in        # backend dependencies
 │   ├── assets/                # prerecorded interaction audio
+│   ├── tests/
+│   │   └── test_cm_learning.py  # offline learning and recovery tests
 │   └── data/                  # runtime data (git-ignored)
 │
 ├── frontend/
@@ -117,6 +119,8 @@ Amadeus-Project/
 │   ├── cm_sidecar.py          # sidecar entry point (port 9870)
 │   ├── requirements.txt       # pinned sidecar dependencies
 │   ├── lib/                   # vendored CharacterMemory engine (GPL)
+│   │   └── character_memory/memory/
+│   │       └── learning_jobs.py  # SQLite queue, extraction checkpoints, legacy catch-up
 │   ├── seed_index/            # her lore, re-seeded on first start
 │   ├── LICENSE-NOTE.md
 │   └── venv/                  # built on first launch (git-ignored)
@@ -185,10 +189,20 @@ configuration changes rebuild the cache. Search rechecks the transcript
 before including any quote. Semantic recall has a 250 ms wait budget per
 reply and falls back to keyword results when vectors are unavailable.
 
-The custom cap defaults to 16,384 tokens. A legacy custom value of 40,000
+The custom cap defaults to 32,768 tokens for cloud models and 16,384 for local
+servers. A legacy custom value of 40,000
 selects automatic mode, and other custom values are carried over as total
 caps. Built-in tier defaults and legacy history overrides gain the old
 10,096-token allowance during conversion.
+
+The memory sidecar's background worker reloads provider settings for each
+extraction and resumes due SQLite jobs after startup. It checkpoints model
+results before applying them and marks source messages processed after the
+memory writes and index publication succeed. A one-time migration queues a
+bounded window of previously processed messages for recovery.
+The queue lives in
+[`learning_jobs.py`](../memory_sidecar/lib/character_memory/memory/learning_jobs.py).
+Its offline coverage lives in [`test_cm_learning.py`](../backend/tests/test_cm_learning.py).
 
 ---
 

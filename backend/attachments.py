@@ -30,6 +30,7 @@ import os
 import re
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import requests
@@ -1796,6 +1797,11 @@ def document_block(row, note: str = "") -> str:
     return label + "\n" + part + end
 
 
+@dataclass(frozen=True)
+class _DeskBlock:
+    content: str | list
+
+
 def _place_documents(out, users, own, desk, again) -> dict:
     """Where the documents' text goes in her prompt: {message index: [blocks]}
     - each block goes into its OWN user message right BEFORE that message
@@ -1815,9 +1821,9 @@ def _place_documents(out, users, own, desk, again) -> dict:
         label = store.document_label({**a, "caption": None})
         home = next((i for i in users[:-1] if label in _text(out[i].get("content"))), None)
         if home is not None:
-            plan.setdefault(home, []).append(document_block(a))
+            plan.setdefault(home, []).append(_DeskBlock(document_block(a)))
         else:
-            plan.setdefault(users[0], []).append(document_block(a, source_tags.DESK_NOTE))
+            plan.setdefault(users[0], []).append(_DeskBlock(document_block(a, source_tags.DESK_NOTE)))
     if own:
         labels = [store.document_label({**a, "caption": None}) for a in own]
         out[last]["content"] = " ".join(
@@ -1832,15 +1838,24 @@ def _place_documents(out, users, own, desk, again) -> dict:
 def _insert_documents(out, plan) -> list:
     """The prompt with each planned document / video message put in place
     (a video brings stills or the video itself: that message is then parts)."""
+    def content_of(blocks):
+        if all(isinstance(b, str) for b in blocks):
+            return "\n\n".join(blocks)
+        return [part for block in blocks for part in
+                (block if isinstance(block, list) else [{"type": "text", "text": block}])]
+
+    planned = bool(out and out[0].get("_window_owner"))
     for i in sorted(plan, reverse=True):
         blocks = plan[i]
-        if all(isinstance(b, str) for b in blocks):
-            content = "\n\n".join(blocks)
-        else:
-            content = []
-            for b in blocks:
-                content += b if isinstance(b, list) else [{"type": "text", "text": b}]
-        out.insert(i, {"role": "user", "content": content})
+        all_blocks = [b.content if isinstance(b, _DeskBlock) else b for b in blocks]
+        message = {"role": "user", "content": content_of(all_blocks)}
+        if planned:
+            required = [b for b in blocks if not isinstance(b, _DeskBlock)]
+            if not required:
+                message["_window_optional"] = True
+            elif len(required) < len(blocks):
+                message["_window_required_content"] = content_of(required)
+        out.insert(i, message)
     return out
 
 
@@ -1960,10 +1975,10 @@ def _place_videos(out, users, plan, own, desk, again, see) -> list:
         mode = video.mode_for(a, False, see, False)
         home = next((i for i in users[:-1] if label in _text(out[i].get("content"))), None)
         if home is not None:
-            plan.setdefault(home, []).append(video.video_block(a, mode))
+            plan.setdefault(home, []).append(_DeskBlock(video.video_block(a, mode)))
         else:
             plan.setdefault(users[0], []).append(
-                video.video_block(a, mode, source_tags.DESK_NOTE))
+                _DeskBlock(video.video_block(a, mode, source_tags.DESK_NOTE)))
     fresh = []
     if own:
         labels = [store.video_label({**a, "caption": None}) for a in own]
@@ -2343,19 +2358,29 @@ def with_pictures(messages, conversation_id=None, see=None):
         # say "why did you send this?" (2026-11-06).
         placed.setdefault(last, []).append((a, store.picture_label(a, a.get("_note", PICTURE_AGAIN_NOTE))))
     shown = 0
+    planned = bool(out and out[0].get("_window_owner"))
+    desk_ids = {row["id"] for row in desk}
     for i, entries in placed.items():
         text = words.get(i, _text(out[i].get("content"))).strip()
         parts = [{"type": "text", "text": text}] if text else []
+        required = list(parts)
+        desk_parts = []
         for row, label in entries:
             url = _data_url(row)
             if not url:
                 continue
-            if label:
-                parts.append({"type": "text", "text": label})
-            parts.append({"type": "image_url", "image_url": {"url": url}})
+            rendered = ([{"type": "text", "text": label}] if label else []) + [
+                {"type": "image_url", "image_url": {"url": url}}]
+            parts.extend(rendered)
+            (desk_parts if row["id"] in desk_ids else required).extend(rendered)
             shown += 1
         if any(p["type"] == "image_url" for p in parts):
             out[i]["content"] = parts
+        if planned and desk_parts:
+            out[i]["_window_required_content"] = (required if any(
+                p["type"] == "image_url" for p in required) else text)
+            if "_window_exchange" in out[i]:
+                out[i]["_window_desk_parts"] = desk_parts
     if not shown:
         if docs or x_text:
             add_turn_text(doc_text)
@@ -2388,11 +2413,14 @@ def _add_turn_text(out, last, texts) -> None:
             and isinstance(out[-1].get("content"), str):
         out[-1] = {**out[-1], "content": out[-1]["content"] + "\n\n" + "\n".join(texts)}
         return
-    content = out[last].get("content")
-    if isinstance(content, list):
-        out[last]["content"] = content + [{"type": "text", "text": t} for t in texts]
-    else:
-        out[last]["content"] = "\n".join([t for t in [_text(content).strip()] if t] + list(texts))
+    def with_notes(content):
+        if isinstance(content, list):
+            return content + [{"type": "text", "text": t} for t in texts]
+        return "\n".join([t for t in [_text(content).strip()] if t] + list(texts))
+
+    out[last]["content"] = with_notes(out[last].get("content"))
+    if "_window_required_content" in out[last]:
+        out[last]["_window_required_content"] = with_notes(out[last]["_window_required_content"])
 
 
 def has_pictures(messages) -> bool:

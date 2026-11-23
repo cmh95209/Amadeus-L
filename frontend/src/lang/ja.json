@@ -736,6 +736,7 @@
  },
  "her": {},
  "codes": {
+  "error.contextTooLarge": "このリクエストは利用可能なコンテキストの上限を超えています。メッセージや添付ファイルを短くするか、設定でプロンプトの上限を引き上げてください。",
   "error.status": "エラー {status}（{label}）{who}：{what}{said}",
   "error.said": " 相手のメッセージ：「{reason}」",
   "error.this_model": "このモデル",

@@ -9,9 +9,11 @@ from typing import ClassVar
 
 import requests
 from langchain_openai import ChatOpenAI
+from pydantic import PrivateAttr
 
 import builtin_llm
 import cloud_retry
+import context_window
 import memory
 import timing
 import vertex_priority
@@ -319,6 +321,7 @@ class _ThoughtFreeChatOpenAI(ChatOpenAI):
 
     # False = never wait out a "busy" answer (the Settings Test client).
     _busy_retry: ClassVar[bool] = True
+    _amadeus_builtin: bool = PrivateAttr(default=False)
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         # Cloud servers: her "right now" note goes out as a user message, so
@@ -741,6 +744,29 @@ def is_local_server(client) -> bool:
     return _is_local_host(str(getattr(client, "openai_api_base", None) or ""))
 
 
+def context_limits(client, options=None, *, wait=False):
+    base_url = str(getattr(client, "openai_api_base", None) or "")
+    builtin = bool(getattr(client, "_amadeus_builtin", False))
+    return context_window.resolve_limits(
+        base_url, str(getattr(client, "model_name", "") or ""),
+        local=_is_local_host(base_url),
+        builtin_window=builtin_llm.context_window() if builtin else None,
+        options=options, wait=wait,
+    )
+
+
+def context_budget_info(client, *, wait=False):
+    core, options = context_window.client_options(client)
+    builtin = bool(getattr(core, "_amadeus_builtin", False))
+    if builtin:
+        configured, default = builtin_llm.total_budget_info()
+    else:
+        configured = memory.load_context_budget()
+        default = (context_window.DEFAULT_TOTAL_CAP_LOCAL if is_local_server(core)
+                   else context_window.DEFAULT_TOTAL_CAP_CLOUD)
+    return configured, default, context_limits(core, options, wait=wait)
+
+
 def _is_openrouter_host(base_url: str) -> bool:
     return "openrouter.ai" in base_url
 
@@ -940,7 +966,7 @@ def get_llm(api_key: str, model: str, enable_thinking: bool = False, reasoning: 
     key = (model, reasoning,
            tuple(sorted(sampling_standard.items())),
            tuple(sorted(sampling_extra.items())),
-           vertex_priority.is_on())
+           vertex_priority.is_on(), builtin)
 
     cached = _LLM_CACHE.get(key)
     if cached is not None and _LLM_CACHE_URL.get(key) == base_url:
@@ -949,6 +975,9 @@ def get_llm(api_key: str, model: str, enable_thinking: bool = False, reasoning: 
     client, sent_params = _build_client(base_url, api_key, model, reasoning,
                                         builtin=builtin,
                                         reply_cap=BUILTIN_MAX_TOKENS if builtin else 4096)
+    if not builtin:
+        context_limits(client, context_window.client_options(client)[1])
+    context_window.encoding_for(client)
     _LLM_CACHE[key] = client
     _LLM_CACHE_URL[key] = base_url
     _LLM_CACHE_PARAMS[key] = sent_params
@@ -1084,7 +1113,9 @@ def _build_client(base_url, api_key, model, reasoning, builtin, reply_cap,
     # The Settings Test client (a timeout is passed) answers at once, no
     # busy-retry waits; the real chat clients wait out a 429 (cloud_retry).
     cls = _QuickTestChatOpenAI if timeout is not None else _ThoughtFreeChatOpenAI
-    return cls(**kwargs), sent_params
+    client = cls(**kwargs)
+    client._amadeus_builtin = builtin
+    return client, sent_params
 
 
 def _test_client_timeout(total):

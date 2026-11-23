@@ -785,6 +785,7 @@
   "…I’m starting to feel kind of sleepy.": "…ฉันเริ่มง่วงนิดๆ แล้ว"
  },
  "codes": {
+  "error.contextTooLarge": "คำขอนี้เกินขนาดบริบทที่ใช้ได้ โปรดย่อข้อความหรือไฟล์แนบ หรือเพิ่มขีดจำกัดพรอมต์ในการตั้งค่า",
   "error.status": "ข้อผิดพลาด {status} ({label}) จาก {who}: {what}{said}",
   "error.said": " ข้อความ: \"{reason}\"",
   "error.this_model": "โมเดลนี้",

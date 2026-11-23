@@ -29,6 +29,7 @@ import builtin_llm
 import builtin_server
 import ceremony
 import concerns
+import context_window
 import cross_tab
 import display_lang
 import greeting_cooldown
@@ -277,6 +278,12 @@ def _provider_name() -> str:
 def _llm_error_message(exc: Exception) -> str:
     """Translate a model-server failure into a plain-English message: what
     happened, the HTTP code and the provider's own reason (reply_errors)."""
+    if isinstance(exc, context_window.PromptTooLarge):
+        return reply_errors.Coded(
+            "This request exceeds the available context. Shorten the message or its "
+            "attachments, or increase the prompt cap in Settings.",
+            "error.contextTooLarge",
+        )
     if isinstance(exc, reply_errors.ReplyFailed):
         try:
             model = getLLMModel().strip()
@@ -300,6 +307,11 @@ def _error_json(exc: Exception) -> dict:
     """The JSON body of a failed reply: the English message plus its code for
     the page's translation (reply_errors.Coded)."""
     return reply_errors.coded_fields(_llm_error_message(exc))
+
+
+def _llm_error_response(exc: Exception):
+    status = 413 if isinstance(exc, context_window.PromptTooLarge) else 502
+    return jsonify(_error_json(exc)), status
 
 
 def _llm_error_message_plain(exc: Exception) -> str:
@@ -806,7 +818,7 @@ def attachments_react():
         return jsonify({"message": str(exc)}), 400
     except Exception as exc:
         print("[Flask] Attach reaction failed:", repr(exc))
-        return jsonify(_error_json(exc)), 502
+        return _llm_error_response(exc)
     if result is None:
         return jsonify({"status": "skipped"})
     pack, assistant_id, conv_id = result
@@ -902,7 +914,7 @@ def request_message():
         # switched to streaming yet, so the original JSON error protocol
         # still applies.
         print("[Flask] LLM failure (voice-first call 1):", repr(exc))
-        return jsonify(_error_json(exc)), 502
+        return _llm_error_response(exc)
     timing.line_ready(turn.assistant_id, started)
     print("\n[Flask]: JPS (voice-first call 1):", turn.pack.assistant_reply_JPS)
 
@@ -1403,7 +1415,7 @@ def translate_message(message_id):
         return jsonify({"message": str(exc)}), 400
     except Exception as exc:
         print("[Flask] Translate again failed:", repr(exc))
-        return jsonify(_error_json(exc)), 502
+        return _llm_error_response(exc)
     return jsonify({"assistant_id": message_id, "response": english})
 
 
@@ -1437,7 +1449,7 @@ def regenerate():
         return jsonify({"message": str(exc)}), 400
     except Exception as exc:
         print("[Flask] LLM failure during regenerate:", repr(exc))
-        return jsonify(_error_json(exc)), 502
+        return _llm_error_response(exc)
 
     speech_id = uuid.uuid4().hex
     with _speech_requests_lock:
@@ -1567,16 +1579,14 @@ def set_names():
 
 @application.route("/getContextBudget", methods=["GET"])
 def get_context_budget():
-    """The conversation-memory number Settings shows (estimated tokens): the
-    built-in model's own number in built-in mode, else the custom model's.
-    builtin_cap = the most the built-in model's context holds (null when
-    built-in mode is off); default = what a fresh install starts with."""
-    own = builtin_llm.history_budget()
-    if own is not None:
-        return jsonify({"budget": own, "builtin_cap": builtin_llm.history_budget_cap(),
-                        "default": builtin_llm.history_default(), "mode": "builtin"})
-    return jsonify({"budget": memory.load_context_budget(), "builtin_cap": None,
-                    "default": memory.DEFAULT_CONTEXT_BUDGET, "mode": "custom"})
+    """Show the stored total cap alongside the active model's limits."""
+    client = chat._reply_llm()
+    configured, default, limits = llm.context_budget_info(client, wait=True)
+    builtin = bool(getattr(client, "_amadeus_builtin", False))
+    return jsonify({"budget": configured, "default": default,
+                    "model_limit": limits.total, "model_input_limit": limits.input_limit,
+                    "estimated": limits.estimated,
+                    "mode": "builtin" if builtin else "custom"})
 
 
 # pre: none
@@ -1708,17 +1718,17 @@ def unload_builtin_model():
 
 @application.route("/setContextBudget", methods=["POST"])
 def set_context_budget():
-    """Persist the history token budget (clamped to a sane range)."""
+    """Persist the total prompt cap. Null selects the mode's default."""
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or "budget" not in data:
         return jsonify({"message": "Missing 'budget' field"}), 400
     try:
-        budget = int(data["budget"])
+        budget = None if data["budget"] is None else int(data["budget"])
     except (TypeError, ValueError):
         return jsonify({"message": "'budget' must be a number"}), 400
     if builtin_llm.active():
         try:
-            saved = builtin_llm.save_history_budget(budget)
+            saved = builtin_llm.save_total_budget(budget)
         except (LookupError, OSError) as exc:
             return jsonify({"message": f"Could not save: {exc}"}), 500
     else:
@@ -2466,6 +2476,8 @@ def _serve_wake_up():
         try:
             pack, assistant_id, conv_id = generate_greeting(mode="wake")
             voice = pack.assistant_reply_JPS
+        except context_window.PromptTooLarge as exc:
+            return _llm_error_response(exc)
         except Exception as exc:
             print("[Flask] Wake-up failure:", repr(exc))
             kind = "builtin_fallback" if builtin_llm.active() else "fallback"
@@ -2585,7 +2597,7 @@ def greet():
                             "ceremony": memory.CEREMONY_DONE})
         except Exception as exc:
             print("[Flask] Greeting failure:", repr(exc))
-            return jsonify(_error_json(exc)), 502
+            return _llm_error_response(exc)
         greeting_cooldown.note_greeting(conv_id, assistant_id)
 
     speech_id = _mint_speech_id(pack, assistant_id)
@@ -2655,7 +2667,7 @@ def greet_conversation(conversation_id):
                         "superseded": True})
     except Exception as exc:
         print("[Flask] Switch-greeting failure:", repr(exc))
-        return jsonify(_error_json(exc)), 502
+        return _llm_error_response(exc)
     speech_id = _mint_speech_id(pack, assistant_id)
     return jsonify({
         "ready": True,
@@ -2694,7 +2706,7 @@ def poke_conversation(conversation_id):
                         "superseded": True})
     except Exception as exc:
         print("[Flask] Poke failure:", repr(exc))
-        return jsonify(_error_json(exc)), 502
+        return _llm_error_response(exc)
     speech_id = _mint_speech_id(pack, assistant_id)
     return jsonify({
         "ready": True,
@@ -2732,7 +2744,7 @@ def regenerate_greeting_route(message_id):
                         "superseded": True})
     except Exception as exc:
         print("[Flask] Greeting-regenerate failure:", repr(exc))
-        return jsonify(_error_json(exc)), 502
+        return _llm_error_response(exc)
     speech_id = _mint_speech_id(pack, assistant_id)
     return jsonify({
         "ready": True,

@@ -510,6 +510,47 @@ def model_missing() -> bool:
 PROMPT_OVERHEAD_TOKENS = 6000
 REPLY_TOKENS = 4096
 MIN_HISTORY_TOKENS = 1000
+DEFAULT_CONTEXT = 16384
+
+
+def context_window():
+    """The launched tier's shared KV window, or the tier that will launch."""
+    import builtin_server
+    launched = builtin_server.status()
+    if launched["state"] in ("loading", "loaded") and launched.get("context_window"):
+        return launched["context_window"]
+    return int((load_config() or {}).get("context") or DEFAULT_CONTEXT)
+
+
+def total_budget_info():
+    cfg = load_config() or {}
+    limit = context_window()
+    from context_window import migrate_total_cap, total_cap
+    legacy_default = _history_setting(cfg, "history_default")
+    default = min(limit, migrate_total_cap(legacy_default, history_only=True)
+                  if legacy_default > 0 else limit)
+    if "total_prompt_cap" in cfg:
+        value = _history_setting(cfg, "total_prompt_cap")
+        return (total_cap(value) if value > 0 else None), default
+    legacy = _history_setting(cfg, "history_budget")
+    return (migrate_total_cap(legacy, history_only=True) if legacy > 0 else None), default
+
+
+def _history_setting(cfg, name):
+    try:
+        return int(cfg.get(name) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def save_total_budget(budget):
+    import context_window as window
+    cfg = load_config()
+    if not cfg or not active():
+        raise LookupError("Built-in mode is off.")
+    value = None if budget is None else window.total_cap(budget)
+    save_config({**cfg, "total_prompt_cap": value})
+    return value
 
 
 def history_budget_cap():
@@ -548,27 +589,20 @@ def history_budget():
     cap = history_budget_cap()
     if cap is None:
         return None
+    cfg = load_config() or {}
+    total = _history_setting(cfg, "total_prompt_cap")
+    if total > 0:
+        # Attachment previews still use a coarse allowance. Answer calls
+        # count the actual rendered prompt against the configured total.
+        return max(memory.MIN_CONTEXT_BUDGET,
+                   min(cap, total - PROMPT_OVERHEAD_TOKENS - REPLY_TOKENS))
     try:
-        value = int((load_config() or {}).get("history_budget") or 0)
+        value = int(cfg.get("history_budget") or 0) if "total_prompt_cap" not in cfg else 0
     except (TypeError, ValueError):
         value = 0
     if value <= 0:
         return history_default()
     return max(min(value, cap), memory.MIN_CONTEXT_BUDGET)
-
-
-def save_history_budget(budget: int):
-    """Save the built-in model's conversation number (clamped to what its
-    context holds) and return what was saved."""
-    cap = history_budget_cap()
-    cfg = load_config()
-    if cap is None or not cfg:
-        raise LookupError("Built-in mode is off.")
-    value = max(memory.MIN_CONTEXT_BUDGET, min(int(budget), cap))
-    cfg = dict(cfg)
-    cfg["history_budget"] = value
-    save_config(cfg)
-    return value
 
 
 # Gemma 4 writes its reasoning between these markers. Thinking is off, but if

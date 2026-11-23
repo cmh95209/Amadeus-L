@@ -785,6 +785,7 @@
   "…I’m starting to feel kind of sleepy.": "…எனக்குக் கொஞ்சம் தூக்கம் வர ஆரம்பிக்கிறது."
  },
  "codes": {
+  "error.contextTooLarge": "இந்தக் கோரிக்கை கிடைக்கும் சூழல் வரம்பை மீறுகிறது. செய்தியையோ இணைப்புகளையோ சுருக்கவும் அல்லது அமைப்புகளில் உள்ளீட்டு வரம்பை உயர்த்தவும்.",
   "error.status": "பிழை {status} ({label}), {who}: {what}{said}",
   "error.said": " செய்தி: \"{reason}\".",
   "error.this_model": "இந்த மாடல்",

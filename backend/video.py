@@ -41,6 +41,7 @@ from datetime import datetime
 from pathlib import Path
 
 import attachments
+from context_window import RenderedVideo, RenderedVideoFrame
 import memory as store
 import transcribe
 
@@ -869,14 +870,14 @@ def video_block(row, mode: str, note: str = "") -> list:
     if mode == WATCH:
         url = _file_url(meta["cloud"]["file"], "video/mp4", keep=False)
         if url:
-            parts.append({"type": "video_url", "video_url": {"url": url}})
+            parts.append(RenderedVideo(url, float(meta.get("duration") or 0)))
     elif mode == FRAMES:
         stills = []
         for f in meta.get("frames") or []:
             url = _file_url(f["file"], "image/jpeg")
             if url:
                 stills += [{"type": "text", "text": f"[{stamp(f['t'])}]"},
-                           {"type": "image_url", "image_url": {"url": url}}]
+                           RenderedVideoFrame(url)]
         if stills:
             parts.append({"type": "text", "text": "STILLS FROM IT, each marked with its time "
                                                   "from the start of the video:"})
@@ -1259,7 +1260,7 @@ def close_block(row, t, how: str, watch: bool) -> tuple:
         parts += [{"type": "text", "text": f"A CLIP OF THAT STRETCH, with its sound (it starts at "
                                            f"{stamp(a)} of the video: add {stamp(a)} to the clip's "
                                            "own times):"},
-                  {"type": "video_url", "video_url": {"url": url}}]
+                  RenderedVideo(url, b - a)]
         words = f"Video {number} (the clip {stamp(a)}-{stamp(b)} with its sound)"
     else:
         stills = []
@@ -1267,7 +1268,7 @@ def close_block(row, t, how: str, watch: bool) -> tuple:
             u = _file_url(f["file"], "image/jpeg", keep=False)
             if u:
                 stills += [{"type": "text", "text": f"[{stamp(f['t'])}]"},
-                           {"type": "image_url", "image_url": {"url": u}}]
+                           RenderedVideoFrame(u)]
         if stills:
             parts.append({"type": "text", "text": "STILLS FROM THAT STRETCH, each marked with its "
                                                   "time from the start of the video:"})

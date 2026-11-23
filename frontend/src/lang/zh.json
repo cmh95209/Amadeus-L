@@ -785,6 +785,7 @@
   "…I’m starting to feel kind of sleepy.": "……我开始有点困了。"
  },
  "codes": {
+  "error.contextTooLarge": "此请求超出了可用的上下文容量。请缩短消息或精简附件，或在设置中提高提示词上限。",
   "error.status": "错误 {status}（{label}），来自 {who}：{what}{said}",
   "error.said": " 它说：“{reason}”。",
   "error.this_model": "这个模型",

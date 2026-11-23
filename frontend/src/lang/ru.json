@@ -785,6 +785,7 @@
   "…I’m starting to feel kind of sleepy.": "…Меня начинает клонить в сон."
  },
  "codes": {
+  "error.contextTooLarge": "Запрос превышает доступный объём контекста. Сократите сообщение или вложения либо увеличьте лимит запроса в настройках.",
   "error.status": "Ошибка {status} ({label}) от {who}: {what}{said}",
   "error.said": " Сообщение: «{reason}».",
   "error.this_model": "эта модель",

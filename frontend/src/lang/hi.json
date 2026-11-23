@@ -785,6 +785,7 @@
   "…I’m starting to feel kind of sleepy.": "…मुझे थोड़ी नींद आने लगी है।"
  },
  "codes": {
+  "error.contextTooLarge": "यह अनुरोध उपलब्ध संदर्भ सीमा से बड़ा है। संदेश या उसके अटैचमेंट छोटे करें, या सेटिंग्स में प्रॉम्प्ट सीमा बढ़ाएँ।",
   "error.status": "त्रुटि {status} ({label}), {who} से: {what}{said}",
   "error.said": " संदेश: \"{reason}\"।",
   "error.this_model": "यह मॉडल",

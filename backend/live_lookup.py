@@ -151,10 +151,15 @@ def add_turn_note(convo, right_now_label: str, note: str = None) -> list:
     for i in range(len(out) - 1, -1, -1):
         if out[i].get("role") != "user":
             continue
-        c = out[i].get("content")
-        if isinstance(c, list):
-            out[i] = {**out[i], "content": list(c) + [{"type": "text", "text": note}]}
-        else:
-            out[i] = {**out[i], "content": (str(c or "") + "\n\n" + note).strip()}
+
+        def with_note(content):
+            if isinstance(content, list):
+                return content + [{"type": "text", "text": note}]
+            return (str(content or "") + "\n\n" + note).strip()
+
+        updated = {**out[i], "content": with_note(out[i].get("content"))}
+        if "_window_required_content" in updated:
+            updated["_window_required_content"] = with_note(updated["_window_required_content"])
+        out[i] = updated
         return out
     return out

@@ -1,9 +1,10 @@
 import memory as store
 import builtin_llm
 import providers
+import context_window
 from llm import get_llm, reset_llm, maybe_strip_rejected_params
 import llm as _llm_module
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 from typing import Optional
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from chat_interactions import INTERACTION_EVENTS, INTERACTION_RESPONSES
@@ -113,6 +114,12 @@ def get_raw_memory():
 
 
 class AmadeusPack(BaseModel):
+    _verbatim_message_ids: tuple[int, ...] = PrivateAttr(default=())
+
+    @property
+    def verbatim_message_ids(self) -> tuple[int, ...]:
+        return self._verbatim_message_ids
+
     assistant_reply_JPS: str = Field(..., description=(
         "PRIMARY response: Amadeus's dialogue written natively in Japanese, as she would actually speak it. "
         "Must be plain spoken Japanese ONLY, for TTS - do NOT append the English translation or any "
@@ -981,13 +988,16 @@ def _aside_messages(topic: str, context, local: bool, avoid=None):
     (the built-in model reuses them), the conversation, and the note on the
     latest user message (one message, so the roles still alternate)."""
     ctx = [dict(m) for m in context]
+    conv = getattr(context, "conversation_id", None)
+    if isinstance(context, context_window.HistoryDraft):
+        ctx = context_window.HistoryDraft(conv, ctx, summary=None)
     for m in reversed(ctx):
         if m.get("role") == "user" and isinstance(m.get("content"), str):
             m["content"] = m["content"] + ASIDE_NOTE.format(
                 topic=topic.strip()[:200], avoid=_aside_avoid_text(avoid))
             break
     return _ordered_prompt(_lang_rules(_PLAIN_RULES_JA if local else _PACK_RULES), PROACTIVE_SEARCH_BLOCK,
-                           [], ctx, right_now=_right_now_note())
+                           [], ctx, right_now=_right_now_note(), conversation_id=conv)
 
 
 def _write_aside(run: "_AsideRun", topic: str, context, conv, emit) -> None:
@@ -2502,6 +2512,39 @@ def _is_local(client) -> bool:
         return False
 
 
+def _invoke_prompt(client, messages, *, base_client=None, schema=None):
+    owner = context_window.prompt_owner(messages)
+    if owner is None:
+        return client.invoke(context_window.provider_messages(messages))
+    core, options = context_window.client_options(client, base_client=base_client)
+    if schema:
+        options["tools"] = schema
+    limits_for = getattr(_llm_module, "context_limits", None)
+    limits = limits_for(core, options) if limits_for else context_window.UNKNOWN_LIMITS
+    if getattr(core, "_amadeus_builtin", False):
+        configured, default = builtin_llm.total_budget_info()
+    else:
+        configured = store.load_context_budget()
+        default = (context_window.DEFAULT_TOTAL_CAP_LOCAL if _is_local(core)
+                   else context_window.DEFAULT_TOTAL_CAP_CLOUD)
+    ceiling = context_window.input_ceiling(
+        limits, configured or default, context_window.reply_allowance(core, options))
+    history = context_window.plan_history(
+        messages, owner, ceiling, schema=options.get("tools") or options.get("response_format"),
+        encoding=context_window.encoding_for(core),
+    )
+    reply = client.invoke(history.messages)
+    owner.last_history = history
+    return reply
+
+
+def _with_prompt_ids(pack, messages):
+    owner = context_window.prompt_owner(messages)
+    if owner is not None and owner.last_history is not None:
+        pack._verbatim_message_ids = owner.last_history.verbatim_message_ids
+    return pack
+
+
 _PLAIN_LABEL = re.compile(r"^\s*(?:JA|JP|Japanese|日本語|Amadeus|アマデウス)\s*[:：]\s*", re.I)
 
 
@@ -2509,7 +2552,10 @@ def _plain_jps(client, messages) -> str:
     """One plain-text call for her Japanese line. Returns the cleaned line, or
     raises ValueError(reason) when it is unusable (empty, cut off at the output
     cap, no Japanese, markup/tool-call text, a long loop)."""
-    reply = client.invoke(messages)
+    reply = _invoke_prompt(client, messages)
+    owner = context_window.prompt_owner(messages)
+    if owner is not None:
+        messages = owner.last_history.messages
     raw = reply.content if isinstance(reply.content, str) else str(reply.content or "")
     text = _PLAIN_LABEL.sub("", _strip_thinking(raw).strip()).strip()
     if len(text) >= 2 and text[0] in "「\"'" and text[-1] in "」\"'":
@@ -2553,6 +2599,8 @@ def _plain_reply(client, messages, label):
     for attempt in (1, 2):
         try:
             return _plain_jps(client, messages)
+        except context_window.PromptTooLarge:
+            raise
         except ValueError as exc:
             print(f"[Amadeus] {label}: plain reply attempt {attempt} unusable - {exc}")
         except Exception as exc:
@@ -2593,7 +2641,9 @@ def _structured(client, schema, messages):
     # module without this helper (then: the cloud path, i.e. unchanged).
     is_local = getattr(_llm_module, "is_local_server", None)
     if not (is_local and is_local(client)):
-        return client.with_structured_output(schema, method="function_calling").invoke(messages)
+        runnable = client.with_structured_output(schema, method="function_calling")
+        return _invoke_prompt(runnable, messages, base_client=client,
+                              schema=[convert_to_openai_tool(schema)])
     bound = client.bind_tools([convert_to_openai_tool(schema)], tool_choice="required")
     reply = _invoke_forced(bound, messages)
     for call in getattr(reply, "tool_calls", None) or []:
@@ -2619,12 +2669,12 @@ def _invoke_forced(bound_llm, convo):
     one-wait-then-retry behaviour.
     """
     try:
-        return bound_llm.invoke(convo)
+        return _invoke_prompt(bound_llm, convo)
     except Exception as exc:
         if _forced_tool_choice_rejected(exc):
             print("[Amadeus] Server rejected forced tool choice; retrying with tool_choice=auto:",
                   type(exc).__name__)
-            return bound_llm.bind(tool_choice="auto").invoke(convo)
+            return _invoke_prompt(bound_llm.bind(tool_choice="auto"), convo)
         if _is_rate_limited(exc):
             if getattr(exc, "amadeus_retried", False):
                 raise
@@ -2638,7 +2688,7 @@ def _invoke_forced(bound_llm, convo):
                 _RATE_LIMIT_STATE["last_wait"] = now
                 print(f"[Amadeus] API rate limit (429); waiting {wait:.0f}s, then retrying once.")
                 time.sleep(wait)
-                return bound_llm.invoke(convo)  # a second 429 raises (no stacked waits)
+                return _invoke_prompt(bound_llm, convo)  # a second 429 raises
         raise
 
 
@@ -2698,11 +2748,15 @@ def _ordered_prompt(rules_block, web_block, changing, context, right_now=False,
     # Cross-tab catch-up (cross_tab.py): last of the fixed blocks - it changes
     # only when ANOTHER tab changes, so it keeps the reused prompt start.
     catch_up = cross_tab.catch_up_block(conversation_id)
+    voice_rules = ja_voice.build_voice_rules()
+    if voice_rules["content"].startswith("VOICE /"):
+        voice_rules = {**voice_rules, "_window_required_content":
+                       voice_rules["content"].partition("\n\n")[0]}
     fixed = (store.load_default_personality_messages()
-             + [ja_voice.build_voice_rules()]
+             + [voice_rules]
              + [rules_block]
              + [web_block]
-             + ([catch_up] if catch_up else []))
+             + _optional_context(catch_up))
     trust = stats.load_stat("trust")
     # Her short-term feelings (2026-10-30): one line after the closeness
     # block, only when one of them is away from normal - otherwise the
@@ -2713,11 +2767,34 @@ def _ordered_prompt(rules_block, web_block, changing, context, right_now=False,
     changing = ([ja_voice.build_closeness_context(trust)]
                 + [{"role": "system", "content": line} for line in (mood, mind) if line]
                 + list(changing))
-    if not right_now:
-        return _merge_leading_system_messages(fixed + changing + list(context))
-    note = {"role": "system", "content": _RIGHT_NOW_LABEL
-            + "\n\n".join(m.get("content", "") for m in changing)}
-    return _merge_leading_system_messages(fixed + list(context)) + [note]
+    if right_now:
+        messages = _merge_leading_system_messages(fixed + list(context))
+        note = _prompt_block(changing, prefix=_RIGHT_NOW_LABEL)
+        if not isinstance(context, context_window.HistoryDraft):
+            note.pop("_window_bases", None)
+        messages.append(note)
+        instructions = fixed
+    else:
+        instructions = fixed + changing
+        messages = _merge_leading_system_messages(instructions + list(context))
+    if isinstance(context, context_window.HistoryDraft):
+        messages[0] = {**_prompt_block(instructions), "_window_owner": context}
+    return messages
+
+
+def _optional_context(block):
+    return [{**block, "_window_optional": True}] if block else []
+
+
+def _prompt_block(blocks, prefix=""):
+    full = prefix + "\n\n".join(m.get("content", "") for m in blocks)
+    required = prefix + "\n\n".join(
+        m.get("_window_required_content", m.get("content", "")) for m in blocks
+        if not m.get("_window_optional"))
+    block = {"role": "system", "content": full}
+    if full != required:
+        block["_window_bases"] = (full, required)
+    return block
 
 
 def _right_now_note() -> bool:
@@ -3357,6 +3434,8 @@ def _getResponsePackedWithWebSearch(llm, messages) -> "AmadeusPack":
     """
     try:
         pack = _web_search_loop(llm, messages)
+    except context_window.PromptTooLarge:
+        raise
     except Exception as exc:
         if maybe_strip_rejected_params(exc, LLM_Model):
             # Server rejected a sampling parameter: rebuild the client
@@ -3365,6 +3444,8 @@ def _getResponsePackedWithWebSearch(llm, messages) -> "AmadeusPack":
             try:
                 llm = _reply_llm()
                 pack = _web_search_loop(llm, messages)
+            except context_window.PromptTooLarge:
+                raise
             except Exception as exc2:
                 print("[Amadeus] Web loop: retry after sampling-parameter rejection failed -",
                       "honest fallback:", repr(exc2))
@@ -3372,10 +3453,16 @@ def _getResponsePackedWithWebSearch(llm, messages) -> "AmadeusPack":
         else:
             print("[Amadeus] Web loop: search turn could not be completed - honest fallback:", repr(exc))
             return _honest_search_failure_pack(cause=exc)
-    pack = _web_on_false_refusal_net(pack, llm, messages)
-    pack = _weather_retry(pack, llm, messages)
-    pack = _made_up_weather_net(pack, messages)
-    return _tense_net(_pretend_lookup_net(pack, llm, messages), llm, messages)
+    owner = context_window.prompt_owner(messages)
+    for guard in (_web_on_false_refusal_net, _weather_retry, _pretend_lookup_net, _tense_net):
+        previous_history = owner.last_history if owner is not None else None
+        corrected = guard(pack, llm, messages)
+        if owner is not None and corrected is pack:
+            owner.last_history = previous_history
+        pack = corrected
+        if guard is _weather_retry:
+            pack = _made_up_weather_net(pack, messages)
+    return pack
 
 
 # --- Made-up weather net (2026-11-06) ---------------------------------------------
@@ -3826,12 +3913,16 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
         if think_state["on"]:
             try:
                 return _invoke_forced(think_llm, convo_)
+            except context_window.PromptTooLarge:
+                raise
             except Exception as exc:
                 think_state["on"] = False
                 print("[Amadeus] Web loop: thinking call failed, switching to non-thinking:", repr(exc))
         return _invoke_forced(tool_llm, convo_)
 
     last_plain = ""
+    owner = context_window.prompt_owner(messages)
+    last_plain_history = None
     search_ran = False
 
     # ---- Route the message: LLM triage, keyword fallback -----------------
@@ -3872,7 +3963,8 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
     if links_text:
         links_read = True
         convo.append({"role": "assistant", "content": "I opened the link(s) you sent."})
-        convo.append({"role": "user", "content": source_tags.tagged(source_tags.LINKS, links_text) + (
+        convo.append({"role": "user", "_window_result": True,
+                      "content": source_tags.tagged(source_tags.LINKS, links_text) + (
             "\n\nNow answer the user's message using the AmadeusPack tool, based on these notes.")})
     route = None
     triaged = None
@@ -3924,7 +4016,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
                 "content": "I checked the live weather service for: " + ", ".join(places),
             })
             convo.append({
-                "role": "user",
+                "role": "user", "_window_result": True,
                 "content": (
                     source_tags.WEATHER + "\n"
                     "(Fetched from the Open-Meteo service just now, times in "
@@ -3960,7 +4052,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
         print("[Amadeus] Web check: test search %s." % ("worked" if worked else "FAILED"))
         convo.append({"role": "assistant",
                       "content": "I ran a test web search for: " + WEB_CHECK_QUERY})
-        convo.append({"role": "user", "content": (
+        convo.append({"role": "user", "_window_result": True, "content": (
             source_tags.WEB_CHECK + "\n"
             f"Test search results for '{WEB_CHECK_QUERY}':\n{found}\n\n"
             + ("The user asked you to check your web access, and this test search "
@@ -4001,7 +4093,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
                 "content": "I searched the web for: " + query,
             })
             convo.append({
-                "role": "user",
+                "role": "user", "_window_result": True,
                 "content": (
                     source_tags.WEB_AUTO + "\n"
                     f"Web search results for '{query}':\n{_web_search_with_content(query)}\n\n"
@@ -4045,6 +4137,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
             if not calls:
                 _log_lookup_choice(reply, [])
                 last_plain = _strip_thinking(raw_text)
+                last_plain_history = owner.last_history if owner is not None else None
                 break
 
         _log_lookup_choice(reply, calls)
@@ -4101,7 +4194,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
                 convo.append({"role": "assistant",
                               "content": "I checked the live weather service for: "
                                          + ", ".join(places)})
-            convo.append({"role": "user", "content": (
+            convo.append({"role": "user", "_window_result": True, "content": (
                 source_tags.tagged(source_tags.WEATHER_OWN, text) + "\n\n"
                 "Now answer the user's original request using the AmadeusPack tool. Use ONLY "
                 "these live numbers for any weather fact - do not invent figures.")})
@@ -4113,7 +4206,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
             })
             for query, result in searches:
                 convo.append({
-                    "role": "user",
+                    "role": "user", "_window_result": True,
                     "content": (
                         f"Web search results for '{query}':\n{result}\n\n"
                         "Now answer the user's original request using the AmadeusPack tool, "
@@ -4140,7 +4233,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
                 "content": "I searched the web for: " + query,
             })
             convo.append({
-                "role": "user",
+                "role": "user", "_window_result": True,
                 "content": (
                     source_tags.WEB_AUTO + "\n"
                     f"Web search results for '{query}':\n{_web_search_with_content(query)}\n\n"
@@ -4217,6 +4310,8 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
                 return _pack_from_args(calls[0].get("args"))
             raw = (reply.content if isinstance(reply.content, str)
                    else str(reply.content or ""))
+        except context_window.PromptTooLarge:
+            raise
         except Exception as exc:
             print("[Amadeus] Web loop: final-answer retry failed - honest "
                   "fallback:", repr(exc))
@@ -4234,7 +4329,11 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
         # the reply (it promises an action that never happened).
         print("[Amadeus] Web loop: final answer was empty and no search ran - honest fallback.")
         return _honest_search_failure_pack(weather=weather_handled)
-    candidate = _strip_thinking(raw) or last_plain
+    candidate = _strip_thinking(raw)
+    if not candidate:
+        candidate = last_plain
+        if owner is not None:
+            owner.last_history = last_plain_history
     if not candidate.strip():
         # Live data (weather/search) was in the context, the fast path never
         # captured plain text, and the final call produced nothing even after
@@ -4267,6 +4366,8 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
                     print("[Amadeus] Web loop: retry still degenerate - "
                           "honest fallback.")
                     return _honest_search_failure_pack(weather=weather_handled)
+            except context_window.PromptTooLarge:
+                raise
             except Exception as exc:
                 print("[Amadeus] Web loop: bounded retry failed - honest "
                       "fallback.")
@@ -4939,8 +5040,8 @@ def generate_greeting(mode: str = "startup",
     # - prompt-only, never stored in memory. The correction retry reuses
     # the same prompt shape with the pointed correction as the tail line.
     def _greeting_call(client, arrival_line):
-        ctx = list(store.build_prompt_messages(
-            exclude_ids=exclude_ids, conversation_id=conversation_id))
+        ctx = store.build_prompt_messages(
+            exclude_ids=exclude_ids, conversation_id=conversation_id, proactive=True)
         ctx.append({"role": "user", "content": arrival_line})
         # The private timing block (2026-10-05: the locked SITUATION truth
         # line + the situation's details) - the same block normal replies
@@ -4951,7 +5052,7 @@ def generate_greeting(mode: str = "startup",
             _lang_rules(_PLAIN_RULES_JA if _is_local(client) else _PACK_RULES),
             NO_WEB_BLOCK,
             [instruction]
-            + ([memory_block] if memory_block else [])
+            + _optional_context(memory_block)
             + [store.load_internal_context(is_greeting=True,
                                            conversation_id=conversation_id,
                                            is_return=not switch,
@@ -4970,7 +5071,8 @@ def generate_greeting(mode: str = "startup",
                 en = _translate_reply_en(_translation_llm(), jps, _voice_first_context_lines(ctx))
             except Exception as exc:
                 print("[Amadeus] Greeting: English line failed:", repr(exc))
-            return AmadeusPack(assistant_reply_JPS=jps, assistant_reply_ENG=en or jps)
+            return _with_prompt_ids(
+                AmadeusPack(assistant_reply_JPS=jps, assistant_reply_ENG=en or jps), messages)
         # The same forced-pack call the normal reply path uses: _invoke_forced
         # auto-retries with tool_choice="auto" when the server rejects the
         # forced choice (NInfer does - documented, harmless), and the parse
@@ -4982,7 +5084,7 @@ def generate_greeting(mode: str = "startup",
         calls = getattr(reply, "tool_calls", None) or []
         if calls and calls[0].get("name") == "AmadeusPack":
             try:
-                return _pack_from_args(calls[0].get("args"))
+                return _with_prompt_ids(_pack_from_args(calls[0].get("args")), messages)
             except ValueError as e:
                 # A clipped forced tool call can decode to NOTHING - the same
                 # shape the normal reply path logs with this signal.
@@ -4998,19 +5100,23 @@ def generate_greeting(mode: str = "startup",
             if len(cleaned) >= 40 and _repetition_cut(cleaned) is None:
                 print("[Amadeus] Greeting returned a repetition loop - cut "
                       "out, salvaging the clean part.")
-                return _salvage_plain_text(cleaned, client)
+                return _with_prompt_ids(_salvage_plain_text(cleaned, client), messages)
             print("[Amadeus] Greeting returned a repetition loop - no "
                   "clean part; honest fallback.")
             return _honest_plain_failure_pack("repetition loop")
         print("[Amadeus] Greeting returned no AmadeusPack; salvaging plain text.")
-        return _salvage_plain_text(raw, client)
+        return _with_prompt_ids(_salvage_plain_text(raw, client), messages)
 
     def _out(p: "AmadeusPack") -> "AmadeusPack":
-        return _finalize(p, _reply_llm())
+        final = _finalize(p, _reply_llm())
+        final._verbatim_message_ids = p.verbatim_message_ids
+        return final
 
     llm = _reply_llm()
     try:
         pack = _greeting_call(llm, arrival)
+    except context_window.PromptTooLarge:
+        raise
     except Exception as e:
         # One bounded retry with a fresh client: either the connection
         # dropped, or the pack came back empty/clipped (the log carries the
@@ -5162,7 +5268,7 @@ def generate_attach_reaction(attachment_ids, conversation_id=None):
         raise ValueError("Nothing waiting to react to")
     if not attachments.should_react(conv):
         return None
-    ctx = list(store.build_prompt_messages(conversation_id=conv))
+    ctx = store.build_prompt_messages(conversation_id=conv, proactive=True)
     history = " ".join(_content_text(m.get("content")) for m in ctx)
     return _attach_line(conv, ctx, attachments.reaction_event(rows, history),
                         ATTACH_REACTION_INSTRUCTION)
@@ -5176,7 +5282,7 @@ def generate_withdraw_reaction(row, conversation_id=None):
     conv = store.load_active_conversation() if conversation_id is None else int(conversation_id)
     if not attachments.may_comment_on_withdraw(conv):
         return None
-    ctx = list(store.build_prompt_messages(conversation_id=conv))
+    ctx = store.build_prompt_messages(conversation_id=conv, proactive=True)
     return _attach_line(conv, ctx, attachments.withdraw_event(row), ATTACH_WITHDRAWN_INSTRUCTION)
 
 
@@ -5184,13 +5290,13 @@ def _attach_line(conv, ctx, event_line, instruction):
     """One short line of hers about an attachment event, stored like a
     greeting (kind attach); reasoning off - it must be quick."""
     after_user_id = store.latest_user_message_id(conv)
-    ctx = list(ctx) + [{"role": "user", "content": event_line}]
+    ctx.append({"role": "user", "content": event_line})
     client = get_llm(API_KEY, LLM_Model, reasoning="off")
     local = _is_local(client)
     messages = _ordered_prompt(
         _lang_rules(_PLAIN_RULES_JA if local else _PACK_RULES), NO_WEB_BLOCK,
-        [instruction, store.load_internal_context()], ctx,
-        right_now=_right_now_note())
+        [instruction, store.load_internal_context(conversation_id=conv)], ctx,
+        right_now=_right_now_note(), conversation_id=conv)
     if local:
         jps = _plain_jps(client, messages)
         en = ""
@@ -5203,7 +5309,7 @@ def _attach_line(conv, ctx, event_line, instruction):
         pack = _structured(client, AmadeusPack, messages)
         if pack is None or _degenerate_pack(pack):
             raise ValueError("attach reaction came back unusable")
-    pack = _finalize(pack, client)
+    pack = _with_prompt_ids(_finalize(pack, client), messages)
     assistant_id, conv_id = _store_greeting_line(
         pack, conv, after_user_id=after_user_id, kind=store.GREETING_KIND_ATTACH)
     attachments.note_reaction(conv)
@@ -5212,8 +5318,11 @@ def _attach_line(conv, ctx, event_line, instruction):
 
 def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
     llm = _reply_llm()
+    picture_conv = getattr(message_context, "conversation_id", None)
+    if picture_conv is None:
+        picture_conv = store.load_active_conversation()
     # This reply's searches (saved with its row) + the chat its lookups go to.
-    _begin_turn_sources(store.load_active_conversation())
+    _begin_turn_sources(picture_conv)
     _turn.reply_context = message_context   # for her hold-on line
 
     web_on = store.load_web_access()
@@ -5234,8 +5343,7 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
     # CharacterMemory long-term recall (sidecar): ONE labeled, token-capped
     # system section; service absent/empty -> None -> prompt byte-identical.
     try:
-        memory_block = cm_bridge.fetch_memory_block(
-            store.load_active_conversation())
+        memory_block = cm_bridge.fetch_memory_block(picture_conv)
     except Exception:
         memory_block = None
 
@@ -5251,7 +5359,6 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
     # The chat's pictures (number, turn, when, caption) - None without any.
     # The chat is read ONCE for every picture step of this reply, so a tab
     # switch while she answers can never mix two chats' pictures.
-    picture_conv = store.load_active_conversation()
     picture_index = attachments.picture_index_message(picture_conv)
     # Cross-tab search (cross_tab.py): other tabs' lines matching what the
     # user just wrote - this reply only, so it rides in the changing part.
@@ -5260,13 +5367,14 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
     messages = _ordered_prompt(
         pack_rules,
         PROACTIVE_SEARCH_BLOCK if web_on else NO_WEB_BLOCK,
-        book_messages
-        + ([memory_block] if memory_block else [])
-        + ([found] if found else [])
-        + ([lookup_index] if lookup_index else [])
-        + ([picture_index] if picture_index else [])
+        [{**block, "_window_optional": True} for block in book_messages]
+        + _optional_context(memory_block)
+        + _optional_context(found)
+        + _optional_context(lookup_index)
+        + _optional_context(picture_index)
         + ([link_note] if link_note else [])
-        + [internal_context if internal_context is not None else store.load_internal_context()],
+        + [internal_context if internal_context is not None else store.load_internal_context(
+            conversation_id=picture_conv)],
         message_context,
         right_now=_right_now_note(),
         conversation_id=picture_conv,
@@ -5279,7 +5387,7 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
         # Every reply goes through the output guards; the web-off honesty net
         # applies only when the search tool really is off this turn.
         p = _finalize(p, llm)
-        return _web_off_honesty_net(p) if not web_on else p
+        return _with_prompt_ids(_web_off_honesty_net(p) if not web_on else p, messages)
 
     def _attempt(client):
         if web_on:
@@ -5311,6 +5419,8 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
                 return _honest_search_failure_pack(detail=why)
             raise ValueError(f"structured reply unusable ({why})")
         return _out(out)
+    except context_window.PromptTooLarge:
+        raise
     except Exception as e:
         # The server may REJECT a sampling parameter (strict cloud compat
         # layers answer 400 to unknown fields). Remember it for this host,
@@ -5321,6 +5431,8 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
             try:
                 out = _attempt(_reply_llm())
                 return _out(out)
+            except context_window.PromptTooLarge:
+                raise
             except Exception:
                 pass  # the retry also failed; the ladder below handles it
         # Fallback: if structured output fails, degrade gracefully
@@ -5378,6 +5490,8 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
         if _is_check_promise(raw):
             print("[Amadeus] Reply stalled on a check promise - finishing with "
                   "one bounded follow-up.")
+            owner = context_window.prompt_owner(messages)
+            previous_history = owner.last_history if owner is not None else None
             finish_convo = list(messages) + [
                 {"role": "assistant",
                  "content": _strip_thinking(raw).strip()},
@@ -5408,6 +5522,8 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
             except Exception as e3:
                 print("[Amadeus] Check-promise follow-up failed; serving the "
                       "original line:", repr(e3))
+            if owner is not None:
+                owner.last_history = previous_history
         print("[Amadeus] Forced pack call returned no AmadeusPack; salvaging plain text.")
         return _out(_salvage_plain_text(raw, llm))
 
@@ -5429,6 +5545,9 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
 #   backfill) while her voice is already playing
 def getResponsePackedVoiceFirst(message_context, internal_context=None) -> AmadeusPack:
     llm = _reply_llm()
+    picture_conv = getattr(message_context, "conversation_id", None)
+    if picture_conv is None:
+        picture_conv = store.load_active_conversation()
     plain = _is_local(llm)
 
     # Same prompt assembly as getResponsePacked, with the JA-only pack rules
@@ -5439,21 +5558,21 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
     )
     book_messages = store.load_character_book_messages(last_user)
     try:
-        memory_block = cm_bridge.fetch_memory_block(store.load_active_conversation())
+        memory_block = cm_bridge.fetch_memory_block(picture_conv)
     except Exception:
         memory_block = None
-    picture_conv = store.load_active_conversation()   # once for this reply's pictures
     picture_index = attachments.picture_index_message(picture_conv)
     found = cross_tab.search_block(_content_text(last_user), picture_conv)   # cross_tab.py
 
     messages = _ordered_prompt(
         _lang_rules(_PLAIN_RULES_JA) if plain else _PACK_RULES_JA_ONLY,
         NO_WEB_BLOCK,
-        book_messages
-        + ([memory_block] if memory_block else [])
-        + ([found] if found else [])
-        + ([picture_index] if picture_index else [])
-        + [internal_context if internal_context is not None else store.load_internal_context()],
+        [{**block, "_window_optional": True} for block in book_messages]
+        + _optional_context(memory_block)
+        + _optional_context(found)
+        + _optional_context(picture_index)
+        + [internal_context if internal_context is not None else store.load_internal_context(
+            conversation_id=picture_conv)],
         message_context,
         right_now=_right_now_note(),
         conversation_id=picture_conv,
@@ -5481,8 +5600,9 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
         pack = _web_off_honesty_net(
             AmadeusPack(assistant_reply_JPS=_ensure_japanese_jps(jps, llm),
                         assistant_reply_ENG=""))
-        return AmadeusPack(assistant_reply_JPS=pack.assistant_reply_JPS,
-                           assistant_reply_ENG="")
+        return _with_prompt_ids(
+            AmadeusPack(assistant_reply_JPS=pack.assistant_reply_JPS, assistant_reply_ENG=""),
+            messages)
 
     if plain:
         jps = _plain_reply(llm, messages, "Voice-first")
@@ -5502,6 +5622,8 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
         if why:
             raise ValueError(f"structured reply unusable ({why})")
         return _out(_jps_of(out))
+    except context_window.PromptTooLarge:
+        raise
     except Exception as e:
         # Same ladder as the single-call path, with the JA-only twins: one
         # clean retry after a rejected sampling parameter, one forced
@@ -5512,6 +5634,8 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
                 out = _attempt(_reply_llm())
                 if out is not None:
                     return _out(_jps_of(out))
+            except context_window.PromptTooLarge:
+                raise
             except Exception:
                 pass  # the retry also failed; the ladder below handles it
         print("[Amadeus] Voice-first: packed response parse failed:", repr(e))
@@ -5551,6 +5675,8 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
         if _is_check_promise(raw):
             # Same bounded finish-the-line follow-up as the single-call path.
             print("[Amadeus] Voice-first: reply stalled on a check promise - finishing with one bounded follow-up.")
+            owner = context_window.prompt_owner(messages)
+            previous_history = owner.last_history if owner is not None else None
             finish_convo = list(messages) + [
                 {"role": "assistant", "content": _strip_thinking(raw).strip()},
                 {"role": "user",
@@ -5576,6 +5702,8 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
                 print("[Amadeus] Voice-first: follow-up stalled too - serving the original line.")
             except Exception as e3:
                 print("[Amadeus] Voice-first: check-promise follow-up failed; serving the original line:", repr(e3))
+            if owner is not None:
+                owner.last_history = previous_history
         print("[Amadeus] Voice-first: forced call returned no AmadeusReply; salvaging plain text.")
         return _out(_salvage_jps_plain_text(raw, llm))
 
@@ -5613,7 +5741,7 @@ def _with_picture_retry(reply, cleanup=None):
     reply = lambda: _checked(original)  # noqa: E731
     try:
         return reply()
-    except reply_errors.ReplyFailed:
+    except (reply_errors.ReplyFailed, context_window.PromptTooLarge):
         raise
     except Exception as exc:
         if attachments.took_video() and attachments.is_video_rejection(exc):
@@ -5668,15 +5796,15 @@ def _after_picture_turn(conv, user_id, user_text, her_line, her_id=None) -> None
 
 def getOutputPacked(user_message: str, attachment_ids=None):
     # Snapshot the previous turn before the new message becomes the latest one.
-    internal_context = store.load_internal_context()
-    user_id = store.append_message("user", user_message)
     conv_now = store.load_active_conversation()
+    internal_context = store.load_internal_context(conversation_id=conv_now)
+    user_id = store.append_message("user", user_message, conversation_id=conv_now)
     pictures = attachments.claim(attachment_ids, user_id, conv_now) if attachment_ids else []
     # CharacterMemory: mirror the persisted user turn (fire-and-forget); a
     # turn with pictures is mirrored after its captions (_after_picture_turn).
     if not pictures:
         cm_bridge.save_turn(conv_now, "user", user_message)
-    context = store.build_prompt_messages()
+    context = store.build_prompt_messages(conversation_id=conv_now, answering_id=user_id)
 
     def _drop_aside():
         aside_id = close_aside()
@@ -5704,7 +5832,8 @@ def getOutputPacked(user_message: str, attachment_ids=None):
     # Store what the user actually sees, plus the Japanese line she actually
     # spoke, so her future context is in her own voice.
     assistant_id = store.append_message(
-        "assistant", pack.assistant_reply_ENG, japanese=pack.assistant_reply_JPS
+        "assistant", pack.assistant_reply_ENG, conversation_id=conv_now,
+        japanese=pack.assistant_reply_JPS
     )
     store.set_message_sources(assistant_id, take_turn_sources())
     store.set_message_doc_reads(assistant_id, attachments.take_turn_reads())
@@ -5714,16 +5843,10 @@ def getOutputPacked(user_message: str, attachment_ids=None):
     if pictures:
         _after_picture_turn(conv_now, user_id, user_message, her_line, assistant_id)
     else:
-        cm_bridge.save_turn(store.load_active_conversation(), "assistant", her_line)
+        cm_bridge.save_turn(conv_now, "assistant", her_line)
     _note_reply_feelings()
     maybe_schedule_trust_rescore()
-    # The session this turn actually landed in, so the UI can verify it is
-    # showing the conversation the turn was written to.
-    conv_id = store.load_active_conversation()
-    # Rolling summary: fold whatever this new turn pushed out of the verbatim
-    # window (background worker; no-op while the window is not full).
-    store.maybe_roll_summary(conv_id)
-    return pack, user_id, assistant_id, conv_id
+    return pack, user_id, assistant_id, conv_now
 
 
 # ---------- VOICE-FIRST REPLY (web-OFF turns, 2026-07) ----------
@@ -5768,6 +5891,10 @@ class VoiceFirstTurn:
         self._voice_event = threading.Event()
         self._voice_key = None
 
+    @property
+    def verbatim_message_ids(self) -> tuple[int, ...]:
+        return self.pack.verbatim_message_ids
+
     def voice_ready(self, speech_id=None, hold_english: bool = False) -> None:
         """The route handed her line to the browser. With hold_english (the
         page starts her voice early) and her voice on the processor, the
@@ -5811,8 +5938,13 @@ def _voice_first_context_lines(context, max_lines: int = 4) -> list:
     for the English line to match the situation, without re-sending the whole
     prompt. Assistant lines arrive content-first (her Japanese line when she
     has one), which is exactly what the translator needs."""
+    history = getattr(context, "last_history", None)
+    visible = set(history.verbatim_message_ids) if history is not None else None
     lines = []
     for m in reversed(context or []):
+        ids = m.get("_window_ids")
+        if visible is not None and ids and not visible.intersection(ids):
+            continue
         content = (m.get("content") or "").strip()
         if not content:
             continue
@@ -6038,17 +6170,15 @@ def retranslate_message(message_id: int) -> str:
 # - on call-1 failure the user turn is removed (the memory stays clean) and
 #   the exception propagates, exactly like getOutputPacked
 def getOutputPackedVoiceFirst(user_message: str, attachment_ids=None) -> VoiceFirstTurn:
-    internal_context = store.load_internal_context()
-    user_id = store.append_message("user", user_message)
     conv_now = store.load_active_conversation()
+    internal_context = store.load_internal_context(conversation_id=conv_now)
+    user_id = store.append_message("user", user_message, conversation_id=conv_now)
     pictures = attachments.claim(attachment_ids, user_id, conv_now) if attachment_ids else []
     # CharacterMemory: mirror the persisted user turn (fire-and-forget); with
     # pictures, after their captions (_after_picture_turn).
     if not pictures:
         cm_bridge.save_turn(conv_now, "user", user_message)
-    context = store.build_prompt_messages()
-    context_lines = _voice_first_context_lines(context)
-
+    context = store.build_prompt_messages(conversation_id=conv_now, answering_id=user_id)
     try:
         pack = _with_picture_retry(
             lambda: getResponsePackedVoiceFirst(context, internal_context=internal_context))
@@ -6060,29 +6190,27 @@ def getOutputPackedVoiceFirst(user_message: str, attachment_ids=None) -> VoiceFi
             attachments.release(user_id)
         store.delete_message(user_id)
         raise
+    context_lines = _voice_first_context_lines(context)
 
     # The English text starts empty; call 2 fills it (row + UI). Her future
     # context reads the Japanese column, so the empty English field changes
     # nothing about how she speaks next.
     assistant_id = store.append_message(
-        "assistant", "", japanese=pack.assistant_reply_JPS
+        "assistant", "", conversation_id=conv_now, japanese=pack.assistant_reply_JPS
     )
     store.set_message_doc_reads(assistant_id, attachments.take_turn_reads())
     # CharacterMemory: mirror the line she actually spoke (same rule as the
     # single-call path: the Japanese line when present).
     her_line = (pack.assistant_reply_JPS or "").strip() or pack.assistant_reply_ENG
-    turn = VoiceFirstTurn(pack, user_id, assistant_id, store.load_active_conversation())
+    turn = VoiceFirstTurn(pack, user_id, assistant_id, conv_now)
     if pictures:
         # The caption call waits for the English line (2026-11-19).
         turn.after_english.append(lambda: _after_picture_turn(
             conv_now, user_id, user_message, her_line, assistant_id))
     else:
-        cm_bridge.save_turn(store.load_active_conversation(), "assistant", her_line)
+        cm_bridge.save_turn(conv_now, "assistant", her_line)
     _note_reply_feelings()
     turn.after_english.append(maybe_schedule_trust_rescore)
-    # Rolling summary: fold whatever this new turn pushed out of the verbatim
-    # window (background worker; no-op while the window is not full).
-    store.maybe_roll_summary(turn.conv_id)
 
     try:
         llm = _translation_llm()
@@ -6111,7 +6239,8 @@ def getOutputPackedVoiceFirst(user_message: str, attachment_ids=None) -> VoiceFi
 #   fresh reply is stored as the new viewed version, with its Japanese line
 # - returns (AmadeusPack, new_assistant_message_id) for the re-answered turn
 def regenerateReply():
-    last = store.get_last_message()
+    conv = store.load_active_conversation()
+    last = store.get_last_message(conversation_id=conv)
     if last is None:
         raise ValueError("No conversation to regenerate yet")
 
@@ -6122,8 +6251,8 @@ def regenerateReply():
         # instead of reaching back to whatever user message sits before it.
         if store.get_message_is_greeting(last["id"]) or store.get_message_is_aside(last["id"]):
             raise ValueError("Nothing to regenerate here")
-        excluded = store.get_trailing_turn() or [last["id"]]
-        target = store.get_message_before(excluded)
+        excluded = store.get_trailing_turn(conversation_id=conv) or [last["id"]]
+        target = store.get_message_before(excluded, conversation_id=conv)
         if target is None or target["role"] != "user":
             raise ValueError("Nothing to regenerate")
         for message_id in excluded:
@@ -6138,8 +6267,9 @@ def regenerateReply():
     # would have then, and the new version keeps the original reply's time.
     moment, stamp = _regenerate_moment(answering_id, excluded)
     internal_context = store.load_internal_context(
-        now=moment, answering_id=answering_id if moment else None)
-    context = store.build_prompt_messages(exclude_ids=excluded, now=moment)
+        now=moment, answering_id=answering_id if moment else None, conversation_id=conv)
+    context = store.build_prompt_messages(exclude_ids=excluded, now=moment,
+                                          conversation_id=conv, answering_id=answering_id)
     try:
         # The same pictures as the first answer (they belong to the user's message).
         pack = _with_picture_retry(
@@ -6155,7 +6285,7 @@ def regenerateReply():
         _turn.skip_lookup_turn = None
     new_id = store.append_message(
         "assistant", pack.assistant_reply_ENG, japanese=pack.assistant_reply_JPS,
-        created_at=stamp
+        created_at=stamp, conversation_id=conv
     )
     store.set_message_sources(new_id, take_turn_sources())
     store.set_message_doc_reads(new_id, attachments.take_turn_reads())
@@ -6614,23 +6744,30 @@ def backfill_japanese_voice() -> None:
 # (get_llm raises) or the reply is unusable, memory.py falls back to a plain
 # text fold, so the window always closes.
 
-def _merge_summary_llm(current_summary: str, new_exchange: str) -> str:
+def _merge_summary_llm(current_summary: str, new_exchange: str, token_cap: int) -> str:
     llm = get_llm(API_KEY, LLM_Model)
     prompt = (
         "You maintain a running summary of a chat conversation so its older "
         "parts can be dropped from context without being forgotten. "
         "CURRENT SUMMARY:\n" + (current_summary or "(none yet)") +
-        "\n\nNEW EXCHANGE TO FOLD IN:\n" + new_exchange[:3000] +
+        "\n\nNEW EXCHANGE TO FOLD IN:\n" + new_exchange +
         "\n\nMerge the new exchange into the summary: keep durable facts, "
         "decisions, names, plans, and open questions; drop small talk and "
         "anything already covered; write in the language the conversation "
         "uses; plain prose, no headers, no quotes. Output ONLY the updated "
-        "summary, under 350 words."
+        f"summary, aiming for at most {token_cap} tokens."
     )
     pronouns = store.pronoun_sentence()
     if pronouns:
         prompt += " " + pronouns + " Use them when the summary refers to the user."
-    reply = llm.invoke([{"role": "user", "content": prompt}])
+    core, options = context_window.client_options(llm)
+    limits_for = getattr(_llm_module, "context_limits", None)
+    limits = limits_for(core, options) if limits_for else context_window.UNKNOWN_LIMITS
+    cap = min(token_cap, context_window.SUMMARY_CHUNK_TOKENS)
+    if (context_window.message_cost({"content": prompt}) + context_window.REQUEST_FRAMING
+            > context_window.input_ceiling(limits, limits.total, cap)):
+        raise context_window.PromptTooLarge()
+    reply = llm.bind(max_tokens=cap).invoke([{"role": "user", "content": prompt}])
     content = reply.content if isinstance(reply.content, str) else str(reply.content)
     text = _strip_thinking(content).strip().strip(chr(34)).strip()
     if not text:

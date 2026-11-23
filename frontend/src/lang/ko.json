@@ -785,6 +785,7 @@
   "…I’m starting to feel kind of sleepy.": "…좀 졸려지기 시작했어."
  },
  "codes": {
+  "error.contextTooLarge": "이 요청이 사용 가능한 컨텍스트 한도를 초과했습니다. 메시지나 첨부 파일을 줄이거나 설정에서 프롬프트 한도를 높이세요.",
   "error.status": "오류 {status}({label}), {who}: {what}{said}",
   "error.said": " 응답 내용: \"{reason}\".",
   "error.this_model": "이 모델",

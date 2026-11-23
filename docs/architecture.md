@@ -65,8 +65,11 @@ Amadeus-Project/
 │   ├── main.py                # Flask app entry point
 │   ├── api.py                 # REST API
 │   ├── chat.py                # conversation pipeline (voice-first)
-│   ├── memory.py              # SQLite conversation history
-│   ├── llm.py                 # LLM access (local or OpenRouter)
+│   ├── memory.py              # SQLite conversation history and rolling summaries
+│   ├── context_window.py      # Provider limits, prompt accounting, and history selection
+│   ├── llm.py                 # LLM clients for built-in, local, and cloud models
+│   ├── builtin_llm.py         # Built-in model tier and its separate prompt cap
+│   ├── builtin_server.py      # Built-in runner and its launched context window
 │   ├── tts.py                 # GPT-SoVITS voice client
 │   ├── start_gptsovits.py     # voice engine startup
 │   ├── ceremony.py            # first-meeting / wake-up logic
@@ -135,6 +138,36 @@ Amadeus-Project/
 
 GPT-SoVITS is cloned separately into a local `GPT-SoVITS/` directory. It is
 an external dependency rather than part of the Amadeus repository itself.
+
+## Conversation context
+
+Each answer call budgets the assembled prompt against both the chosen model
+and the configured total cap. The bound output allowance and a safety margin
+reduce the room for input. Instructions, cross-tab notes, memories, tool
+schemas and results, and rendered attachments count toward that input.
+OpenRouter endpoint limits are cached by model and routing policy. Custom
+llama.cpp servers can report per-request `n_ctx` through `/props`, or set
+`AMADEUS_LLAMA_N_CTX` in the backend environment. Built-in replies use the
+launched tier's shared KV window.
+[OpenRouter routing](https://openrouter.ai/blog/insights/model-routing/),
+[llama.cpp server documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
+
+Published limits are keyed by exact model ID for OpenAI and Vertex.
+[OpenAI model cards](https://developers.openai.com/api/docs/models),
+[Vertex model cards](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models)
+
+`chat.py` pins the conversation before assembly. `context_window.py` selects
+whole recent exchanges and returns a `PromptHistory` whose IDs identify the
+stored text sent in the answer call. `memory.py` maintains a bounded background
+summary of the omitted prefix, using a history revision and the latest
+requested cutoff when publishing. A larger cap restores fitting exchanges
+on the next call. The reply pack exposes the successful call's stored IDs
+as `verbatim_message_ids`.
+
+The custom cap defaults to 16,384 tokens. A legacy custom value of 40,000
+selects automatic mode, and other custom values are carried over as total
+caps. Built-in tier defaults and legacy history overrides gain the old
+10,096-token allowance during conversion.
 
 ---
 

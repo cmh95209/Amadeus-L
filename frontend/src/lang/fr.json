@@ -785,6 +785,7 @@
   "…I’m starting to feel kind of sleepy.": "…Je commence à avoir un peu sommeil."
  },
  "codes": {
+  "error.contextTooLarge": "Cette demande dépasse le contexte disponible. Raccourcissez le message ou ses pièces jointes, ou augmentez la limite du prompt dans les paramètres.",
   "error.status": "Erreur {status} ({label}) de {who} : {what}{said}",
   "error.said": " Message : « {reason} ».",
   "error.this_model": "ce modèle",

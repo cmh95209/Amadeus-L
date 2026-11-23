@@ -80,6 +80,11 @@ PAGE_TITLE_CHARS = 300
 MAX_HEADING_MARKERS = 4
 MAIN_MIN_CHARS = 400
 MAIN_MIN_SHARE = 0.35
+DROP_TOKEN_MAX_PARTS = 3
+AD_TOKEN_MAX_PARTS = 2
+MIN_FILTERED_TEXT_SHARE = 0.40
+SAFETY_NET_MAX_FILTERED_CHARS = 200   # the net only rescues pages the clean-up nearly emptied
+SAFETY_NET_MIN_PLAIN_CHARS = 600      # ... and only when the page really had text to lose
 EDGE_MIN_LINKS = 4
 EDGE_MIN_LINK_SHARE = 0.80
 EDGE_LONG_PARAGRAPH_CHARS = 120
@@ -232,9 +237,16 @@ def risky_link(url) -> str:
 _VOID = {"br", "img", "input", "hr", "meta", "link", "area", "base",
          "col", "embed", "source", "track", "wbr"}
 _DROP_ROLES = {"navigation", "banner", "contentinfo", "complementary"}
-_DROP_TOKENS = {"sidebar", "ad", "ads", "advert", "social", "share", "cookie",
+_DROP_TOKENS = {"sidebar", "advert", "social", "share", "cookie",
                 "consent", "modal", "popup", "menu", "breadcrumb", "breadcrumbs"}
-_ATTR_TOKEN_SPLIT = re.compile(r"[\s_-]+")
+_AD_TOKENS = {"ad", "ads"}
+_ATTR_TOKEN_SPLIT = re.compile(r"[_-]+")
+
+
+def _matches_drop_token(value):
+    parts = _ATTR_TOKEN_SPLIT.split(value, maxsplit=DROP_TOKEN_MAX_PARTS)
+    return ((len(parts) <= DROP_TOKEN_MAX_PARTS and not _DROP_TOKENS.isdisjoint(parts))
+            or (len(parts) <= AD_TOKEN_MAX_PARTS and not _AD_TOKENS.isdisjoint(parts)))
 
 
 def _normalize(text):
@@ -301,9 +313,11 @@ class _Extractor(HTMLParser):
     BLOCK = {"p", "div", "section", "article", "li", "tr", "td", "th", "table",
              "ul", "ol", "blockquote", "pre", "figure", "main"}
     CONTAINER = {"main", "article"}
+    PROTECTED = CONTAINER | {"html", "body"}
 
-    def __init__(self):
+    def __init__(self, drop_clutter):
         super().__init__(convert_charrefs=True)
+        self._drop_clutter = drop_clutter
         self._open = [_Scope("")]
         self._next_id = 0
         self._cur = []
@@ -335,10 +349,12 @@ class _Extractor(HTMLParser):
         parent = self._open[-1]
         hidden = parent.hidden or tag in self.SKIP or tag in self.STRIP
         attributes = {} if hidden else {key: (value or "").casefold() for key, value in attrs}
-        if attributes:
-            tokens = _ATTR_TOKEN_SPLIT.split(f"{attributes.get('class', '')} {attributes.get('id', '')}")
-            hidden = bool(_DROP_ROLES.intersection(attributes.get("role", "").split())
-                          or _DROP_TOKENS.intersection(tokens))
+        if self._drop_clutter and attributes and tag not in self.PROTECTED:
+            roles = attributes.get("role", "").split()
+            if "main" not in roles:
+                hidden = (not _DROP_ROLES.isdisjoint(roles)
+                          or _matches_drop_token(attributes.get("id", ""))
+                          or any(_matches_drop_token(value) for value in attributes.get("class", "").split()))
         if not hidden and (tag in self.HEADING or tag in self.BLOCK or tag == "br"):
             self._flush()
         if tag in _VOID:
@@ -377,7 +393,8 @@ class _Extractor(HTMLParser):
         pieces = self._pieces
         if strip_boilerplate:
             pieces = [p for p in pieces if not _BOILERPLATE_RE.match(p.text)]
-        pieces = _drop_edge_links(pieces)
+        if self._drop_clutter:
+            pieces = _drop_edge_links(pieces)
         main = [p for p in pieces if p.main]
         whole_chars = sum(len(p.text) for p in pieces)
         main_chars = sum(len(p.text) for p in main)
@@ -398,14 +415,23 @@ def html_to_text(html, main_content=True):
     return _html_text(html, main_content)[0]
 
 
+def _extract_html_text(html, *, drop_clutter, strip_boilerplate):
+    extractor = _Extractor(drop_clutter)
+    extractor.feed(html)
+    extractor.close()
+    return extractor.text(strip_boilerplate)
+
+
 def _html_text(html, strip_boilerplate=True):
     if not html:
         return "", ""
     try:
-        ex = _Extractor()
-        ex.feed(html)
-        ex.close()
-        return ex.text(strip_boilerplate)
+        filtered = _extract_html_text(html, drop_clutter=True, strip_boilerplate=strip_boilerplate)
+        plain = _extract_html_text(html, drop_clutter=False, strip_boilerplate=False)
+        nearly_emptied = (len(filtered[0]) < SAFETY_NET_MAX_FILTERED_CHARS
+                          and len(plain[0]) >= SAFETY_NET_MIN_PLAIN_CHARS
+                          and len(filtered[0]) < len(plain[0]) * MIN_FILTERED_TEXT_SHARE)
+        return plain if nearly_emptied else filtered
     except Exception:
         # A malformed page degrades to a rough tag-strip, never raises.
         text = re.sub(r"(?is)<(script|style|noscript|head).*?</\1>", " ", html)

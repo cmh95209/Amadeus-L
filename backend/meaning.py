@@ -260,17 +260,21 @@ def _http_embed(texts, timeout):
         headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    if not data.get("ok"):
-        return None
-    return data.get("vectors")
+    if data.get("ok") is False:
+        raise ConnectionError("Embedding service unavailable")
+    return data.get("vectors") if data.get("ok") else None
+
+
+def _embed_vectors(texts, timeout):
+    if _embed_fn is not None:
+        return [list(v) for v in _embed_fn(list(texts))]
+    return _http_embed(texts, timeout)
 
 
 def _embed(texts, timeout):
     """Vectors for texts, or None (any failure)."""
     try:
-        if _embed_fn is not None:
-            return [list(v) for v in _embed_fn(list(texts))]
-        return _http_embed(texts, timeout)
+        return _embed_vectors(texts, timeout)
     except Exception:
         return None
 
@@ -370,37 +374,46 @@ def _batch_cosines(vectors, count):
 
 
 def batch_similarity(query, candidates, *, timeout=None):
-    """Cosines for one query and its candidates in a single sidecar request."""
+    """Return (cosines, fallback reason) for one bounded ranking request."""
     budget = SEARCH_EMBED_TIMEOUT if timeout is None else min(timeout, SEARCH_EMBED_TIMEOUT)
     deadline = time.monotonic() + budget
     texts = [query, *candidates]
-    if (not ENABLED or budget <= 0 or not candidates or any(not text.strip() for text in texts)
-            or not _search_embed_lock.acquire(blocking=False)):
-        return None
+    if not ENABLED:
+        return None, "off"
+    if budget <= 0:
+        return None, "timeout"
+    if not candidates or any(not text.strip() for text in texts):
+        return None, "invalid"
+    if not _search_embed_lock.acquire(blocking=False):
+        return None, "busy"
     result = Future()
 
     def work():
-        scores = None
+        scores, reason = None, "timeout"
         try:
             remaining = deadline - time.monotonic()
             if remaining > 0:
-                scores = _batch_cosines(_embed(texts, remaining), len(texts))
+                vectors = _embed_vectors(texts, remaining)
+                scores = _batch_cosines(vectors, len(texts))
+                reason = "invalid" if scores is None else None
+        except OSError as exc:
+            reason = "timeout" if isinstance(getattr(exc, "reason", exc), TimeoutError) else "sidecar down"
         except Exception:
-            pass  # Malformed responses and sidecar failures use engine order.
+            reason = "invalid"
         finally:
             _search_embed_lock.release()
-        result.set_result(scores)
+        result.set_result((scores, reason))
 
     try:
         threading.Thread(target=work, daemon=True, name="search-embed").start()
     except RuntimeError:
         _search_embed_lock.release()
-        return None
+        return None, "busy"
     try:
-        scores = result.result(timeout=max(0, deadline - time.monotonic()))
+        ranked = result.result(timeout=max(0, deadline - time.monotonic()))
     except FutureTimeout:
-        return None
-    return scores if time.monotonic() < deadline else None
+        return None, "timeout"
+    return ranked if time.monotonic() < deadline else (None, "timeout")
 
 
 def _best(v, group) -> float:

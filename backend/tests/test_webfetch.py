@@ -159,6 +159,37 @@ class HtmlToTextTests(unittest.TestCase):
                 '<p class="shadow advertised cookiejar" id="mainmenu shareholder">Keep prose.</p>')
         self.assertEqual(webfetch.html_to_text(html), "Keep prose.")
 
+    def test_compound_theme_class_on_html_does_not_drop_page(self):
+        article = "The article covers the history of the city. " * 25
+        html = ('<html class="client-nojs vector-feature-main-menu-pinned-disabled">'
+                '<body><article><div class="cookie_banner">Cookie settings control.</div>'
+                f'<p>{article}</p></article></body></html>')
+        self.assertEqual(webfetch.html_to_text(html), article.strip())
+
+    def test_body_and_wrapper_never_dropped_by_token(self):
+        html = ('<body class="menu" role="banner">'
+                '<div class="theme-layout-sidebar-content" id="header-ad-free">'
+                '<p class="add-to-cart">Wrapper text.</p><div class="share-buttons">Share chrome.</div>'
+                '<main class="ads" role="complementary">'
+                '<article id="share" role="navigation"><p>Article text.</p></article></main>'
+                '<div class="sidebar" role="MAIN banner"><p>Role main text.</p></div></div></body>')
+        self.assertEqual(webfetch.html_to_text(html), "Wrapper text.\nArticle text.\nRole main text.")
+
+    def test_short_compound_menu_class_still_dropped(self):
+        prose = "The park opens again next week. " * 8
+        html = f'<div class="site-menu">Home About Contact</div><p>{prose}</p>'
+        self.assertEqual(webfetch.html_to_text(html), prose.strip())
+
+    def test_safety_net_restores_text_when_dropping_removes_most(self):
+        prose = "The building was designed around an open courtyard. " * 25
+        html = ('<script>script text</script><nav>nav text</nav><p>Opening.</p>'
+                f'<div class="sidebar"><p>{prose}</p></div>'
+                '<div role="complementary">Related reading</div>'
+                '<div><a href="/1">One</a> <a href="/2">Two</a> '
+                '<a href="/3">Three</a> <a href="/4">Four</a></div>')
+        self.assertEqual(webfetch.html_to_text(html),
+                         f"Opening.\n{prose.strip()}\nRelated reading\nOne Two Three Four")
+
 
 class BotWallTests(unittest.TestCase):
     def test_cloudflare(self):

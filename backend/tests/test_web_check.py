@@ -64,7 +64,7 @@ class SourcesTests(unittest.TestCase):
              patch.object(chat.store, "effective_context_budget", return_value=8000):
             chat._web_search_with_content("Genshin banner")
         source, = chat.take_turn_sources()
-        self.assertEqual([item["outcome"] for item in source.pop("outcomes")], ["read", "skipped"])
+        self.assertEqual([item["outcome"] for item in source.pop("outcomes")], ["read", "not_needed"])
         self.assertEqual(source, {
             "kind": "search", "query": "Genshin banner",
             "results": [{"title": "Big news today", "url": "https://news.example/a"},

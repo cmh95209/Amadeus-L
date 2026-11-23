@@ -961,7 +961,8 @@ def _source_results(results, used, pages=()):
     return displayed
 
 
-def _read_results(query: str, results: list, source: dict, *, plan=None, deadline=None, topups=()):
+def _read_results(query: str, results: list, source: dict, *, plan=None, deadline=None,
+                  topups=(), ranking=None):
     """Read ranked search candidates, adding top-up hits to results when needed."""
     mode, parallel, pin, local = plan or web_reading_plan()
     if deadline is None:
@@ -978,11 +979,10 @@ def _read_results(query: str, results: list, source: dict, *, plan=None, deadlin
     target = max(1, min(SEARCH_TARGET_PAGES, webreader.MAX_PAGES))
     outcomes = webreader.SearchOutcomes()
     seen, pages, used = set(), [], []
-    previews = ""
+    preview_blocks = []
     source.update(mode=mode, topups=0, topup_stop=None, used=[])
 
     def read_batch(batch, topup=False):
-        nonlocal previews
         candidates, preview_candidates, added = [], [], []
         for r in batch:
             outcomes.add(r)
@@ -990,12 +990,11 @@ def _read_results(query: str, results: list, source: dict, *, plan=None, deadlin
             if key in seen:
                 continue
             seen.add(key)
-            if webfetch.skip_search_host(r["url"]):
-                if not topup:
-                    preview_candidates.append(r)
-                continue
-            candidates.append(r)
             added.append(r)
+            if webfetch.skip_search_host(r["url"]):
+                preview_candidates.append(r)
+            else:
+                candidates.append(r)
         if topup:
             results.extend(added)
         if candidates:
@@ -1003,31 +1002,37 @@ def _read_results(query: str, results: list, source: dict, *, plan=None, deadlin
         if SEARCH_EMBED_ORDER and len(candidates) > 1 and (
                 source.get("rechecked") is None or any(r.get("snippet") for r in candidates)):
             texts = [f"{r.get('title') or ''}\n{r.get('snippet') or ''}".strip() for r in candidates]
-            budget = deadline - reserve - webreader.MIN_FETCH_TIMEOUT - time.monotonic()
-            scores = meaning.batch_similarity(query, texts, timeout=budget)
+            started = time.monotonic()
+            budget = deadline - reserve - webreader.MIN_FETCH_TIMEOUT - started
+            scores, reason = meaning.batch_similarity(query, texts, timeout=budget)
+            if ranking is not None:
+                ranking.append((len(candidates), time.monotonic() - started, reason))
             if scores is not None:
                 candidates = [r for _, r in sorted(zip(scores, candidates),
                                                     key=lambda pair: pair[0], reverse=True)]
-        fetched = webreader.fetch_pages(
-            candidates, lambda url, timeout: webfetch.fetch_page(
-                url, timeout=timeout, min_chars=webfetch.SEARCH_MIN_PAGE_CHARS, retry_identity=True,
-                read_pdf=True),
-            deadline, progress=_progress, reader_reserve=reserve,
-            max_pages=target - len(used) if mode == "reader" else 1,
-            max_tries=tries, prefer=prefer, outcomes=outcomes)
-        if fetched:
-            _progress("reading", "Reading " + _site_list(fetched) + "...")
-        if fetched and mode == "reader" and webreader.has_reader_time(deadline):
-            today = datetime.now().strftime("%Y-%m-%d")
-            try:
-                reader = _reader_call(pin)
-            except Exception:
-                for p in fetched:
-                    p["status"] = "failed"
-            else:
-                webreader.read_pages(question, query, fetched, reader, deadline, today,
-                                     min(page_chars, SEARCH_READER_CHARS), parallel=parallel,
-                                     progress=_progress, today_first=state)
+        with webreader.preview_pages(preview_candidates, deadline, outcomes) as cards:
+            fetched = webreader.fetch_pages(
+                candidates, lambda url, timeout: webfetch.fetch_page(
+                    url, timeout=timeout, min_chars=webfetch.SEARCH_MIN_PAGE_CHARS, retry_identity=True,
+                    read_pdf=True),
+                deadline, progress=_progress, reader_reserve=reserve,
+                max_pages=target - len(used) if mode == "reader" else 1,
+                max_tries=tries, prefer=prefer, outcomes=outcomes)
+            if fetched:
+                _progress("reading", "Reading " + _site_list(fetched) + "...")
+            if fetched and mode == "reader" and webreader.has_reader_time(deadline):
+                today = datetime.now().strftime("%Y-%m-%d")
+                try:
+                    reader = _reader_call(pin)
+                except Exception:
+                    for p in fetched:
+                        p["status"] = "failed"
+                else:
+                    webreader.read_pages(question, query, fetched, reader, deadline, today,
+                                         min(page_chars, SEARCH_READER_CHARS), parallel=parallel,
+                                         progress=_progress, today_first=state)
+        if cards:
+            preview_blocks.append(webreader.preview_block(preview_candidates, cards))
         for p in fetched:
             if p.get("notes"):
                 used.append(p)
@@ -1036,9 +1041,6 @@ def _read_results(query: str, results: list, source: dict, *, plan=None, deadlin
                     p.get("status"), "timeout")
                 outcomes.finish_read(p["rank"], outcome, p.get("reader_seconds", 0.0))
         pages.extend(fetched)
-        if preview_candidates:
-            cards = webreader.preview_pages(preview_candidates, deadline, outcomes)
-            previews = webreader.preview_block(preview_candidates, cards)
 
     try:
         batch = [dict(r, rank=r.get("rank") or i) for i, r in enumerate(results, 1) if r.get("url")]
@@ -1071,7 +1073,7 @@ def _read_results(query: str, results: list, source: dict, *, plan=None, deadlin
             extra = ""
         source["used"] = [p["url"] for p in used]
         source["read"] = used[0]["url"] if used else None
-        return "\n\n".join(part for part in (extra, previews) if part), used
+        return "\n\n".join(part for part in (extra, *preview_blocks) if part), used
     finally:
         source["outcomes"] = outcomes.freeze()
 
@@ -1783,6 +1785,17 @@ def _log_search_summary(source, result_count):
           + (f"; topup_stop={stop}" if stop else ""))
 
 
+def _log_search_ranking(attempts):
+    used = [(count, seconds) for count, seconds, reason in attempts if reason is None]
+    if used:
+        count = sum(count for count, _ in used)
+        seconds = sum(seconds for _, seconds in used)
+        print(f"[Amadeus] Search ranking: embed used ({count} candidates, {seconds:.2f} s)")
+    else:
+        reason = attempts[0][2] if attempts else ("invalid" if meaning.ENABLED else "off")
+        print(f"[Amadeus] Search ranking: engine order (reason: {reason})")
+
+
 def _web_search_with_content(query: str) -> str:
     """Run the search and reader within one budget, then save the lookup."""
     query = _guard_query(query)
@@ -1812,18 +1825,21 @@ def _web_search_with_content(query: str) -> str:
     if results:
         _progress("found", f"Found {len(results)} page{'s' if len(results) != 1 else ''}")
     extra, pages = "", []
+    ranking = [] if SEARCH_EMBED_ORDER else None
     try:
         if results:
             if mode == "quick":
                 deadline = min(deadline, time.monotonic() + (READ_BUDGET_LOCAL if local else READ_BUDGET_CLOUD))
             extra, pages = _read_results(query, results, source, plan=plan, deadline=deadline,
-                                         topups=_next_search_engines(source["engine"]))
+                                         topups=_next_search_engines(source["engine"]), ranking=ranking)
         elif mode == "reader":
             source["topup_stop"] = ("time" if deadline - reserve - time.monotonic() < SEARCH_MIN_ENGINE_TIME
                                     else "limit")
     except Exception:
         print("[Amadeus] Reading search result pages failed")
     finally:
+        if ranking is not None:
+            _log_search_ranking(ranking)
         source["results"] = _source_results(results, [source["read"], *source.get("used", [])], pages)
         if results:
             _save_lookup(query, source, results, pages, extra)

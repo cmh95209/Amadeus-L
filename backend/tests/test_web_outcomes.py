@@ -40,7 +40,7 @@ class SearchOutcomeTests(unittest.TestCase):
     def search(self, batches, fetch=None, reader=None, preview=None, mode="reader", after=None):
         engines = Mock(side_effect=batches)
         fetch = Mock(side_effect=fetch, return_value=page())
-        preview = Mock(return_value=preview or page("empty"))
+        preview = Mock(side_effect=preview) if callable(preview) else Mock(return_value=preview or page("empty"))
         reader = Mock(side_effect=reader, return_value="- A relevant fact.")
         out = io.StringIO()
         with patch.object(chat, "_turn", SimpleNamespace()), \
@@ -130,8 +130,8 @@ class SearchOutcomeTests(unittest.TestCase):
         self.assertEqual(outcomes[4]["chars"], 23)
         self.assertTrue(all(p["seconds"] >= 0 for p in outcomes))
         self.assertIn("read site1.example", run.logs)
-        self.assertIn("read=1 no_answer=1 preview=0 skipped=0 refused=1 empty=1 blocked=1 timeout=1 error=2",
-                      run.logs)
+        self.assertIn("read=1 no_answer=1 preview=0 skipped=0 not_needed=0 "
+                      "refused=1 empty=1 blocked=1 timeout=1 error=2", run.logs)
         self.assertIn("topups=3; topup_stop=limit", run.logs)
 
     def test_page_log_omits_url_secrets_and_late_duplicates(self):
@@ -159,7 +159,7 @@ class SearchOutcomeTests(unittest.TestCase):
         finally:
             release.set()
         self.assertEqual(run.logs.count("Web page news.example read"), 1)
-        self.assertEqual(run.logs.count("Web page slow.example skipped"), 1)
+        self.assertEqual(run.logs.count("Web page slow.example not_needed"), 1)
         for secret in ("private-user", "private-pass", "private-path", "private-token", "slow-path",
                        "late-token", "private exception", "Snippet 1"):
             self.assertNotIn(secret, run.logs)
@@ -183,6 +183,72 @@ class SearchOutcomeTests(unittest.TestCase):
         run.fetch.assert_not_called()
         run.reader.assert_not_called()
 
+    def test_skip_host_preview_fetched_in_first_batch_and_topups(self):
+        instagram = hit(1, "https://instagram.com/first")
+        reddit = hit(4, "https://reddit.com/topup")
+        started = {r["href"]: threading.Event() for r in (instagram, reddit)}
+
+        def preview(url, _timeout):
+            started[url].set()
+            return page("preview", title="First card" if url == instagram["href"] else "Top-up card")
+
+        def fetch(url, **_):
+            social = reddit if url == hit(5)["href"] else instagram
+            if not started[social["href"]].wait(1):
+                return page("error")
+            return page()
+
+        batches = [([instagram, hit(2), hit(3)], ""), ([reddit, hit(5)], "")]
+        run = self.search(batches, fetch=fetch, preview=preview)
+        self.assertEqual([c.args[0] for c in run.preview.call_args_list], [instagram["href"], reddit["href"]])
+        self.assertCountEqual([c.args[0] for c in run.fetch.call_args_list], [hit(i)["href"] for i in (2, 3, 5)])
+        self.assertEqual([p["outcome"] for p in run.source["outcomes"]],
+                         ["preview", "read", "read", "preview", "read"])
+        self.assertEqual(run.source["topup_stop"], "target_reached")
+        self.assertIn("[1] Preview only (full post not read). First card", run.text)
+        self.assertIn("[4] Preview only (full post not read). Top-up card", run.text)
+        self.assertIn("preview=2 skipped=0", run.logs)
+
+    def test_not_needed_distinct_from_skipped(self):
+        social = hit(1, "https://instagram.com/post")
+        rows = [social, *(hit(i) for i in range(2, 7))]
+        run = self.search([(rows, "")], preview=page("blocked", status_code=403))
+        self.assertEqual([p["outcome"] for p in run.source["outcomes"]],
+                         ["skipped", "read", "read", "read", "not_needed", "not_needed"])
+        self.assertNotIn(rows[-1]["href"], [c.args[0] for c in run.fetch.call_args_list])
+        self.assertIn("Web page instagram.com skipped (preview blocked)", run.logs)
+        self.assertIn("Web page site6.example not_needed", run.logs)
+        self.assertIn("preview=0 skipped=1 not_needed=2", run.logs)
+
+    def test_embed_order_logs_used_or_fallback_reason(self):
+        ranking_prefix = "[Amadeus] Search ranking: "
+        batches = [([hit(1), hit(2)], ""), ([hit(3), hit(4)], "")]
+        meaning = chat.meaning
+        with patch.object(chat, "SEARCH_EMBED_ORDER", True), \
+             patch.object(meaning, "_embed_fn", return_value=[(1, 0), (0, 1), (1, 0)]) as embed:
+            run = self.search(batches)
+        self.assertEqual(embed.call_count, 2)
+        self.assertEqual(run.source["used"], [hit(i)["href"] for i in (2, 1, 4)])
+        self.assertEqual(run.logs.count(ranking_prefix), 1)
+        self.assertRegex(run.logs, r"\[Amadeus\] Search ranking: embed used \(4 candidates, \d+\.\d{2} s\)\n")
+
+        busy_lock = threading.Lock()
+        busy_lock.acquire()
+        cases = (("off", False, threading.Lock(), Mock()),
+                 ("busy", True, busy_lock, Mock()),
+                 ("timeout", True, threading.Lock(), Mock(side_effect=TimeoutError("private error"))),
+                 ("sidecar down", True, threading.Lock(), Mock(side_effect=ConnectionError("private error"))),
+                 ("invalid", True, threading.Lock(), Mock(return_value=[(1, 0)])))
+        for reason, enabled, lock, embed in cases:
+            with self.subTest(reason=reason), patch.object(chat, "SEARCH_EMBED_ORDER", True), \
+                 patch.object(meaning, "ENABLED", enabled), patch.object(meaning, "_search_embed_lock", lock), \
+                 patch.object(meaning, "_embed_fn", embed):
+                run = self.search(batches[:1], mode="quick")
+                self.assertEqual(run.source["used"], [hit(1)["href"]])
+                self.assertEqual(run.logs.count(ranking_prefix), 1)
+                self.assertIn(f"{ranking_prefix}engine order (reason: {reason})\n", run.logs)
+                self.assertNotIn("private error", run.logs)
+
     def test_topup_runs_until_three_pages_or_three_topups(self):
         batches = [([hit(i)], "") for i in range(1, 5)]
         good = self.search(batches)
@@ -205,18 +271,20 @@ class SearchOutcomeTests(unittest.TestCase):
         self.assertEqual([p["outcome"] for p in run.source["outcomes"]],
                          ["preview", "no_answer", "read", "read", "read"])
 
-    def test_topup_excludes_seen_urls_and_skip_hosts(self):
+    def test_topup_excludes_seen_urls_and_previews_skip_hosts(self):
         first = hit(1)
         duplicate = hit(2, first["href"] + "#fragment")
-        excluded = hit(3, "https://sub.pinterest.de/pin")
+        social = hit(3, "https://sub.pinterest.de/pin")
         fresh = hit(4)
-        run = self.search([([first], ""), ([duplicate, excluded, fresh, fresh], ""), ([], ""), ([], "")])
+        run = self.search([([first], ""), ([duplicate, social, fresh, fresh], ""), ([], ""), ([], "")])
         self.assertEqual([c.args[0] for c in run.fetch.call_args_list], [first["href"], fresh["href"]])
         self.assertEqual([c.args[1] for c in run.engines.call_args_list], ["Guarded topic"] * 4)
-        self.assertNotIn(excluded["href"], run.text)
-        run.preview.assert_not_called()
+        self.assertNotIn(duplicate["href"], run.text)
+        self.assertIn(social["href"], run.text)
+        self.assertEqual([c.args[0] for c in run.preview.call_args_list], [social["href"]])
+        self.assertIn("Web page sub.pinterest.de skipped (preview empty)", run.logs)
         self.assertEqual([p["outcome"] for p in run.source["outcomes"]],
-                         ["read", "skipped", "skipped", "read", "skipped"])
+                         ["read", "not_needed", "skipped", "read", "not_needed"])
 
     def test_topup_numbering_continues_and_citations_stay_correct(self):
         initial = [hit(i, f"https://reddit.com/post{i}") for i in range(1, 9)]

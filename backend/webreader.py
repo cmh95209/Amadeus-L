@@ -26,6 +26,7 @@ import concurrent.futures
 import math
 import re
 import time
+from contextlib import contextmanager
 from datetime import date
 from http import HTTPStatus
 
@@ -265,7 +266,7 @@ def has_reader_time(deadline) -> bool:
     return _remaining(deadline) >= MIN_READER_TIMEOUT
 
 
-OUTCOME_CODES = ("read", "no_answer", "preview", "skipped", "refused", "empty",
+OUTCOME_CODES = ("read", "no_answer", "preview", "skipped", "not_needed", "refused", "empty",
                  "blocked", "timeout", "error")
 
 
@@ -280,7 +281,7 @@ def _fetch_outcome(page):
         return "timeout"
     if status in ("preview", "skipped", "empty", "blocked"):
         return status
-    return "skipped" if status == "ok" else "error"
+    return "not_needed" if status == "ok" else "error"
 
 
 class SearchOutcomes:
@@ -291,7 +292,7 @@ class SearchOutcomes:
 
     def add(self, candidate):
         self.entries[candidate["rank"]] = dict(
-            rank=candidate["rank"], host=webfetch.log_host(candidate["url"]), outcome="skipped",
+            rank=candidate["rank"], host=webfetch.log_host(candidate["url"]), outcome="not_needed",
             status_code=None, seconds=0.0, chars=0, identity=None)
 
     def fetched(self, candidate, page, seconds):
@@ -304,6 +305,13 @@ class SearchOutcomes:
         if page.get("status") == "unsafe":
             entry["host"] = ""
 
+    def previewed(self, candidate, card, seconds):
+        self.fetched(candidate, card, seconds)
+        entry = self.entries[candidate["rank"]]
+        if entry["outcome"] != "preview":
+            reason = "disabled" if card.get("status") == "disabled" else entry["outcome"]
+            entry.update(outcome="skipped", reason=f"preview {reason}")
+
     def finish_read(self, rank, outcome, reader_seconds=0.0):
         entry = self.entries[rank]
         entry.update(outcome=outcome, seconds=entry["seconds"] + reader_seconds)
@@ -313,55 +321,61 @@ class SearchOutcomes:
                     for _, entry in sorted(self.entries.items())]
         if SEARCH_PAGE_LOG_ENABLED:
             for entry in snapshot:
-                print(f"[Amadeus] Web page {entry['host'] or '-'} {entry['outcome']}")
+                reason = f" ({entry['reason']})" if entry.get("reason") else ""
+                print(f"[Amadeus] Web page {entry['host'] or '-'} {entry['outcome']}{reason}")
         return snapshot
 
 
+@contextmanager
 def preview_pages(candidates, deadline, outcomes):
-    """Get preview metadata within one small concurrent time window."""
+    """Start preview requests before reading pages and collect them on exit."""
+    previews = {}
     started = time.monotonic()
     cutoff = min(deadline, started + SEARCH_PREVIEW_TIMEOUT)
     if not SEARCH_PREVIEWS_ENABLED or not candidates or _remaining(cutoff) < MIN_FETCH_TIMEOUT:
-        return {}
+        status = "disabled" if not SEARCH_PREVIEWS_ENABLED else "late"
+        for candidate in candidates:
+            outcomes.previewed(candidate, {"status": status}, 0.0)
+        yield previews
+        return
 
     def work(url):
         start = time.monotonic()
         if cutoff - start < MIN_FETCH_TIMEOUT:
             return {"status": "late"}, 0.0
         try:
-            card = webfetch.fetch_preview(url, cutoff - start)
+            card = webfetch.fetch_preview(url, cutoff - start) or {"status": "empty"}
         except TimeoutError:
             card = {"status": "late"}
         except Exception:
             card = {"status": "error"}
-        return card, time.monotonic() - start
+        end = time.monotonic()
+        return (card if end < cutoff else {"status": "late"}), end - start
 
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(candidates))
     futures = {pool.submit(work, r["url"]): r for r in candidates}
-    previews, done = {}, set()
     try:
-        for fut in concurrent.futures.as_completed(futures, timeout=max(0, _remaining(cutoff))):
-            candidate = futures[fut]
-            done.add(fut)
-            card, elapsed = fut.result()
-            if card.get("status") == "preview":
-                card["chars"] = sum(len(card.get(k) or "") for k in ("title", "og_title", "description"))
-                previews[candidate["rank"]] = card
-            outcomes.fetched(candidate, card, elapsed)
-    except concurrent.futures.TimeoutError:
-        for fut in futures.keys() - done:
-            outcomes.fetched(futures[fut], {"status": "late"}, cutoff - started)
+        yield previews
     finally:
+        done, _ = concurrent.futures.wait(futures, timeout=max(0, _remaining(cutoff)))
         pool.shutdown(wait=False, cancel_futures=True)
-    return previews
+        for fut, candidate in futures.items():
+            card, elapsed = fut.result() if fut in done else ({"status": "late"}, cutoff - started)
+            if card.get("status") == "preview":
+                chars = sum(len(card.get(k) or "") for k in ("title", "og_title", "description"))
+                card = dict(card, chars=chars)
+                previews[candidate["rank"]] = card
+            outcomes.previewed(candidate, card, elapsed)
 
 
 def preview_block(candidates, previews):
-    if not candidates:
+    if not previews:
         return ""
     parts = []
     for candidate in candidates:
-        card = previews.get(candidate["rank"], {})
+        card = previews.get(candidate["rank"])
+        if card is None:
+            continue
         title = card.get("og_title") or card.get("title") or candidate.get("title") or ""
         fields = [f"[{candidate['rank']}] Preview only (full post not read). {title}"]
         if card.get("title") and card.get("og_title") and card["title"] != card["og_title"]:

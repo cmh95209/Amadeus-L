@@ -13,6 +13,7 @@
 A temp SQLite store backs the REAL memory functions; no network.
 """
 import contextlib
+import math
 import sqlite3
 import sys
 import tempfile
@@ -293,6 +294,48 @@ class SearchTests(_Base):
 
 
 class SemanticSearchTests(_Base):
+    def test_same_tab_cross_language_recall_with_a_masked_probe(self):
+        birthday = "私の誕生日は4月23日です。"
+        question = "你还记得我的生日是哪一天吗？请简短说。"
+        reply_text = "わかった。"
+        filler = "Workshop papers go behind the cardboard divider."
+        tab = self._tab("Birthday", [("user", birthday), ("assistant", reply_text), ("user", filler)])
+        probe = store.append_message("user", question, conversation_id=tab)
+
+        def at_cosine(cosine):
+            return [cosine, math.sqrt(1 - cosine**2)]
+
+        # The birthday score is from the live JA → ZH miss. The lower scores
+        # model unrelated rows, and the identical probe is already visible.
+        embeddings = {birthday: at_cosine(0.502808), reply_text: at_cosine(0.35),
+                      filler: at_cosine(0.40), question: [1.0, 0.0]}
+
+        def fake_embed(texts, _timeout, *, with_fingerprint=False):
+            return "deterministic-multilingual", [embeddings[text] for text in texts]
+
+        with contextlib.closing(sqlite3.connect(":memory:")) as conn, \
+                patch.object(vectors.meaning, "_embed", side_effect=fake_embed):
+            cache = vectors._Cache(conn)
+            worker = vectors._Worker(store.PATH_TO_MEMORY, ":memory:", lambda: True)
+            rows = [r for r in cross_tab._candidates() if r["conversation_id"] == tab]
+            fingerprint, batch = vectors._embed([r["content"] for r in rows], 1)
+            cache.configure(fingerprint)
+            cache.save((r["id"], vectors.content_hash(r), vector) for r, vector in zip(rows, batch))
+
+            def submit(text, excluded, _transcript):
+                job = vectors._Query(text, excluded)
+                worker._answer(cache, job)
+                return vectors._SemanticSearch(worker, job)
+
+            with patch.object(vectors, "begin_query", return_value=None):
+                self.assertIsNone(cross_tab.search_block(question, tab, verbatim_message_ids=(probe,)))
+            with patch.object(vectors, "begin_query", side_effect=submit):
+                block = cross_tab.search_block(question, tab, verbatim_message_ids=(probe,))
+                self.assertIn("earlier in this chat", block["content"])
+                self.assertIn(f'User: "{birthday}" / You: "{reply_text}"', block["content"])
+                self.assertNotIn(filler, block["content"])
+                self.assertNotIn(question, block["content"])
+
     def test_paraphrases_and_en_ja_zh_use_the_real_cosine_threshold(self):
         original = "My birthday is November 14."
         saved = self._tab("Birthday", [("user", original)])

@@ -23,6 +23,8 @@ MAX_TEXT_CHARS = 2000
 MAX_ROWS = 50_000
 SHORTLIST = 128
 MIN_COSINE = 0.70
+FALLBACK_MIN_COSINE = 0.50
+FALLBACK_MIN_GAP = 0.08
 QUERY_SECONDS = 0.250
 BATCH_TIMEOUT = 10.0
 BATCH_PAUSE = 0.25
@@ -157,6 +159,7 @@ class _Cache:
         ids = [-neg_id for _, neg_id in shortlist]
         slots = ",".join("?" for _ in ids)
         hits = {}
+        candidates = {}
         vector_bytes = len(query_vector) * query_vector.itemsize
         for mid, digest, data in self.conn.execute(
                 f"SELECT id, digest, vector FROM vectors WHERE id IN ({slots})", ids):
@@ -167,9 +170,23 @@ class _Cache:
             vector = array("f")
             vector.frombytes(data)
             cosine = math.fsum(a * b for a, b in zip(vector, query_vector))
-            if math.isfinite(cosine) and cosine >= MIN_COSINE:
+            if not math.isfinite(cosine):
+                continue
+            if cosine >= MIN_COSINE:
                 hits[mid] = (digest, cosine)
-        return hits
+            else:
+                candidates[mid] = (digest, cosine)
+        if hits or len(candidates) < 2:
+            return hits
+
+        # Below the usual cutoff, require evidence of separation from the
+        # strongest unmasked alternative and admit at most one row.
+        best, runner_up = heapq.nlargest(2, candidates, key=lambda mid: candidates[mid][1])
+        best_hit = candidates[best]
+        gap = best_hit[1] - candidates[runner_up][1]
+        if best_hit[1] >= FALLBACK_MIN_COSINE and gap >= FALLBACK_MIN_GAP:
+            return {best: best_hit}
+        return {}
 
 
 class _Query:

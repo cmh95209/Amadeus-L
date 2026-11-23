@@ -1,4 +1,5 @@
 """Transcript vectors use an isolated SQLite store and deterministic embeddings."""
+import math
 import sqlite3
 import sys
 import tempfile
@@ -157,6 +158,24 @@ class IndexTests(unittest.TestCase):
         with patch.object(vectors, "SHORTLIST", 1):
             hits = self.cache.search(query, {3}, time.monotonic() + 1)
             self.assertEqual(hits, {})  # Equal signatures select the newest one for reranking.
+
+    def test_weak_hit_needs_a_floor_and_separation_from_the_runner_up(self):
+        def at_cosine(cosine):
+            return array("f", [cosine, math.sqrt(1 - cosine**2)])
+
+        self.cache.save([
+            (1, b"birthday", at_cosine(0.502808)),  # Lowest cross-language birthday score in the live run.
+            (2, b"distractor", at_cosine(0.40)),
+            (3, b"near-tie", at_cosine(0.46)),
+            (4, b"other", at_cosine(0.25)),
+        ])
+        query = array("f", [1, 0])
+        hits = self.cache.search(query, {3}, time.monotonic() + 1)
+        self.assertEqual(set(hits), {1})
+        self.assertAlmostEqual(hits[1][1], 0.502808)
+        self.assertEqual(self.cache.search(query, set(), time.monotonic() + 1), {})  # Close rival.
+        self.assertEqual(self.cache.search(query, {1, 2}, time.monotonic() + 1), {})  # Below floor.
+        self.assertEqual(self.cache.search(query, {2, 3, 4}, time.monotonic() + 1), {})  # No rival.
 
     def test_new_tool_window_reranks_with_the_same_query_embedding(self):
         first = self._add("First candidate.")

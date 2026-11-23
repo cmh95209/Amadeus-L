@@ -4114,7 +4114,8 @@ def _prompt_snapshot(conversation_id, exclude_ids, now, *, answering_id=None,
         prev_created_at = created_at
     summary = _SummarySnapshot(conv, state, {k: "\n".join(v) for k, v in texts.items()},
                                excluded)
-    return window.HistoryDraft(conv, out, summary, recall_excluded_ids=excluded)
+    return window.HistoryDraft(conv, out, summary, recall_excluded_ids=excluded,
+                               proactive=proactive, now=now_local)
 
 
 # pre: message_id exists; japanese_text is the line she actually spoke

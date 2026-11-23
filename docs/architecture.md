@@ -68,6 +68,7 @@ Amadeus-Project/
 │   ├── memory.py              # SQLite conversation history and rolling summaries
 │   ├── context_window.py      # Provider limits, prompt accounting, and history selection
 │   ├── cross_tab.py           # Other-tab catch-up and transcript recall across chats
+│   ├── moment_recall.py       # Scene boundaries, recall policy, cadence and rendering
 │   ├── transcript_vector_index.py # Disposable SQLite transcript embeddings and lookup worker
 │   ├── llm.py                 # LLM clients for built-in, local, and cloud models
 │   ├── builtin_llm.py         # Built-in model tier and its separate prompt cap
@@ -171,23 +172,48 @@ on the next call. The reply pack exposes the successful call's stored IDs
 as `verbatim_message_ids`.
 
 **Search old chats** uses those IDs to search earlier messages in the current
-chat and messages in other chats. It also excludes discarded answer versions
-during Regenerate. Keyword and semantic ranks share a cap of three dated
-excerpts and 300–600 estimated tokens, depending on the model. Excerpts fill
-available prompt space in the per-reply note, or the changing section of a
-custom local server's system message. The stable instructions and selected
-verbatim history are the same with or without a hit. The separate catch-up
-setting still covers other tabs.
+chat and messages in other chats. It pairs user turns with their active
+replies before masking, checks every proposed row against the current
+transcript, and excludes discarded versions, private or ineligible rows,
+future rows and quotes already in the assembled prompt. A reply gets up to
+one scene from its source tab. It can include up to three exchanges on each
+side of the matched exchange. Turn gaps, a gap of 30 minutes or more,
+privacy boundaries and clear topic changes can stop expansion. Uncertain
+timestamps limit that side to one neighbor.
 
-`transcript_vector_index.py` uses the memory sidecar's existing multilingual
-`/embed` endpoint. One backend worker reconciles active transcript rows and
-fills the newest missing vectors first. The latest 50,000 eligible rows are
-searchable. A separate, disposable `transcript_vectors.sqlite3` in the backend
-runtime data directory stores hashes and vectors. Changes to text, active
-versions, or deletions invalidate the affected entries. Schema and embedding
-configuration changes rebuild the cache. Search rechecks the transcript
-before including any quote. Semantic recall has a 250 ms wait budget per
-reply and falls back to keyword results when vectors are unavailable.
+The scene gets up to 8% of the effective input ceiling, with a cap of 1,200
+tokens on the built-in model and 6,000 elsewhere. Actual remaining request
+space is the hard limit. The renderer trims outer exchanges first, then
+clips around the matched passage if the anchor is still too large. Speaker,
+date, relative age and source-tab labels go in the per-reply note, or in
+the changing section of a custom local server's system message. One fixed
+instruction gives precedence to the user's current words. The stable
+prefix and selected verbatim history are byte-identical with and without
+recall. The separate catch-up setting still covers other tabs.
+
+Spontaneous recall needs strong evidence. The initial live-test thresholds
+are cosine 0.62 with a 0.08 lead over the next distinct scene, or cosine 0.55
+with two distinct lexical cues including a rare cue. Callbacks require three
+intervening user turns and are limited to two per 12 user turns across tabs.
+The in-process ledger keys retries and Regenerate to the same user turn and
+prevents repeating a scene in that window. Greetings omit scene recall.
+Direct recall questions bypass cadence and may use weaker evidence with
+hedging. Sensitive material requires a user-led request. Multilingual intent
+and sensitivity checks use example embeddings. Keyword evidence remains
+available when there is no vector hit and direct intent is known.
+
+`transcript_vector_index.py` reconciles the newest 50,000 eligible rows in
+a disposable `transcript_vectors.sqlite3`. Text changes, active versions
+and deletions invalidate individual rows. Schema and embedding configuration
+changes rebuild the cache. The backend submits up to four rows at a time
+to `POST /embed/transcript` and polls the sidecar's single job slot by ID.
+A lost request leaves encoding in that slot. An active job logs a stall at
+120 seconds and stays pollable. Each successful batch commits verified rows
+and leaves a one-second pause. Failures back off for 15, 30, 60 and 120
+seconds, then pause indexing after the fifth failure without a commit.
+Restarting or re-enabling search resumes indexing. Reply queries and memory
+learning have priority at embedder admission. Query and indexing backoffs
+are independent, and a reply waits for semantic evidence at most 250 ms.
 
 The custom cap defaults to 32,768 tokens for cloud models and 16,384 for local
 servers. A legacy custom value of 40,000

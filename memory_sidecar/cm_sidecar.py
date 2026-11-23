@@ -63,6 +63,16 @@ import json, os, random, shutil, sys, threading, time, urllib.request
 from datetime import datetime
 from typing import Optional
 
+# ============================== TUNABLES =====================================
+EMBED_MAX_TEXTS = 64
+EMBED_MAX_CHARS = 2000
+TRANSCRIPT_EMBED_MAX_TEXTS = 4
+EMBED_ADMISSION_MAX_SECONDS = 30.0
+REPLY_BACKGROUND_WAIT_SECONDS = 2.0
+EMBED_MODEL = "Qwen/Qwen3-Embedding-0.6B"
+EMBED_FORMAT = 1  # Bump when the encoding or wire representation changes.
+# =============================================================================
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(HERE, "lib"))   # vendored character_memory 0.1.2
@@ -229,6 +239,7 @@ from character_memory.llm.embedding_base import EmbeddingProvider
 from character_memory.llm.openai_client import OpenAICompatibleLLM
 from character_memory.config import LLMConfig
 from character_memory.memory.learning_jobs import LearningJobs, LearningUnavailable, UNAVAILABLE_DELAY
+from transcript_embed_jobs import EmbeddingAdmission, EmbedJobSlot
 
 # Engine state (see _build_engine). The 30 s stagger keeps the engine's
 # load-time peak out of the window in which the voice engine is still
@@ -252,8 +263,8 @@ _queue_truncated = False
 _embed_clock = threading.local()
 
 
-EMBED_MODEL = "Qwen/Qwen3-Embedding-0.6B"
-EMBED_FORMAT = 1  # Bump when the encoding or wire representation changes.
+_embed_admission = EmbeddingAdmission()
+_transcript_embed_jobs = EmbedJobSlot(_embed_admission)
 
 
 class STEmbedder(EmbeddingProvider):
@@ -272,6 +283,10 @@ class STEmbedder(EmbeddingProvider):
     def dim(self):
         return self._model.get_embedding_dimension()
     def embed(self, texts):
+        with _embed_admission.encode():
+            return self.encode(texts)
+
+    def encode(self, texts):
         if isinstance(texts, str):
             texts = [texts]
         t0 = time.time()
@@ -930,8 +945,12 @@ def context(chat_id: str, user: str = USER_ID,
         opts["memory_types"] = [m.strip() for m in memories.split(",") if m.strip()]
     learning = bool(_extracting_chats)
     _embed_clock.seconds = 0.0
-    with _recall_exclude_chat(exclude_chat_id):
-        snap = agent.build_context_snapshot(chat, user_id=user, **opts)
+    with _embed_admission.foreground():
+        if not _embed_admission.wait_for_background(REPLY_BACKGROUND_WAIT_SECONDS):
+            return {"chat_id": chat_id, "context_text": "", "sections": {},
+                    "note": "embedder busy"}
+        with _recall_exclude_chat(exclude_chat_id):
+            snap = agent.build_context_snapshot(chat, user_id=user, **opts)
     text = "\n\n".join(snap.sections.values())
     log(f"context chat={chat_id}: {len(text)} chars, {len(snap.sections)} "
         f"sections, {time.time()-t0:.2f}s (embedder {_embed_clock.seconds:.2f}s"
@@ -956,12 +975,35 @@ def extract_now(chat_id: Optional[str] = None, min_new: int = 0):
     return {"ok": True, "targets": targets, "started": started}
 
 
-EMBED_MAX_TEXTS = 64       # one /embed call
-EMBED_MAX_CHARS = 2000     # per text (a chat message, an example sentence)
-
-
 class EmbedIn(BaseModel):
     texts: list
+    wait_seconds: float = EMBED_ADMISSION_MAX_SECONDS
+
+
+class EmbedJobIn(BaseModel):
+    job_id: str
+    texts: list[str]
+
+
+def _encode_wire(texts):
+    vecs = _emb.encode(texts)
+    return {"embedding_fingerprint": _emb.wire_fingerprint,
+            "vectors": [[round(float(x), 5) for x in v] for v in vecs]}
+
+
+@app.post("/embed/transcript")
+async def submit_transcript_embed(req: EmbedJobIn):
+    if not _engine_state["ready"] or _emb is None:
+        return {"status": "unavailable"}
+    if not req.job_id or not 0 < len(req.texts) <= TRANSCRIPT_EMBED_MAX_TEXTS:
+        return {"status": "failed"}
+    return _transcript_embed_jobs.submit(req.job_id, _encode_wire,
+                                         [text[:EMBED_MAX_CHARS] for text in req.texts])
+
+
+@app.get("/embed/transcript/{job_id}")
+async def poll_transcript_embed(job_id: str):
+    return _transcript_embed_jobs.poll(job_id)
 
 
 @app.post("/embed")
@@ -977,12 +1019,14 @@ def embed_endpoint(req: EmbedIn):
     if not texts:
         return {"ok": True, "vectors": []}
     try:
-        vecs = _emb.embed(texts)
+        wait = min(EMBED_ADMISSION_MAX_SECONDS, max(0.0, req.wait_seconds))
+        with _embed_admission.encode(wait) as admitted:
+            if not admitted:
+                return {"ok": False, "note": "embedder busy"}
+            return {"ok": True, **_encode_wire(texts)}
     except Exception as e:
         log(f"embed failed: {e!r}")
         return {"ok": False, "note": "embed failed"}
-    return {"ok": True, "embedding_fingerprint": _emb.wire_fingerprint,
-            "vectors": [[round(float(x), 5) for x in v] for v in vecs]}
 
 
 @app.get("/memories")

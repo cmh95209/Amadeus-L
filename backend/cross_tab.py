@@ -12,8 +12,7 @@ Two independent features, each with its own switch in Settings -> Preferences
 
 2. SEARCH ("Search old chats") - ReplySearch:
    language-agnostic keyword and semantic ranking across all chats. Messages
-   already in the reply's history are masked. A few dated excerpts go in
-   her "right now" note for this reply only.
+   already in the reply are masked. One scene can go in its changing note.
 
 Plus LEARN ON LEAVE (always on): when the user leaves a tab with enough new
 messages, the memory service learns from it at once instead of waiting for
@@ -30,21 +29,18 @@ import math
 import os
 import re
 import unicodedata
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
 
 import memory as store
+import meaning
+import moment_recall as moment
 import transcript_vector_index as vectors
 
 # ============================== TUNABLES =====================================
-# Token budgets per brain: (catch-up, search). Cloud prompts are cached, so the
-# catch-up costs little there; her built-in model has a small context window
-# (the history budget gives this room back - reserve_tokens()).
-BUDGETS = {
-    "cloud":   (1200, 600),
-    "local":   (900, 450),     # the user's own local / LAN server
-    "builtin": (450, 300),     # her built-in model (16K context tiers)
-}
+CATCH_UP_BUDGETS = {"cloud": 1200, "local": 900, "builtin": 450}
+STANDALONE_SEARCH_BUDGET = 1200
 FULL_TABS = 3                  # newest tabs that get summary + last lines
 MAX_TABS = 40                  # other tabs looked at, at most (the budget usually stops sooner)
 SUMMARY_CHARS = 420            # a full tab's summary, at most
@@ -52,8 +48,7 @@ LAST_LINE_CHARS = 160          # each of its last lines, at most
 LAST_LINES = 2                 # the user's last line + her reply to it
 SHORT_CHARS = 110              # an older tab's one-line mention, at most
 
-SEARCH_RESULTS = 3             # excerpts at most
-SEARCH_EXCERPT_CHARS = 220     # each side of an excerpt (user / her), at most
+SEARCH_RESULTS = 3             # standalone ranked search results
 SEARCH_RARE_SHARE = 0.01       # a query word in at most this share of exchanges is "rare" ...
 SEARCH_RARE_MIN = 5            # ... (or in at most this many) - a match needs one
 SEARCH_UNIQUE_HITS = 2         # a rare NAME this unique is a match on its own
@@ -63,6 +58,7 @@ SEARCH_COMMON_MIN = 12         # ... and in more than this many (small histories
 SEARCH_MAX_TERMS = 40          # query terms used at most
 SEARCH_RANK_OFFSET = 5         # reciprocal-rank fusion balances keyword and semantic hits
 SEARCH_RENDER_POOL = 128       # candidates rechecked against the transcript before rendering
+PASSAGE_CHARS = 160
 STEM_FROM = 5                  # words this long also match their other forms ...
 STEM_MIN = 4                   # ... by their first letters: at least this many,
 STEM_CUT = 2                   # ... the word minus this many end letters
@@ -82,10 +78,8 @@ CATCH_UP_LABEL = (
     "tabs, newest first - you remember these yourself; bring them up only when "
     "it fits, and never mix them up with this chat; their files are not in front "
     "of you - describe only what is written here):\n")
-SEARCH_LABEL = (
-    "FROM CHAT HISTORY (excerpts related to what the user just wrote. Use them "
-    "only if they fit. If you mention an excerpt from another chat, say which "
-    "chat it came from. Describe only what is written here):\n")
+SEARCH_LABEL = moment.LABEL
+RECALL_INSTRUCTION = moment.INSTRUCTION
 # =============================================================================
 
 SETTINGS_FILE = "cross_tab.json"
@@ -114,6 +108,7 @@ def load_settings() -> Dict[str, bool]:
 def save_settings(changes: Dict[str, object]) -> Dict[str, bool]:
     """Change one or both switches (unknown keys / non-booleans: ValueError)."""
     current = load_settings()
+    was_searching = current["search"]
     for key, value in (changes or {}).items():
         if key not in DEFAULTS or not isinstance(value, bool):
             raise ValueError(f"Unknown setting or not on/off: {key}")
@@ -124,6 +119,8 @@ def save_settings(changes: Dict[str, object]) -> Dict[str, bool]:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(current, f)
     os.replace(tmp, path)
+    if current["search"] and not was_searching:
+        vectors.search_reenabled(store.PATH_TO_MEMORY)
     return current
 
 
@@ -148,18 +145,12 @@ def _brain() -> str:
         return "cloud"
 
 
-def budgets() -> tuple:
-    return BUDGETS.get(_brain(), BUDGETS["cloud"])
-
-
 def reserve_tokens() -> int:
     """Room the history gives up for these blocks - built-in model only (its
     context window is fixed and small; other brains have room to spare)."""
     if _brain() != "builtin":
         return 0
-    s = load_settings()
-    catch, search = BUDGETS["builtin"]
-    return (catch if s["catch_up"] else 0) + (search if s["search"] else 0)
+    return CATCH_UP_BUDGETS["builtin"] if catch_up_on() else 0
 
 
 def _tokens(text: str) -> int:
@@ -251,7 +242,7 @@ def catch_up_block(conversation_id=None, budget: Optional[int] = None) -> Option
         if not catch_up_on():
             return None
         current = store.load_active_conversation() if conversation_id is None else int(conversation_id)
-        budget = budgets()[0] if budget is None else budget
+        budget = CATCH_UP_BUDGETS[_brain()] if budget is None else budget
         tabs = _other_tabs(current)
         if not tabs:
             return None
@@ -376,31 +367,10 @@ def _candidates(ids=None) -> List[dict]:
         conn.close()
 
 
-def _exchanges(rows: List[dict]) -> List[dict]:
-    """Messages grouped into exchanges - a user line and her reply - per tab
-    (her line without a user line before it stands alone). Searching whole
-    exchanges finds a topic the user raised and she named, or the reverse."""
-    by_conv: Dict[int, List[dict]] = {}
-    for r in rows:
-        by_conv.setdefault(r["conversation_id"], []).append(r)
-    units = []
-    for tab_rows in by_conv.values():
-        tab_rows.sort(key=lambda r: r["id"])
-        unit = None
-        for r in tab_rows:
-            if r["role"] == "user" or unit is None or unit["her"] is not None:
-                unit = {"user": r if r["role"] == "user" else None,
-                        "her": r if r["role"] == "assistant" else None}
-                units.append(unit)
-            else:
-                unit["her"] = r
-    return units
-
-
 def _keyword_ranks(query, units):
     terms = query_terms(query)
     if not terms or not units:
-        return []
+        return [], {}, set()
     n = len(units)
     tests = {t: _matcher(t) for t in terms}
     hits = {t: [i for i, u in enumerate(units) if tests[t](u["text"])] for t in terms}
@@ -411,7 +381,7 @@ def _keyword_ranks(query, units):
             continue                     # never used before, or a stop word here
         weights[t] = math.log((n + 1) / (df + 0.5))
     if not weights:
-        return []
+        return [], {}, set()
     # The topic is carried by the RARE words of the query (rare in this
     # user's own history - so it works the same in every language). A match
     # must hold one of them, plus a second query word unless that rare word
@@ -421,24 +391,53 @@ def _keyword_ranks(query, units):
     names = name_terms(query)
     rare = {t for t in weights if len(hits[t]) <= rare_cut}
     if not rare:
-        return []
+        return [], {}, set()
     score: Dict[int, float] = {}
-    count: Dict[int, int] = {}
+    cues: Dict[int, set] = {}
     unique: Dict[int, bool] = {}
     for t, w in weights.items():
         for i in hits[t]:
             score[i] = score.get(i, 0.0) + w
-            count[i] = count.get(i, 0) + 1
+            cues.setdefault(i, set()).add(t)
             if t in rare and t in names and len(hits[t]) <= SEARCH_UNIQUE_HITS:
                 unique[i] = True
     holders = {i for t in rare for i in hits[t]}
-    good = [i for i in holders if count[i] >= 2 or unique.get(i)]
+    good = [i for i in holders if _distinct_cues(cues[i]) or unique.get(i)]
     if not good:
-        return []
+        return [], cues, rare
     best = max(score[i] for i in good)
     ranked = sorted((i for i in good if score[i] >= SEARCH_TAIL_SHARE * best),
                     key=lambda i: (score[i], units[i]["first"]["id"]), reverse=True)
-    return ranked
+    return ranked, cues, rare
+
+
+def _distinct_cues(cues):
+    # Adjacent bigrams from one three-character fragment only count once.
+    return len(cues) >= moment.LEXICAL_CUES and any(
+        not (_unspaced(a[0]) and _unspaced(b[0]) and (a[-1] == b[0] or b[-1] == a[0]))
+        for a in cues for b in cues if a < b
+    )
+
+
+def _passage(text, terms):
+    # Preserve original offsets while scoring language-neutral word/bigram cues.
+    if len(text) <= PASSAGE_CHARS:
+        return 0, len(text)
+    tests = [(term, _matcher(term)) for term in terms]
+    spans = list(re.finditer(r"[^.!?。！？\n]+[.!?。！？]*", text))
+    if not spans or not tests:
+        return 0, min(len(text), PASSAGE_CHARS)
+    best, location = 0, 0
+    for span in spans:
+        value = span.group()
+        for start in range(0, len(value), PASSAGE_CHARS // 2):
+            area = _normal(value[start:start + PASSAGE_CHARS])
+            matches = [term for term, test in tests if test(area)]
+            if len(matches) > best:
+                offsets = [area.find(term) for term in matches if term in area]
+                best = len(matches)
+                location = min(len(text) - 1, span.start() + start + min(offsets, default=0))
+    return location, min(len(text), location + PASSAGE_CHARS)
 
 
 def _quote_key(text):
@@ -455,125 +454,239 @@ def _prompt_texts(messages):
                         if isinstance(p, dict) and isinstance(p.get("text"), str))
 
 
+def _latest_users():
+    conn = store._connect_db()
+    try:
+        return tuple(row[0] for row in conn.execute(
+            "SELECT id FROM messages WHERE role = 'user' ORDER BY id DESC LIMIT ?",
+            (moment.TURN_WINDOW,),
+        ))
+    finally:
+        conn.close()
+
+
+@dataclass
+class _Anchor:
+    tab: list
+    index: int
+    rows: tuple
+    matched: int
+    cosine: float
+    score: float
+    keyword: bool
+    cues: set
+    rare_cues: set
+
+    @property
+    def exchange(self):
+        return self.tab[self.index]
+
+
 class ReplySearch:
     """A reply's transcript snapshot and one semantic query, shared by retries."""
 
-    def __init__(self, query, conversation_id, *, excluded_ids=(), answering_id=None):
+    def __init__(self, query, conversation_id, *, excluded_ids=(), answering_id=None, now=None):
         self.query = query
         self.current = conversation_id
         self.excluded = set(excluded_ids)
         self.answering_id = answering_id
-        self.exchanges = None
+        self.now = now
+        self.tabs = None
         self.semantic = None
         self.ranks = {}
+
+    def prefetch(self):
+        if self.answering_id is not None:
+            self.semantic = vectors.begin_query(self.query, frozenset(), store.PATH_TO_MEMORY,
+                                                prefetch=True)
 
     def _rank(self, verbatim_message_ids):
         visible = frozenset(verbatim_message_ids)
         if visible in self.ranks:
             return self.ranks[visible]
-        masked = self.excluded | visible
-        if self.exchanges is None:
+        if self.tabs is None:
             rows = _candidates()
             if self.answering_id is not None:
-                self.excluded.update(r["id"] for r in rows
-                                     if r["conversation_id"] == self.current
-                                     and r["id"] >= self.answering_id)
-                masked = self.excluded | visible
-            self.semantic = vectors.begin_query(self.query, masked, store.PATH_TO_MEMORY)
-            self.exchanges = _exchanges(rows)
-
-        units = []
-        for exchange in self.exchanges:
-            # Mask only after pairing; otherwise a surviving reply can take
-            # the place of a different user's answer.
-            rows = [r for r in (exchange["user"], exchange["her"]) if r and r["id"] not in masked]
-            if rows:
-                text = "\n".join((r["content"] or "") + "\n" + (r["japanese"] or "") for r in rows)
-                units.append({"first": rows[0], "rows": rows, "text": _normal(text)})
-        keyword = _keyword_ranks(self.query, units)
+                self.excluded.update(r["id"] for r in rows if r["id"] >= self.answering_id)
+            self.tabs = moment.exchanges(rows)
+            if self.semantic is None:
+                self.semantic = vectors.begin_query(self.query, self.excluded | visible, store.PATH_TO_MEMORY)
+        masked = self.excluded | visible
         matches = self.semantic.hits(masked) if self.semantic else {}
-
+        units, positions = [], []
+        for tab in self.tabs.values():
+            for index, exchange in enumerate(tab):
+                rows = tuple(row for row in exchange.rows if row["id"] not in masked)
+                if rows:
+                    text = "\n".join((row["content"] or "") + "\n" + (row["japanese"] or "")
+                                     for row in rows)
+                    units.append({"first": rows[0], "rows": rows, "text": _normal(text)})
+                    positions.append((tab, index))
+        keyword, cues, rare = _keyword_ranks(self.query, units)
+        keyword_set = set(keyword)
         semantic = {}
-        if matches:
-            for i, unit in enumerate(units):
-                for row in unit["rows"]:
-                    hit = matches.get(row["id"])
-                    if hit and hit[0] == vectors.content_hash(row):
-                        semantic[i] = max(semantic.get(i, 0.0), hit[1])
-        semantic_rank = sorted(semantic, key=lambda i: (semantic[i], units[i]["first"]["id"]), reverse=True)
+        all_scores = {}
+        for i, unit in enumerate(units):
+            for row in unit["rows"]:
+                hit = matches.get(row["id"])
+                if hit and hit[0] == vectors.content_hash(row):
+                    cosine = hit[1]
+                    all_scores[row["id"]] = cosine
+                    if cosine > semantic.get(i, (-1.0, 0))[0]:
+                        semantic[i] = (cosine, row["id"])
+        semantic_rank = sorted(
+            (i for i in semantic if semantic[i][0] >= moment.DIRECT_COSINE),
+            key=lambda i: (semantic[i][0], units[i]["first"]["id"]), reverse=True)
         fused = {}
         for ranking in (keyword, semantic_rank):
             for rank, i in enumerate(ranking, start=1):
                 fused[i] = fused.get(i, 0) + 1 / (SEARCH_RANK_OFFSET + rank)
         order = sorted(fused, key=lambda i: (fused[i], units[i]["first"]["id"]), reverse=True)
-        ranked = [(units[i]["rows"], fused[i]) for i in order[:SEARCH_RENDER_POOL]]
-        self.ranks[visible] = ranked
-        return ranked
+        ranked = []
+        for i in order[:SEARCH_RENDER_POOL]:
+            tab, index = positions[i]
+            rows = units[i]["rows"]
+            matched = semantic.get(i, (0.0, 0))[1]
+            lexical = cues.get(i, set())
+            if i in keyword_set and semantic.get(i, (0.0,))[0] < moment.DIRECT_COSINE:
+                tests = [_matcher(t) for t in lexical]
+                matched = max(rows, key=lambda row: sum(test(_normal(_her_line(row))) for test in tests))["id"]
+            ranked.append(_Anchor(tab, index, rows, matched, semantic.get(i, (0.0,))[0],
+                                  fused[i], i in keyword_set, lexical, lexical & rare))
+        self.ranks[visible] = ranked, all_scores
+        return ranked, all_scores
 
-    def _fresh(self, verbatim_message_ids):
-        ranked = self._rank(verbatim_message_ids)
-        ids = [row["id"] for rows, _ in ranked for row in rows]
-        fresh = {row["id"]: row for row in _candidates(ids)}
-        for rows, score in ranked:
-            checked = [fresh.get(row["id"]) for row in rows]
-            if all(current is not None and current["content"] == old["content"]
-                   and current["japanese"] == old["japanese"] and current["role"] == old["role"]
-                   and current["conversation_id"] == old["conversation_id"]
-                   for current, old in zip(checked, rows)):
-                yield checked, score
+    def _scenes(self, verbatim_message_ids, prompt_messages, direct):
+        anchors, scores = self._rank(verbatim_message_ids)
+        if not anchors:
+            return
+        embedded = getattr(self.semantic, "embedded", None)
+        fingerprint, vector = embedded if embedded else (None, meaning.cached_vector(self.query))
+        if direct is None:
+            direct = moment.direct_question(vector) is True
+        if not direct and self.answering_id is None:
+            return
 
-    def block(self, verbatim_message_ids=(), prompt_messages=(), *, budget=None, fits=None):
-        """Render fresh, nonredundant evidence within the shared excerpt cap."""
-        try:
-            budget = budgets()[1] if budget is None else budget
-            fits = fits or (lambda _text: True)
-            if not fits(SEARCH_LABEL) or _tokens(SEARCH_LABEL) >= budget:
-                return None
-            prompt = [" " + _quote_key(text) + " " for text in _prompt_texts(prompt_messages)]
-            seen, lines = set(), []
+        masked = self.excluded | set(verbatim_message_ids)
+        prompt = [" " + _quote_key(text) + " " for text in _prompt_texts(prompt_messages)]
+        nearby = {}
+        for candidate in anchors[:moment.SCENE_POOL]:
+            lo = max(0, candidate.index - moment.NEIGHBORS)
+            hi = candidate.index + moment.NEIGHBORS + 1
+            nearby.update((row["id"], row) for exchange in candidate.tab[lo:hi] for row in exchange.rows)
+        fresh = {r["id"]: r for r in _candidates(tuple(nearby))}
+        indexed = vectors.scene_vectors(store.PATH_TO_MEMORY, list(fresh.values()), fingerprint)
+        terms = query_terms(self.query)
+        term_set = set(terms)
+        latest = _latest_users() if not direct else ()
+        safe = {}
+        shown = {}
 
-            def duplicate(key):
-                return not key or key in seen or any(f" {key} " in existing for existing in prompt)
-
-            for rows, _ in self._fresh(verbatim_message_ids):
-                first = rows[0]
-                quotes = []
-                for row in rows:
-                    text = _her_line(row)
-                    key = _quote_key(text)
-                    catch_up_keys = [_quote_key(_clip(text, chars)) for chars in (LAST_LINE_CHARS, SHORT_CHARS)]
-                    if duplicate(key) or any(duplicate(clip) for clip in catch_up_keys if clip):
-                        continue
-                    who = "User" if row["role"] == "user" else "You"
-                    quotes.append((who, text, key))
-                if not quotes:
+        def rows_for(exchange):
+            mid = exchange.first["id"]
+            if mid in shown:
+                return shown[mid]
+            rows = []
+            seen = set()
+            for row in exchange.rows:
+                text = _her_line(row)
+                key = _quote_key(text)
+                if row["id"] in masked or not key or key in seen:
                     continue
-                location = ("earlier in this chat" if first["conversation_id"] == self.current
-                            else f'In "{_clip(str(first["title"] or "New chat"), 60)}"')
-                head = f'- {location} ({_day(first["created_at"])}): '
-                for chars in (SEARCH_EXCERPT_CHARS, SEARCH_EXCERPT_CHARS // 2, SEARCH_EXCERPT_CHARS // 4):
-                    bits, keys = [], set()
-                    for who, text, key in quotes:
-                        clipped = _clip(text, chars)
-                        clipped_key = _quote_key(clipped)
-                        if key not in keys and clipped_key not in keys and not duplicate(clipped_key):
-                            bits.append(f'{who}: "{clipped}"')
-                            keys.update((key, clipped_key))
-                    if not bits:
-                        continue
-                    line = head + " / ".join(bits)
-                    rendered = SEARCH_LABEL + "\n".join([*lines, line])
-                    if _tokens(rendered) <= budget and fits(rendered):
-                        lines.append(line)
-                        seen.update(keys)
-                        prompt.append(" " + _quote_key(line) + " ")
-                        break
-                if len(lines) == SEARCH_RESULTS:
-                    break
-            return {"role": "system", "content": SEARCH_LABEL + "\n".join(lines)} if lines else None
+                clips = [key, *(_quote_key(_clip(text, n)) for n in (LAST_LINE_CHARS, SHORT_CHARS))]
+                if any(f" {clip} " in p for p in prompt for clip in clips if clip):
+                    continue
+                seen.add(key)
+                rows.append(row)
+            shown[mid] = tuple(rows)
+            return shown[mid]
+
+        def eligible(exchange, *, anchor=False):
+            if any(row["id"] in self.excluded or fresh.get(row["id"]) != row for row in exchange.rows):
+                return False
+            rows = rows_for(exchange)
+            if not rows:
+                return False
+            if exchange.first["id"] not in safe:
+                safe[exchange.first["id"]] = all(
+                    moment.sensitive(row, indexed.get(row["id"])) is False for row in exchange.rows)
+            if safe[exchange.first["id"]]:
+                return True
+            if not direct:
+                return False
+            # The user invited this exchange. Adjacent sensitive or unknown
+            # material needs its own connection to their request.
+            return anchor or _distinct_cues(term_set & set(query_terms(moment.dialogue(exchange)))) or any(
+                scores.get(row["id"], 0.0) >= moment.LEXICAL_COSINE for row in rows)
+
+        choices = []
+        for candidate in anchors[:moment.SCENE_POOL]:
+            anchor = candidate.exchange
+            if not eligible(anchor, anchor=True) or all(r["id"] != candidate.matched for r in rows_for(anchor)):
+                continue
+            scene = moment.expand(candidate.tab, candidate.index, eligible, indexed, query_terms)
+            scene_rows = {row["id"] for exchange in scene for row in exchange.rows}
+            rival = max((cosine for mid, cosine in scores.items() if mid not in scene_rows), default=0.0)
+            lexical = bool(candidate.rare_cues and _distinct_cues(candidate.cues))
+            strong = ((candidate.cosine >= moment.STRONG_COSINE
+                       and candidate.cosine >= rival + moment.SCENE_LEAD)
+                      or (candidate.cosine >= moment.LEXICAL_COSINE and lexical))
+            if direct or strong or (moment.FAINT_MEMORIES and candidate.keyword):
+                choices.append((candidate, scene, not strong))
+        if not choices:
+            return
+
+        best = choices[0][0]
+
+        def order(choice):
+            candidate, _, _ = choice
+            first = candidate.exchange.first
+            shared = candidate.cues & best.cues
+            repeated = (first["role"] == best.exchange.first["role"] == "user"
+                        and bool(best.rare_cues) and best.rare_cues <= shared and _distinct_cues(shared))
+            tied = (best.score - candidate.score <= moment.CLOSE_TIE
+                    and best.cosine - candidate.cosine <= moment.CLOSE_TIE)
+            if repeated:
+                return (2, first["id"], 0)
+            if tied:
+                return (1, moment.salient(indexed.get(first["id"])), first["id"])
+            return (0, candidate.score, first["id"])
+
+        for candidate, scene, weak in sorted(choices, key=order, reverse=True):
+            passage_terms = candidate.rare_cues or terms
+            yield (candidate, scene, rows_for, lambda text: _passage(text, passage_terms),
+                   direct, latest, weak)
+
+    def block(self, verbatim_message_ids=(), prompt_messages=(), *, budget=None, fits=None,
+              count=None, direct=None):
+        """Render one fresh scene inside the actual call's remaining room."""
+        try:
+            if not search_on():
+                return None
+            budget = STANDALONE_SEARCH_BUDGET if budget is None else budget
+            count = count or _tokens
+
+            def within_budget(text):
+                return count(text) <= budget and (fits is None or fits(text))
+
+            if not within_budget(SEARCH_LABEL):
+                return None
+            for anchor, scene, rows_for, passage, user_led, latest, weak in self._scenes(
+                    verbatim_message_ids, prompt_messages, direct):
+                rendered = moment.render(scene, anchor.exchange, anchor.matched, self.current,
+                                         rows_for, _her_line, passage, within_budget,
+                                         now=self.now, weak=weak, user_led=user_led)
+                if not rendered:
+                    continue
+                expected = {row["id"]: row for exchange in scene for row in exchange.rows}
+                if not search_on() or {row["id"]: row for row in _candidates(tuple(expected))} != expected:
+                    continue
+                keys = frozenset(exchange.key for exchange in scene)
+                if user_led or moment.cadence.claim(store.PATH_TO_MEMORY, self.answering_id, latest, keys):
+                    return {"role": "system", "content": rendered}
         except Exception as exc:
             print(f"[Amadeus] transcript recall skipped: {type(exc).__name__}")
-            return None
+        return None
 
 
 def prepare_search(query, conversation_id, **kwargs):
@@ -584,17 +697,20 @@ def prepare_search(query, conversation_id, **kwargs):
 
 
 def search(query, conversation_id=None, limit=SEARCH_RESULTS, *, verbatim_message_ids=(), excluded_ids=()):
-    """Rank exchanges across chats, with already-visible rows masked."""
-    if not isinstance(query, str) or not query.strip() or limit <= 0:
+    """Rank exchanges for an explicit transcript search."""
+    reply = prepare_search(query, conversation_id, excluded_ids=excluded_ids)
+    if reply is None or limit <= 0:
         return []
-    current = store.load_active_conversation() if conversation_id is None else int(conversation_id)
-    reply = ReplySearch(query, current, excluded_ids=excluded_ids)
+    ranked, _ = reply._rank(verbatim_message_ids)
+    fresh = {row["id"]: row for row in _candidates([r["id"] for candidate in ranked for r in candidate.rows])}
     found = []
-    for rows, score in reply._fresh(verbatim_message_ids):
-        first = rows[0]
-        quotes = {row["role"]: _her_line(row) for row in rows}
+    for candidate in ranked:
+        if any(fresh.get(row["id"]) != row for row in candidate.rows):
+            continue
+        first = candidate.rows[0]
+        quotes = {row["role"]: _her_line(row) for row in candidate.rows}
         found.append({"conversation_id": first["conversation_id"], "title": first["title"],
-                      "created_at": first["created_at"], "id": first["id"], "score": score,
+                      "created_at": first["created_at"], "id": first["id"], "score": candidate.score,
                       "user": quotes.get("user", ""), "her": quotes.get("assistant", "")})
         if len(found) >= limit:
             break
@@ -603,9 +719,9 @@ def search(query, conversation_id=None, limit=SEARCH_RESULTS, *, verbatim_messag
 
 def search_block(query, conversation_id=None, budget=None, *, verbatim_message_ids=(),
                  excluded_ids=(), prompt_messages=()):
-    """Standalone search, including callers with a preassembled prompt."""
+    """Render a scene in response to an explicit search request."""
     reply = prepare_search(query, conversation_id, excluded_ids=excluded_ids)
-    return reply.block(verbatim_message_ids, prompt_messages, budget=budget) if reply else None
+    return reply.block(verbatim_message_ids, prompt_messages, budget=budget, direct=True) if reply else None
 
 
 # --------------------------------------------------------- learn on leave --

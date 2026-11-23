@@ -150,7 +150,8 @@ class PromptOrderTests(unittest.TestCase):
             for p in _voice_patches():
                 stack.enter_context(p)
             return "\n\n".join(["PERSONALITY", ja_voice.build_voice_rules()["content"],
-                                rules["content"], chat.NO_WEB_BLOCK["content"]])
+                                rules["content"], chat.NO_WEB_BLOCK["content"],
+                                chat.cross_tab.RECALL_INSTRUCTION])
 
     def _check(self, fn, rules):
         one, two = self._two_turns(fn)

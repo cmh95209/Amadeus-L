@@ -31,6 +31,7 @@ ENABLED = True
 SIDECAR_URL = os.environ.get("CM_SIDECAR_URL", "http://127.0.0.1:9870").rstrip("/")
 TIMEOUT = 1.5              # seconds for one message; slower -> word rules
 WARM_TIMEOUT = 30.0        # the one-off example fetch (in the background)
+WARM_CHUNK = 16            # bound CPU time per request, including the recall examples
 WARM_RETRY_SECONDS = 60    # sidecar not ready yet -> try again after this
 
 # Recall by meaning (attachments.py): ADD brings back the latest file the
@@ -194,6 +195,44 @@ NOT_ASK = [
     "What a day it has been.", "Let's meet again next week.",
 ]
 
+# Recall classifiers use the same multilingual embedding space as retrieval.
+# These are example meanings for the model to compare in any language.
+RECALL_ASK = [
+    "Do you remember what I told you before?",
+    "What happened that time we talked about it?",
+    "What did I say my dog's name was?",
+    "Can you remind me what we discussed last time?",
+    "When is my birthday again? I told you before.",
+    "Where did I say I put it?",
+    "What was the name of the game we talked about?",
+    "Do you remember my trip? What did I tell you about it?",
+    "Tell me what you remember about that day.",
+    "What did we decide when we last talked about it?",
+]
+SENSITIVE_MOMENT = [
+    "I was assaulted and I'm afraid to tell anyone.",
+    "My doctor diagnosed me with cancer. I'm worried.",
+    "Someone I love died and I'm grieving.",
+    "I am thinking about hurting myself.",
+    "My depression and anxiety have been overwhelming.",
+    "I can't pay my debts and I'm afraid I'll lose my home.",
+    "This is private and I don't want anyone to know.",
+    "I was abused by my partner.",
+    "Here are my private login credentials and bank details.",
+    "I haven't told anyone about my sexuality or my pregnancy.",
+    "I am dealing with addiction and withdrawal.",
+    "I had a miscarriage.",
+    "I am being threatened, stalked, or harassed.",
+    "I feel ashamed about what happened in my intimate relationship.",
+]
+SALIENT_MOMENT = [
+    "I finally finished something important and I'm proud of it.",
+    "I was so excited to tell you about our celebration.",
+    "We shared a really special day together.",
+    "I laughed so hard and I still remember it.",
+    "I was so disappointed that my big plans fell through.",
+]
+
 SHARED_FILE = {
     "picture": ["What do you think of the picture I sent you?",
                 "Did you see the photo I showed you?", "Look at that pic I sent again.",
@@ -239,12 +278,14 @@ _last_try = 0.0
 _recent_vecs = {}       # text -> vector: one reply checks the same texts several times
 RECENT_KEEP = 32
 _embed_fn = None        # tests / measuring inject a local embedder here
+EMBED_BUSY = object()
 
 
 def _all_examples() -> list:
     out = (WEATHER_ASK + CHAT + FORECAST + NOT_FORECAST + OTHER_MEDIA
            + LOOKUP_CLAIM + NOT_LOOKUP_CLAIM + LOOK_AGAIN + NOT_LOOK_AGAIN
-           + SEARCH_ASK + TIME_ASK + LINK_ASK + AGAIN_ASK + NOT_ASK)
+           + SEARCH_ASK + TIME_ASK + LINK_ASK + AGAIN_ASK + NOT_ASK
+           + RECALL_ASK + SENSITIVE_MOMENT + SALIENT_MOMENT)
     for group in SHARED_FILE.values():
         out += group
     return list(dict.fromkeys(out))
@@ -252,11 +293,14 @@ def _all_examples() -> list:
 
 def _http_embed(texts, timeout, *, with_fingerprint=False):
     req = urllib.request.Request(
-        SIDECAR_URL + "/embed", data=json.dumps({"texts": list(texts)}).encode("utf-8"),
+        SIDECAR_URL + "/embed", data=json.dumps({"texts": list(texts),
+                                                 "wait_seconds": timeout / 2}).encode("utf-8"),
         headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     if not data.get("ok"):
+        if with_fingerprint and data.get("note") == "embedder busy":
+            return EMBED_BUSY
         return None
     vectors = data.get("vectors")
     return (data.get("embedding_fingerprint"), vectors) if with_fingerprint else vectors
@@ -276,13 +320,13 @@ def _embed(texts, timeout, *, with_fingerprint=False):
 
 
 def _warm() -> bool:
-    """Fetch the example vectors once (64 per call)."""
+    """Fetch the example vectors once in bounded chunks."""
     global _ready, _last_try
     _last_try = time.monotonic()
     texts = _all_examples()
     got = {}
-    for i in range(0, len(texts), 64):
-        chunk = texts[i:i + 64]
+    for i in range(0, len(texts), WARM_CHUNK):
+        chunk = texts[i:i + WARM_CHUNK]
         vecs = _embed(chunk, WARM_TIMEOUT)
         if not vecs or len(vecs) != len(chunk):
             return False
@@ -359,6 +403,22 @@ def scores(text: str, yes, no):
     if v is None:
         return None
     return _best(v, yes), _best(v, no)
+
+
+def example_scores(vector, yes, no):
+    """Classify an already embedded text without another model request."""
+    if vector is None or not available():
+        return None
+    with _lock:
+        positive = [_dot(vector, _examples[t]) for t in yes
+                    if t in _examples and len(_examples[t]) == len(vector)]
+        negative = [_dot(vector, _examples[t]) for t in no
+                    if t in _examples and len(_examples[t]) == len(vector)]
+    return (max(positive), max(negative)) if positive and negative else None
+
+
+def cached_vector(text):
+    return _recent_vecs.get((text or "").strip())
 
 
 def _decide(text, yes, no, least, margin):

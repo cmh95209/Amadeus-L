@@ -3,33 +3,40 @@ from __future__ import annotations
 
 import hashlib
 import heapq
+import http.client
 import json
 import math
 import sqlite3
 import threading
 import time
+import urllib.request
+import uuid
 from array import array
 from collections import deque
 from concurrent.futures import Future, TimeoutError
 from contextlib import closing
+from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, Full, Queue
 
 import meaning
 
 # ============================== TUNABLES =====================================
-BATCH_SIZE = 16
+BATCH_SIZE = 4
 MAX_TEXT_CHARS = 2000
 MAX_ROWS = 50_000
 SHORTLIST = 128
-MIN_COSINE = 0.70
-FALLBACK_MIN_COSINE = 0.50
-FALLBACK_MIN_GAP = 0.08
 QUERY_SECONDS = 0.250
-BATCH_TIMEOUT = 10.0
-BATCH_PAUSE = 0.25
+QUERY_PREFETCH_SECONDS = 1.5  # Starts before prompt assembly. The caller still waits at most 250 ms.
+BATCH_PAUSE = 1.0
+JOB_POLL_SECONDS = 1.0
+JOB_HTTP_TIMEOUT = 1.0
+JOB_STALL_SECONDS = 120.0
+BATCH_FAILURE_BACKOFF = (15.0, 30.0, 60.0, 120.0)
+BATCH_FAILURE_LIMIT = 5
 RECONCILE_SECONDS = 2.0
-RETRY_SECONDS = 15.0
+QUERY_RETRY_SECONDS = 15.0
+SQLITE_RETRY_SECONDS = 15.0
 SQLITE_TIMEOUT = 0.1
 # =============================================================================
 
@@ -37,7 +44,7 @@ CACHE_FILE = "transcript_vectors.sqlite3"
 SCHEMA_VERSION = 1
 
 _SOURCE_SQL = """
-    SELECT m.id, m.conversation_id, m.role, m.content, m.japanese, m.created_at, c.title
+    SELECT m.id, m.conversation_id, m.role, m.content, m.japanese, m.created_at, m.turn, c.title
     FROM messages m JOIN conversations c ON c.id = m.conversation_id
     WHERE COALESCE(m.active, 1) = 1 AND COALESCE(m.aside, 0) = 0
       AND COALESCE(m.greeting, 0) = 0 AND m.role IN ('user', 'assistant')
@@ -76,13 +83,12 @@ def _signature(vector):
     return int("".join("1" if value >= 0 else "0" for value in vector), 2)
 
 
-def _embed(texts, timeout):
-    response = meaning._embed(texts, timeout, with_fingerprint=True)
+def _normalized(response, count):
     if not isinstance(response, tuple) or len(response) != 2:
         return None
     fingerprint, vectors = response
     if (not isinstance(fingerprint, str) or not fingerprint or not isinstance(vectors, list)
-            or not vectors or len(vectors) != len(texts)
+            or not vectors or len(vectors) != count
             or not all(isinstance(vector, list) for vector in vectors)):
         return None
     try:
@@ -99,6 +105,32 @@ def _embed(texts, timeout):
         return None
     config = json.dumps([meaning.SIDECAR_URL, fingerprint, size, MAX_TEXT_CHARS])
     return hashlib.sha256(config.encode()).hexdigest(), normalized
+
+
+def _job_request(job_id, texts=None):
+    url = meaning.SIDECAR_URL + "/embed/transcript"
+    if texts is None:
+        request = urllib.request.Request(f"{url}/{job_id}")
+    else:
+        data = json.dumps({"job_id": job_id, "texts": texts}).encode("utf-8")
+        request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=JOB_HTTP_TIMEOUT) as response:
+            result = json.load(response)
+        return result if isinstance(result, dict) else {}
+    except (OSError, ValueError, http.client.HTTPException):
+        return {}
+
+
+@dataclass
+class _Batch:
+    rows: list
+    job_id: str
+    started: float
+    poll: bool = False
+    confirmed: bool = False
+    stalled: bool = False
+    blocked_by: str | None = None
 
 
 class _Cache:
@@ -159,7 +191,6 @@ class _Cache:
         ids = [-neg_id for _, neg_id in shortlist]
         slots = ",".join("?" for _ in ids)
         hits = {}
-        candidates = {}
         vector_bytes = len(query_vector) * query_vector.itemsize
         for mid, digest, data in self.conn.execute(
                 f"SELECT id, digest, vector FROM vectors WHERE id IN ({slots})", ids):
@@ -170,36 +201,25 @@ class _Cache:
             vector = array("f")
             vector.frombytes(data)
             cosine = math.fsum(a * b for a, b in zip(vector, query_vector))
-            if not math.isfinite(cosine):
-                continue
-            if cosine >= MIN_COSINE:
+            if math.isfinite(cosine):
                 hits[mid] = (digest, cosine)
-            else:
-                candidates[mid] = (digest, cosine)
-        if hits or len(candidates) < 2:
-            return hits
-
-        # Below the usual cutoff, require evidence of separation from the
-        # strongest unmasked alternative and admit at most one row.
-        best, runner_up = heapq.nlargest(2, candidates, key=lambda mid: candidates[mid][1])
-        best_hit = candidates[best]
-        gap = best_hit[1] - candidates[runner_up][1]
-        if best_hit[1] >= FALLBACK_MIN_COSINE and gap >= FALLBACK_MIN_GAP:
-            return {best: best_hit}
-        return {}
+        return hits
 
 
 class _Query:
-    def __init__(self, text, excluded, *, embedded=None, wait_seconds=None):
+    def __init__(self, text, excluded, *, embedded=None, wait_seconds=None, prefetch=False):
         self.text = text.strip()[:MAX_TEXT_CHARS]
         self.excluded = frozenset(excluded)
-        self.deadline = time.monotonic() + (QUERY_SECONDS if wait_seconds is None else wait_seconds)
+        self.deadline = time.monotonic() + (
+            QUERY_PREFETCH_SECONDS if prefetch else QUERY_SECONDS if wait_seconds is None else wait_seconds)
         self.result = Future()
         self.embedded = embedded
+        self.prefetch = prefetch
+        self.busy = False
 
-    def hits(self):
+    def hits(self, wait_seconds=QUERY_SECONDS):
         try:
-            return self.result.result(timeout=max(0, self.deadline - time.monotonic()))
+            return self.result.result(timeout=max(0, min(wait_seconds, self.deadline - time.monotonic())))
         except TimeoutError:
             return {}
 
@@ -214,16 +234,29 @@ class _SemanticSearch:
 
     def hits(self, excluded):
         job = self.first
-        if job.excluded != excluded:
-            if not job.result.done() or job.embedded is None or self.wait_left <= 0:
+        started = time.monotonic()
+        first_hits = job.hits(self.wait_left)
+        self.wait_left -= time.monotonic() - started
+        if job.prefetch or job.excluded != excluded:
+            retry_busy_prefetch = job.prefetch and job.busy
+            if (job.embedded is None and not retry_busy_prefetch) or self.wait_left <= 0:
                 return {}
-            job = self.worker.submit(job.text, excluded, embedded=job.embedded, wait_seconds=self.wait_left)
+            job.busy = False
+            job = self.worker.submit(job.text, excluded, embedded=job.embedded,
+                                     wait_seconds=self.wait_left)
             if job is None:
                 return {}
-        started = time.monotonic()
-        hits = job.hits()
-        self.wait_left -= time.monotonic() - started
-        return hits
+            started = time.monotonic()
+            hits = job.hits(self.wait_left)
+            self.wait_left -= time.monotonic() - started
+            if retry_busy_prefetch:
+                self.first.embedded = job.embedded
+            return hits
+        return first_hits
+
+    @property
+    def embedded(self):
+        return self.first.embedded
 
 
 class _Worker:
@@ -232,12 +265,16 @@ class _Worker:
         self.cache_path = cache_path
         self.enabled = enabled
         self.queries = Queue(maxsize=1)
-        self.ready = threading.Event()
-        self.retry_at = 0.0
+        self.query_retry_at = 0.0
+        self.next_batch = 0.0
+        self.failures = 0
+        self.batch = None
+        self.was_enabled = False
+        self.reenabled = threading.Event()
         self.rescan = False
 
     def submit(self, text, excluded, **kwargs):
-        if not self.ready.is_set() or time.monotonic() < self.retry_at:
+        if kwargs.get("embedded") is None and time.monotonic() < self.query_retry_at:
             return None
         job = _Query(text, excluded, **kwargs)
         try:
@@ -250,23 +287,29 @@ class _Worker:
         hits = {}
         try:
             remaining = job.deadline - time.monotonic()
-            if remaining <= 0 or not cache.entries or not self.enabled():
+            if remaining <= 0 or not self.enabled():
                 return
             if job.embedded is None:
-                result = _embed([job.text], remaining)
+                response = meaning._embed([job.text], remaining, with_fingerprint=True)
+                if response is meaning.EMBED_BUSY:
+                    job.busy = True
+                    return
+                result = _normalized(response, 1)
                 if result is None:
                     if time.monotonic() < job.deadline:
-                        self.retry_at = time.monotonic() + RETRY_SECONDS
+                        self.query_retry_at = time.monotonic() + QUERY_RETRY_SECONDS
                     return
                 fingerprint, (vector,) = result
+                job.embedded = (fingerprint, vector)
                 if cache.configure(fingerprint):
-                    self.ready.clear()
                     self.rescan = True
                     return
             else:
                 fingerprint, vector = job.embedded
                 if fingerprint != cache.fingerprint:
                     return
+            if job.prefetch:
+                return
             hits = cache.search(vector, job.excluded, job.deadline)
             if time.monotonic() >= job.deadline:
                 hits = {}
@@ -276,42 +319,104 @@ class _Worker:
             job.result.set_result(hits)
 
     def _index_batch(self, conn, cache, pending):
-        planned = [pending.popleft() for _ in range(min(BATCH_SIZE, len(pending)))]
-        rows = {r["id"]: r for r in source_rows(conn, [mid for mid, _ in planned])}
-        batch = [(mid, digest, _embedding_text(rows[mid])) for mid, digest in planned
-                 if mid in rows and content_hash(rows[mid]) == digest]
-        if not batch:
+        if self.batch is None:
+            planned = [pending.popleft() for _ in range(min(BATCH_SIZE, len(pending)))]
+            rows = {r["id"]: r for r in source_rows(conn, [mid for mid, _ in planned])}
+            batch = [(mid, digest, _embedding_text(rows[mid])) for mid, digest in planned
+                     if mid in rows and content_hash(rows[mid]) == digest]
+            if not batch:
+                return
+            self.batch = _Batch(batch, uuid.uuid4().hex, time.monotonic())
+        job = self.batch
+        if job.blocked_by:
+            response = _job_request(job.blocked_by)
+            now = time.monotonic()
+            self.next_batch = now + JOB_POLL_SECONDS
+            if response.get("status") == "running":
+                self._warn_stall(job, now)
+            elif not response:
+                self._batch_failed(now)
+            else:
+                job.blocked_by = None
+                job.started = now
+                job.stalled = False
             return
-        result = _embed([text for _, _, text in batch], BATCH_TIMEOUT)
+        response = _job_request(job.job_id, None if job.poll else [text for _, _, text in job.rows])
+        now = time.monotonic()
+        self.next_batch = now + JOB_POLL_SECONDS
+        status = response.get("status")
+        if status == "running":
+            job.poll = job.confirmed = True
+            self._warn_stall(job, now)
+            return
+        if status == "busy":
+            job.started = now
+            job.blocked_by = response.get("job_id")
+            return
+        if status == "missing" and not job.confirmed:
+            # A submit response was lost and the sidecar has no such job.
+            job.poll = False
+            return
+        if status is None:
+            # An HTTP failure says nothing about whether encoding started.
+            job.poll = True
+            self._batch_failed(now)
+            return
+        result = (_normalized((response.get("embedding_fingerprint"), response.get("vectors")),
+                              len(job.rows)) if status == "done" else None)
         if result is None:
-            pending.extendleft((mid, digest) for mid, digest, _ in reversed(batch))
-            self.retry_at = time.monotonic() + RETRY_SECONDS
+            self.batch = None
+            self.rescan = True
+            self._batch_failed(now)
             return
         fingerprint, vectors = result
+        job.poll = True
         if cache.configure(fingerprint):
             self.rescan = True
         # The model call can outlast an edit, delete, reset, or version switch.
-        versions = {r["id"]: content_hash(r) for r in source_rows(conn, [mid for mid, _, _ in batch])}
-        cache.save((mid, digest, vector) for (mid, digest, _), vector in zip(batch, vectors)
-                   if versions.get(mid) == digest)
-        self._publish_ready(cache)
+        versions = {r["id"]: content_hash(r) for r in source_rows(conn, [mid for mid, _, _ in job.rows])}
+        valid = [(mid, digest, vector) for (mid, digest, _), vector in zip(job.rows, vectors)
+                 if versions.get(mid) == digest]
+        if valid:
+            cache.save(valid)
+            self.failures = 0
+        self.batch = None
+        self.next_batch = time.monotonic() + BATCH_PAUSE
 
-    def _publish_ready(self, cache):
-        if cache.entries:
-            self.ready.set()
-        else:
-            self.ready.clear()
+    @staticmethod
+    def _warn_stall(job, now):
+        if not job.stalled and now - job.started >= JOB_STALL_SECONDS:
+            job.stalled = True
+            print("[Amadeus] Transcript embedding job stalled. Still polling.")
+
+    def _batch_failed(self, now):
+        self.failures += 1
+        if self.failures >= BATCH_FAILURE_LIMIT:
+            print("[Amadeus] Transcript indexing paused after five failures without a commit. "
+                  "Restart or re-enable chat search to resume.")
+            return
+        self.next_batch = now + BATCH_FAILURE_BACKOFF[self.failures - 1]
+
+    def _indexing_enabled(self):
+        enabled = self.enabled()
+        if enabled and (not self.was_enabled or self.reenabled.is_set()):
+            self.reenabled.clear()
+            self.failures = 0
+            self.next_batch = 0.0
+        self.was_enabled = enabled
+        return enabled and self.failures < BATCH_FAILURE_LIMIT
 
     def _reconcile(self, conn, cache):
         rows = source_rows(conn)
         versions = {r["id"]: content_hash(r) for r in rows}
         cache.reconcile(versions)
-        self._publish_ready(cache)
+        in_flight = {(mid, digest) for mid, digest, _ in self.batch.rows} if self.batch else set()
         return deque((r["id"], versions[r["id"]]) for r in rows
-                     if r["id"] not in cache.entries and _embedding_text(r))
+                     if r["id"] not in cache.entries and (r["id"], versions[r["id"]]) not in in_flight
+                     and _embedding_text(r))
 
     def _serve(self, conn, cache):
-        next_scan = next_batch = 0.0
+        next_scan = 0.0
         version = None
         pending = deque()
         while True:
@@ -324,17 +429,18 @@ class _Worker:
                     self.rescan = False
                     pending = self._reconcile(conn, cache)
 
-            index_due = max(next_batch, self.retry_at)
-            indexing = bool(pending) and self.enabled()
-            wake_at = min(index_due, next_scan) if indexing else next_scan
+            indexing = self._indexing_enabled() and (self.batch is not None or bool(pending))
+            wake_at = min(self.next_batch, next_scan) if indexing else next_scan
             try:
                 job = self.queries.get(timeout=max(0, wake_at - time.monotonic()))
             except Empty:
-                if indexing and time.monotonic() >= index_due:
-                    self._index_batch(conn, cache, pending)
-                    next_batch = time.monotonic() + BATCH_PAUSE
+                pass
             else:
                 self._answer(cache, job)
+            # Give a queued query first use of the embedder, then service any
+            # due batch even if more queries keep arriving.
+            if indexing and time.monotonic() >= self.next_batch:
+                self._index_batch(conn, cache, pending)
 
     def run(self):
         while True:
@@ -347,8 +453,7 @@ class _Worker:
                     with closing(sqlite3.connect(self.cache_path, timeout=SQLITE_TIMEOUT)) as db:
                         self._serve(conn, _Cache(db))
             except (sqlite3.Error, OSError, ValueError):
-                self.ready.clear()
-                time.sleep(RETRY_SECONDS)
+                time.sleep(SQLITE_RETRY_SECONDS)
 
 
 _worker = None
@@ -364,9 +469,38 @@ def start(transcript, data_dir, enabled):
             threading.Thread(target=_worker.run, name="transcript-vectors", daemon=True).start()
 
 
-def begin_query(text, excluded, transcript):
+def begin_query(text, excluded, transcript, *, prefetch=False):
     worker = _worker
     if worker is None or worker.transcript != Path(transcript).resolve():
         return None
-    first = worker.submit(text, excluded)
+    first = worker.submit(text, excluded, prefetch=prefetch)
     return _SemanticSearch(worker, first) if first is not None else None
+
+
+def search_reenabled(transcript):
+    worker = _worker
+    if worker is not None and worker.transcript == Path(transcript).resolve():
+        worker.reenabled.set()
+
+
+def scene_vectors(transcript, rows, fingerprint):
+    """Read the indexed vectors for a small set of version-checked scene rows."""
+    worker = _worker
+    if worker is None or worker.transcript != Path(transcript).resolve() or not rows:
+        return {}
+    versions = {row["id"]: content_hash(row) for row in rows}
+    slots = ",".join("?" for _ in versions)
+    try:
+        with closing(sqlite3.connect(worker.cache_path.resolve().as_uri() + "?mode=ro",
+                                     uri=True, timeout=0)) as conn:
+            result = {}
+            for mid, digest, data in conn.execute(
+                    f"SELECT id, digest, vector FROM vectors WHERE id IN ({slots}) "
+                    "AND (SELECT fingerprint FROM config) = ?", (*versions, fingerprint)):
+                if digest == versions[mid]:
+                    vector = array("f")
+                    vector.frombytes(data)
+                    result[mid] = vector
+            return result
+    except (sqlite3.Error, ValueError, OSError):
+        return {}

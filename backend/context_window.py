@@ -34,6 +34,9 @@ OPENAI_VIDEO_FRAME_TOKENS = 1024
 VIDEO_TOKENS_PER_SECOND = 350
 UNKNOWN_VIDEO_TOKENS = 32768
 DEFAULT_REPLY_ALLOWANCE = 4096
+RECALL_SHARE = 0.08
+BUILTIN_RECALL_CAP = 1200
+CUSTOM_RECALL_CAP = 6000
 LEGACY_ALLOWANCE = 10096
 LEGACY_AUTO_CAP = 40000
 MIN_TOTAL_CAP = 500
@@ -374,13 +377,16 @@ class PromptHistory:
 class HistoryDraft(list):
     """Stored rows and summary snapshot, before the final request has a cost."""
 
-    def __init__(self, conversation_id, messages, summary, *, recall_excluded_ids=()):
+    def __init__(self, conversation_id, messages, summary, *, recall_excluded_ids=(),
+                 proactive=False, now=None):
         super().__init__(messages)
         self.conversation_id = conversation_id
         self.summary = summary
         self.last_history = None
         self.recall_excluded_ids = frozenset(recall_excluded_ids)
         self.reply_recall = None
+        self.proactive = proactive
+        self.now = now
 
 
 class PromptTooLarge(Exception):
@@ -409,7 +415,9 @@ def _without_optional(message):
     bases = message.get("_window_bases")
     if bases and isinstance(message["content"], str) and message["content"].startswith(bases[0]):
         reduced = {**message, "content": bases[1] + message["content"][len(bases[0]):]}
-        reduced.pop("_window_recall", None)
+        recall = reduced.get("_window_recall")
+        if recall is not None:
+            reduced["_window_recall"] = (message.get("_window_required_recall_offset", recall[0]), recall[1])
         return reduced
     return message
 
@@ -436,7 +444,11 @@ def _shorten_results(messages, excess, encoding):
     return shortened
 
 
-def _add_recall(wire, selected, ids, ceiling, schema, encoding):
+def recall_budget(ceiling, builtin):
+    return min(int(ceiling * RECALL_SHARE), BUILTIN_RECALL_CAP if builtin else CUSTOM_RECALL_CAP)
+
+
+def _add_recall(wire, selected, ids, ceiling, schema, encoding, builtin):
     for index, message in enumerate(selected):
         slot = message.get("_window_recall")
         if slot is None:
@@ -448,20 +460,25 @@ def _add_recall(wire, selected, ids, ceiling, schema, encoding):
             message_cost(m, encoding) for i, m in enumerate(wire) if i != index)
         if schema:
             available -= count_text(json.dumps(schema, ensure_ascii=False), encoding) + MESSAGE_FRAMING
+        existing_cost = message_cost(target, encoding)
+        if available <= existing_cost:
+            return
+        budget = recall_budget(ceiling, builtin)
 
         def with_recall(text):
             return {**target, "content": before + "\n\n" + text + after}
 
         def fits(text):
-            return message_cost(with_recall(text), encoding) <= available
+            return message_cost(with_recall(text), encoding) <= min(available, existing_cost + budget)
 
-        block = render(ids, wire, fits=fits)
+        block = render(ids, wire, budget=budget, fits=fits,
+                       count=lambda text: count_text(text, encoding))
         if block:
             wire[index] = with_recall(block["content"])
         return
 
 
-def plan_history(messages, owner, ceiling, *, schema=None, encoding=None):
+def plan_history(messages, owner, ceiling, *, schema=None, encoding=None, builtin=False):
     """Fit the complete call and return its exact stored-message coverage."""
     costs = {}
     groups = {}
@@ -492,7 +509,8 @@ def plan_history(messages, owner, ceiling, *, schema=None, encoding=None):
         if reduced == messages:
             reduced = _shorten_results(messages, fixed - ceiling, encoding)
         if reduced != messages:
-            return plan_history(reduced, owner, ceiling, schema=schema, encoding=encoding)
+            return plan_history(reduced, owner, ceiling, schema=schema, encoding=encoding,
+                                builtin=builtin)
         raise PromptTooLarge()
 
     room = ceiling - fixed
@@ -540,7 +558,7 @@ def plan_history(messages, owner, ceiling, *, schema=None, encoding=None):
             first_user["content"] = parts + moved
     if summary:
         wire[0]["content"] += "\n\n" + summary
-    _add_recall(wire, selected, ids, ceiling, schema, encoding)
+    _add_recall(wire, selected, ids, ceiling, schema, encoding, builtin)
     return PromptHistory(owner.conversation_id, wire, ids)
 
 

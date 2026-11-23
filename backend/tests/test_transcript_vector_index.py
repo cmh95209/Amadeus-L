@@ -8,12 +8,15 @@ import unittest
 from array import array
 from contextlib import ExitStack, closing
 from pathlib import Path
+from threading import Event, Thread
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "memory_sidecar"))
 
 import memory as store
 import transcript_vector_index as vectors
+import transcript_embed_jobs as jobs
 
 
 def _fake_embed(texts, timeout, *, with_fingerprint=False):
@@ -38,6 +41,14 @@ class IndexTests(unittest.TestCase):
         self.cache = vectors._Cache(self.cache_db)
         self.worker = vectors._Worker(db_path, self.cache_path, lambda: True)
         self.embed = self.stack.enter_context(patch.object(vectors.meaning, "_embed", side_effect=_fake_embed))
+        self.requests = self.stack.enter_context(patch.object(vectors, "_job_request", side_effect=self._done))
+
+    def _done(self, _job_id, texts):
+        result = self.embed(texts, vectors.JOB_HTTP_TIMEOUT, with_fingerprint=True)
+        if result is None:
+            return {"status": "failed"}
+        fingerprint, batch = result
+        return {"status": "done", "embedding_fingerprint": fingerprint, "vectors": batch}
 
     def _add(self, text, role="user", **kwargs):
         return store.append_message(role, text, conversation_id=self.tab, **kwargs)
@@ -153,13 +164,13 @@ class IndexTests(unittest.TestCase):
         query = array("f", [1.0, 0.0])
         with patch.object(vectors, "SHORTLIST", 2):
             hits = self.cache.search(query, {1}, time.monotonic() + 1)
-            self.assertEqual(set(hits), {3})
+            self.assertEqual(set(hits), {2, 3})
             self.assertAlmostEqual(hits[3][1], 0.8)
         with patch.object(vectors, "SHORTLIST", 1):
             hits = self.cache.search(query, {3}, time.monotonic() + 1)
-            self.assertEqual(hits, {})  # Equal signatures select the newest one for reranking.
+            self.assertEqual(set(hits), {2})  # Equal signatures select the newest row.
 
-    def test_weak_hit_needs_a_floor_and_separation_from_the_runner_up(self):
+    def test_reranking_keeps_below_floor_rows_for_distinct_scene_comparison(self):
         def at_cosine(cosine):
             return array("f", [cosine, math.sqrt(1 - cosine**2)])
 
@@ -171,11 +182,9 @@ class IndexTests(unittest.TestCase):
         ])
         query = array("f", [1, 0])
         hits = self.cache.search(query, {3}, time.monotonic() + 1)
-        self.assertEqual(set(hits), {1})
+        self.assertEqual(set(hits), {1, 2, 4})
         self.assertAlmostEqual(hits[1][1], 0.502808)
-        self.assertEqual(self.cache.search(query, set(), time.monotonic() + 1), {})  # Close rival.
-        self.assertEqual(self.cache.search(query, {1, 2}, time.monotonic() + 1), {})  # Below floor.
-        self.assertEqual(self.cache.search(query, {2, 3, 4}, time.monotonic() + 1), {})  # No rival.
+        self.assertAlmostEqual(self.cache.search(query, set(), time.monotonic() + 1)[3][1], 0.46)
 
     def test_new_tool_window_reranks_with_the_same_query_embedding(self):
         first = self._add("First candidate.")
@@ -195,14 +204,125 @@ class IndexTests(unittest.TestCase):
             self.assertEqual(set(recall.hits({second})), {first})
         self.assertEqual(self.embed.call_count, 2)  # One indexing batch and one query.
 
-    def test_unavailable_sidecar_keeps_batch_and_sets_backoff(self):
+    def test_failure_backoff_pauses_after_five_and_reenable_resumes(self):
         mid = self._add("Try again later.")
-        self.embed.side_effect = None
-        self.embed.return_value = None
-        pending = self._index()
-        self.assertEqual([entry[0] for entry in pending], [mid])
-        self.assertGreater(self.worker.retry_at, time.monotonic())
+        self.requests.side_effect = None
+        self.requests.return_value = {"status": "unavailable"}
+        self.assertTrue(self.worker._indexing_enabled())
+        with patch.object(vectors.time, "monotonic", return_value=10.0), patch("builtins.print") as log:
+            for failure, delay in enumerate((*vectors.BATCH_FAILURE_BACKOFF, None), 1):
+                self._index()
+                self.assertEqual(self.worker.failures, failure)
+                if delay is not None:
+                    self.assertEqual(self.worker.next_batch, 10 + delay)
+                    self.assertTrue(self.worker._indexing_enabled())
+            log.assert_called_once()
+        self.assertFalse(self.worker._indexing_enabled())
         self.assertFalse(self.cache.entries)
+        self.assertEqual(self.worker.query_retry_at, 0)
+        self.worker.enabled = lambda: False
+        self.assertFalse(self.worker._indexing_enabled())
+        self.worker.enabled = lambda: True
+        self.assertTrue(self.worker._indexing_enabled())
+        self.requests.side_effect = self._done
+        self._index()
+        self.assertIn(mid, self.cache.entries)
+
+    def _background_job(self, *, lose_submit=False):
+        admission = jobs.EmbeddingAdmission()
+        slot = jobs.EmbedJobSlot(admission)
+        release, entered = Event(), Event()
+        threads = []
+
+        def start_thread(*args, **kwargs):
+            thread = Thread(*args, **kwargs)
+            threads.append(thread)
+            return thread
+
+        def encode(texts):
+            entered.set()
+            release.wait(5)
+            return {"embedding_fingerprint": "revision", "vectors": [[1.0, 0.5] for _ in texts]}
+
+        def request(job_id, texts=None):
+            if texts is None:
+                return slot.poll(job_id)
+            response = slot.submit(job_id, encode, texts)
+            return {} if lose_submit else response
+
+        def finish():
+            release.set()
+            for thread in threads:
+                thread.join(2)
+
+        self.addCleanup(finish)
+        self.stack.enter_context(patch.object(jobs, "Thread", side_effect=start_thread))
+        self.requests.side_effect = request
+        return slot, entered, finish
+
+    def test_slow_long_batch_survives_lost_submit_response_and_commits_incrementally(self):
+        ids = [self._add(f"{i} " + "a substantial transcript paragraph. " * 100)
+               for i in range(vectors.BATCH_SIZE + 1)]
+        _, entered, finish = self._background_job(lose_submit=True)
+        with patch.object(vectors.time, "monotonic", return_value=0.0) as now:
+            pending = self._index()
+            self.assertTrue(entered.wait(1))
+            self.assertFalse(self.cache.entries)
+            initial_id, texts = self.requests.call_args.args
+            self.assertEqual([len(text) for text in texts], [vectors.MAX_TEXT_CHARS] * vectors.BATCH_SIZE)
+            now.return_value = 16
+            self.worker._index_batch(self.transcript, self.cache, pending)
+            self.requests.assert_called_with(initial_id, None)
+            finish()
+            now.return_value = 17
+            self.worker._index_batch(self.transcript, self.cache, pending)
+            self.assertEqual(set(self.cache.entries), set(ids[1:]))
+            self.assertEqual(self.worker.next_batch, 18)
+            self.assertEqual(self.worker.failures, 0)
+            self.assertEqual(sum(call.args[1] is not None for call in self.requests.call_args_list), 1)
+
+    def test_wedged_job_stays_in_one_slot_and_logs_only_once(self):
+        self._add("A wedged row.")
+        slot, entered, _ = self._background_job()
+        with patch.object(vectors.time, "monotonic", return_value=0.0) as now, patch("builtins.print") as log:
+            pending = self._index()
+            self.assertTrue(entered.wait(1))
+            job_id = self.worker.batch.job_id
+            self.assertEqual(slot.submit(job_id, None, []), {"status": "running"})
+            self.assertEqual(slot.submit("another", None, []), {"status": "busy", "job_id": job_id})
+            now.return_value = vectors.JOB_STALL_SECONDS + 1
+            self.worker._index_batch(self.transcript, self.cache, pending)
+            now.return_value += 1
+            self.worker._index_batch(self.transcript, self.cache, pending)
+            log.assert_called_once()
+            self.assertFalse(self.cache.entries)
+            self.assertEqual(self.worker.failures, 0)
+            self.assertEqual(sum(call.args[1] is not None for call in self.requests.call_args_list), 1)
+
+    def test_waiting_foreground_work_takes_precedence_at_admission(self):
+        admission = jobs.EmbeddingAdmission()
+        slot = jobs.EmbedJobSlot(admission)
+        with admission.foreground():
+            self.assertEqual(slot.submit("batch", None, []), {"status": "busy"})
+            with admission.encode(0) as granted:
+                self.assertTrue(granted)
+                self.assertEqual(slot.submit("batch", None, []), {"status": "busy"})
+
+    def test_due_batches_progress_even_when_every_ready_slot_has_a_query(self):
+        ids = [self._add(f"message {i}") for i in range(vectors.BATCH_SIZE + 1)]
+        received = iter((object(), object()))
+
+        def receive(timeout):
+            now.return_value += vectors.BATCH_PAUSE
+            return next(received)
+
+        with patch.object(vectors.time, "monotonic", return_value=1.0) as now, \
+                patch.object(self.worker.queries, "get", side_effect=receive), \
+                patch.object(self.worker, "_answer") as answers:
+            with self.assertRaises(StopIteration):
+                self.worker._serve(self.transcript, self.cache)
+        self.assertEqual(answers.call_count, 2)
+        self.assertEqual(set(self.cache.entries), set(ids))
 
 
 if __name__ == "__main__":

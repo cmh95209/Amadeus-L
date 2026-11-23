@@ -20,6 +20,7 @@ import tempfile
 import unittest
 from array import array
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -223,7 +224,7 @@ class SearchTests(_Base):
         self._history()
         block = cross_tab.search_block("that green curry recipe", verbatim_message_ids=(self.visible_id,))
         self.assertTrue(block["content"].startswith(cross_tab.SEARCH_LABEL))
-        self.assertIn('In "Cooking" (Thu 5 Nov 2026)', block["content"])
+        self.assertIn('In "Cooking" (another chat, Thu 5 Nov 2026,', block["content"])
         # A small budget still gets the best match, cut shorter.
         long_her = "レモングラス" * 60
         store.append_message("user", "green curry recipe with lemongrass again", conversation_id=self.cooking)
@@ -258,7 +259,7 @@ class SearchTests(_Base):
         self._tab("C", [("user", "Violet telescope shipped by courier.")])
         self._tab("D", [("user", "Violet telescope needs a new mount.")])
         reply = cross_tab.prepare_search("violet telescope", self.current)
-        block = reply.block(prompt_messages=[
+        block = reply.block(direct=True, prompt_messages=[
             {"role": "user", "content": [{"type": "text", "text": "Violet telescope shipped by courier."}]},
             {"role": "system", "content": 'Previous recall. User: "Violet telescope needs a new mount."'},
         ])
@@ -274,20 +275,20 @@ class SearchTests(_Base):
         new = self._add("assistant", "Put it somewhere safe.")
         store.activate_version(old)
         reply = cross_tab.prepare_search("violet telescope", self.current)
-        self.assertTrue(reply._rank(()))
+        self.assertTrue(reply._rank(())[0])
         store.update_message_content(edited, "We never bought one.")
         store.delete_message(deleted)
         store.activate_version(new)
-        self.assertIsNone(reply.block())
+        self.assertIsNone(reply.block(direct=True))
 
-    def test_shared_budget_counts_both_tabs_and_caps_excerpt_count(self):
+    def test_shared_budget_counts_both_tabs_and_returns_only_one_scene(self):
         self._add("user", "Violet telescope needs a stand.")
         self._tab("A", [("user", "Violet telescope by the window.")])
         self._tab("B", [("user", "Violet telescope in the garden.")])
         self._tab("C", [("user", "Violet telescope with a cover.")])
         self._tab("D", [("user", "Violet telescope delivered today.")])
         text = cross_tab.search_block("violet telescope", budget=300)["content"]
-        self.assertEqual(text.count("\n- "), 3)
+        self.assertEqual(text.count("\n- "), 1)
         self.assertLessEqual(store.estimate_tokens(text), 300)
         same_tab_only = cross_tab.search_block("violet telescope stand")["content"]
         self.assertIn("earlier in this chat", same_tab_only)
@@ -318,7 +319,7 @@ class SemanticSearchTests(_Base):
             cache = vectors._Cache(conn)
             worker = vectors._Worker(store.PATH_TO_MEMORY, ":memory:", lambda: True)
             rows = [r for r in cross_tab._candidates() if r["conversation_id"] == tab]
-            fingerprint, batch = vectors._embed([r["content"] for r in rows], 1)
+            fingerprint, batch = vectors._normalized(fake_embed([r["content"] for r in rows], 1), len(rows))
             cache.configure(fingerprint)
             cache.save((r["id"], vectors.content_hash(r), vector) for r, vector in zip(rows, batch))
 
@@ -332,7 +333,7 @@ class SemanticSearchTests(_Base):
             with patch.object(vectors, "begin_query", side_effect=submit):
                 block = cross_tab.search_block(question, tab, verbatim_message_ids=(probe,))
                 self.assertIn("earlier in this chat", block["content"])
-                self.assertIn(f'User: "{birthday}" / You: "{reply_text}"', block["content"])
+                self.assertIn(f'User: "[matched] {birthday} [/matched]"\nYou: "{reply_text}"', block["content"])
                 self.assertNotIn(filler, block["content"])
                 self.assertNotIn(question, block["content"])
 
@@ -358,7 +359,8 @@ class SemanticSearchTests(_Base):
             cache = vectors._Cache(conn)
             worker = vectors._Worker(store.PATH_TO_MEMORY, ":memory:", lambda: True)
             rows = [r for r in cross_tab._candidates() if r["conversation_id"] in (saved, distractor)]
-            fingerprint, batch = vectors._embed([r["content"] for r in rows], 1)
+            fingerprint, batch = vectors._normalized(
+                fake_embed([r["content"] for r in rows], 1, with_fingerprint=True), len(rows))
             cache.configure(fingerprint)
             cache.save((r["id"], vectors.content_hash(r), vector) for r, vector in zip(rows, batch))
             self.assertEqual(len(cache.entries), 2)
@@ -375,11 +377,11 @@ class SemanticSearchTests(_Base):
                 for query in queries:
                     with self.subTest(query=query):
                         reply = cross_tab.prepare_search(query, self.current)
-                        block = reply.block()["content"]
+                        block = reply.block(direct=True)["content"]
                         self.assertIn(original, block)
                         self.assertNotIn("historic tower", block)
-                        self.assertEqual(reply.block()["content"], block)
-                self.assertEqual(embed.call_count, 1 + len(queries))
+                        self.assertEqual(reply.block(direct=True)["content"], block)
+                self.assertEqual(embed.call_count, len(queries))
 
     def test_keyword_fallback_on_outage_timeout_and_invalid_vector(self):
         self._tab("Observatory", [("user", "I bought a violet telescope.")])
@@ -405,6 +407,163 @@ class SemanticSearchTests(_Base):
                     self.assertIn("I bought a violet telescope.", block["content"])
 
 
+class MomentPolicyTests(_Base):
+    def setUp(self):
+        super().setUp()
+        self.scores = {}
+        self.intent = [1, 0]
+        self.private = set()
+        self.callbacks = cross_tab.moment.Cadence()
+        for target, name, replacement in (
+            (vectors, "begin_query", self._semantic),
+            (vectors, "scene_vectors", self._indexed),
+            (vectors.meaning, "example_scores", self._classify),
+            (cross_tab.moment, "cadence", self.callbacks),
+        ):
+            patcher = patch.object(target, name, replacement)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _semantic(self, _text, _excluded, _transcript, **_kwargs):
+        def hits(excluded):
+            return {r["id"]: (vectors.content_hash(r), self.scores[r["id"]])
+                    for r in cross_tab._candidates() if r["id"] in self.scores and r["id"] not in excluded}
+
+        return SimpleNamespace(embedded=("fixture", self.intent), hits=hits)
+
+    def _indexed(self, _transcript, rows, _fingerprint):
+        return {r["id"]: ([0, 0, 1] if r["id"] in self.private else [0, 1, 0]) for r in rows}
+
+    def _classify(self, vector, examples, _negative):
+        if vector is None:
+            return None
+        if examples is vectors.meaning.RECALL_ASK:
+            return (0.70, 0.25) if vector == [0, 1] else (0.24, 0.65)
+        return (0.65, 0.21) if vector == [0, 0, 1] else (0.1, 0.6)
+
+    def _user(self, text, tab=None, **kwargs):
+        return store.append_message("user", text, conversation_id=tab or self.current, **kwargs)
+
+    def _block(self, query, mid, tab=None):
+        return cross_tab.prepare_search(query, tab or self.current, answering_id=mid).block(
+            verbatim_message_ids=(mid,), prompt_messages=[{"role": "user", "content": query}])
+
+    def test_spontaneous_lead_uses_distinct_scenes_and_lexical_corroboration(self):
+        tab = store.create_conversation("Observatory")
+        found = self._user("I bought a violet telescope yesterday.", tab)
+        close = self._user("The equatorial mount worked.")
+        query = "That might work again."
+        turn = self._user(query)
+        self.scores = {found: 0.63, close: 0.58}
+        self.assertIsNone(self._block(query, turn))
+        self.scores[close] = 0.54
+        self.assertIn("violet telescope", self._block(query, turn)["content"])
+
+        for _ in range(3):
+            self._user("New turn", tab)
+        other = store.create_conversation("Workshop")
+        alternate = self._user("The maple workbench fits my workshop.", other)
+        query = "That maple workbench sounds lovely."
+        turn = self._user(query)
+        self.scores = {alternate: 0.56, found: 0.54}
+        self.assertIn("maple workbench", self._block(query, turn)["content"])
+
+    def test_two_lexical_cues_dont_allow_a_callback_without_cosine(self):
+        tab = store.create_conversation("Observatory")
+        found = self._user("I bought a violet telescope yesterday.", tab)
+        query = "I could use a violet telescope."
+        turn = self._user(query)
+        self.scores = {found: 0.54}
+        self.assertIsNone(self._block(query, turn))
+
+    def test_cooldown_shares_the_turn_across_regenerate_and_tabs_and_direct_bypasses(self):
+        old = store.create_conversation("Walks")
+        first = self._user("The river walk with Aiko was lovely.", old)
+        other = store.create_conversation("Travel")
+        second = self._user("The snow fell all night in Sapporo.", other)
+        query = "That might happen again."
+        one = self._user(query)
+        self.scores = {first: 0.68, second: 0.48}
+        self.assertIn("river walk", self._block(query, one)["content"])
+        two = self._user(query, other)
+        self.assertIn("river walk", self._block(query, one)["content"])
+        self.scores = {second: 0.69, first: 0.48}
+        self.assertIsNone(self._block(query, two, other))
+        self.assertIsNone(self._block(query, one))
+
+        explicit = "你记得我们那次旅行时发生什么了吗？"
+        asked = self._user(explicit, other)
+        self.intent = [0, 1]
+        self.scores = {second: 0.52, first: 0.49}
+        recalled = self._block(explicit, asked, other)["content"]
+        self.assertIn("Sapporo", recalled)
+        self.assertIn(cross_tab.moment.HEDGE, recalled)
+
+    def test_sensitive_scene_waits_until_the_user_asks(self):
+        tab = store.create_conversation("Personal")
+        earlier = self._user("I was scared when I got the diagnosis.", tab)
+        self.private.add(earlier)
+        query = "I've been thinking again."
+        turn = self._user(query)
+        self.scores = {earlier: 0.67}
+        self.assertIsNone(self._block(query, turn))
+
+        explicit = "前に話した診断のことを覚えてる？"
+        asked = self._user(explicit)
+        self.intent = [0, 1]
+        self.assertIn("diagnosis", self._block(explicit, asked)["content"])
+
+    def test_latest_user_wording_wins_when_the_same_fact_changed(self):
+        first = store.create_conversation("Before")
+        old = self._user("The violet telescope is in the shed.", first)
+        second = store.create_conversation("After")
+        recent = self._user("The violet telescope has moved to the porch.", second)
+        query = "Where did I say I left the violet telescope?"
+        asked = self._user(query)
+        self.intent = [0, 1]
+        self.scores = {old: 0.70, recent: 0.57}
+        block = self._block(query, asked)["content"]
+        self.assertIn("porch", block)
+        self.assertNotIn("shed", block)
+
+    def test_old_reply_cannot_recall_future_rows_from_another_tab(self):
+        query = "Where did I put the telescope?"
+        asked = self._user(query)
+        other = store.create_conversation("Future")
+        future = self._user("The telescope is in a future spot.", other)
+        self.intent = [0, 1]
+        self.scores = {future: 0.85}
+        self.assertIsNone(self._block(query, asked))
+
+    def test_losing_an_adjacent_row_stops_at_that_privacy_boundary(self):
+        tab = store.create_conversation("Observatory")
+        outer = self._user("We closed the dome for rain.", tab)
+        hidden = self._user("We checked on a private issue at home.", tab)
+        anchor = self._user("The violet telescope is custom-made.", tab)
+        query = "What did I say about the violet telescope?"
+        asked = self._user(query)
+        self.intent = [0, 1]
+        self.scores = {anchor: 0.65, outer: 0.3}
+        reply = cross_tab.prepare_search(query, self.current, answering_id=asked)
+        self.assertTrue(reply._rank((asked,))[0])
+        store.set_message_active(hidden, False)
+        block = reply.block(verbatim_message_ids=(asked,))["content"]
+        self.assertIn("custom-made", block)
+        self.assertNotIn("private issue", block)
+        self.assertNotIn("closed the dome", block)
+
+    def test_verified_direct_intent_keeps_keyword_only_fallback(self):
+        tab = store.create_conversation("Observatory")
+        self._user("I bought a violet telescope.", tab)
+        query = "What did I tell you about my violet telescope?"
+        asked = self._user(query)
+        with patch.object(vectors, "begin_query", return_value=None), \
+                patch.object(vectors.meaning, "cached_vector", return_value=[0, 1]):
+            block = self._block(query, asked)["content"]
+        self.assertIn("violet telescope", block)
+        self.assertIn(cross_tab.moment.HEDGE, block)
+
+
 class PromptRecallTests(_Base):
     def _chat(self):
         with patch.object(store, "load_api_key", return_value=""), \
@@ -413,7 +572,7 @@ class PromptRecallTests(_Base):
         return chat
 
     def _build(self, chat, context, query, *, right_now=True, memory_block=None):
-        recall = chat._reply_recall(context, query, self.current, memory_block)
+        recall = chat._reply_recall(context, query, self.current)
         with contextlib.ExitStack() as stack:
             catch_up = stack.enter_context(patch.object(
                 cross_tab, "catch_up_block", return_value={"role": "system", "content": "CATCH-UP"}))
@@ -441,7 +600,7 @@ class PromptRecallTests(_Base):
         birthday = store.append_message("user", "My birthday celebration is on November 14.",
                                         conversation_id=self.current)
         store.append_message("assistant", "I'll remember that.", conversation_id=self.current)
-        store.append_message("user", "A new subject. " * 100, conversation_id=self.current)
+        store.append_message("user", "A new subject. " * 500, conversation_id=self.current)
         query = "When is my birthday celebration?"
         current = store.append_message("user", query, conversation_id=self.current)
         draft = store.build_prompt_messages(conversation_id=self.current, answering_id=current)
@@ -450,23 +609,27 @@ class PromptRecallTests(_Base):
         no_hit = window.HistoryDraft(self.current, draft, None)
         with patch.object(cross_tab, "search_on", return_value=False):
             messages = self._build(chat, no_hit, query)
-        baseline = window.plan_history(messages, no_hit, 800)
+        baseline = window.plan_history(messages, no_hit, 6000)
         messages = self._build(chat, draft, query)
-        recalled = window.plan_history(messages, draft, 800)
+        with patch.object(cross_tab.moment, "direct_question", return_value=True):
+            recalled = window.plan_history(messages, draft, 6000, builtin=True)
+            cloud = window.plan_history(messages, draft, 6000)
         self.assertEqual(recalled.verbatim_message_ids, (current,))
         self.assertEqual(recalled.verbatim_message_ids, baseline.verbatim_message_ids)
         self.assertEqual(recalled.messages[0]["content"].encode(), baseline.messages[0]["content"].encode())
         self.assertEqual(recalled.messages[:-1], baseline.messages[:-1])
+        self.assertEqual(cloud.messages[:-1], baseline.messages[:-1])
         self.assertIn("earlier in this chat", recalled.messages[-1]["content"])
         self.assertIn("November 14", recalled.messages[-1]["content"])
         self.assertNotIn(query, recalled.messages[-1]["content"])
         self.assertFalse(any(key.startswith("_window_") for m in recalled.messages for key in m))
 
-        visible = window.plan_history(messages, draft, 3000)
+        visible = window.plan_history(messages, draft, 12_000)
         self.assertIn(birthday, visible.verbatim_message_ids)
         self.assertNotIn(cross_tab.SEARCH_LABEL, visible.messages[-1]["content"])
 
-        local = window.plan_history(self._build(chat, draft, query, right_now=False), draft, 800)
+        with patch.object(cross_tab.moment, "direct_question", return_value=True):
+            local = window.plan_history(self._build(chat, draft, query, right_now=False), draft, 6000)
         self.assertTrue(local.messages[0]["content"].startswith("PERSONALITY\n\nVOICE\n\nRULES"))
         self.assertLess(local.messages[0]["content"].index("CLOSENESS"),
                         local.messages[0]["content"].index("November 14"))
@@ -485,7 +648,7 @@ class PromptRecallTests(_Base):
         def answer(draft, internal_context=None):
             self.assertEqual(draft.recall_excluded_ids, {first, second})
             self.assertEqual(draft[-1]["_window_ids"], (question,))
-            chat._reply_recall(draft, query, self.current, None)
+            chat._reply_recall(draft, query, self.current)
             self.assertTrue({first, second}.issubset(draft.reply_recall.excluded))
             return chat.AmadeusPack(assistant_reply_JPS="どこかな。", assistant_reply_ENG="I wonder where.")
 
@@ -493,14 +656,21 @@ class PromptRecallTests(_Base):
                 patch.object(chat, "getResponsePacked", side_effect=answer):
             chat.regenerateReply()
 
+    def test_greetings_have_no_scene_slot(self):
+        chat = self._chat()
+        draft = store.build_prompt_messages(conversation_id=self.current, proactive=True)
+        with patch.object(cross_tab, "prepare_search") as prepare:
+            self.assertIsNone(chat._reply_recall(draft, "A greeting request.", self.current))
+            prepare.assert_not_called()
+
 
 class BudgetAndLearnTests(_Base):
     def test_reserve_only_on_the_built_in_model(self):
         self.assertEqual(cross_tab.reserve_tokens(), 0)
         with patch.object(cross_tab, "_brain", lambda: "builtin"):
-            self.assertEqual(cross_tab.reserve_tokens(), sum(cross_tab.BUDGETS["builtin"]))
+            self.assertEqual(cross_tab.reserve_tokens(), cross_tab.CATCH_UP_BUDGETS["builtin"])
             cross_tab.save_settings({"catch_up": False})
-            self.assertEqual(cross_tab.reserve_tokens(), cross_tab.BUDGETS["builtin"][1])
+            self.assertEqual(cross_tab.reserve_tokens(), 0)
 
     def test_learn_on_leave(self):
         import cm_bridge

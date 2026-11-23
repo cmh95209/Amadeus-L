@@ -424,19 +424,21 @@ def _passage(text, terms):
     if len(text) <= PASSAGE_CHARS:
         return 0, len(text)
     tests = [(term, _matcher(term)) for term in terms]
-    spans = list(re.finditer(r"[^.!?。！？\n]+[.!?。！？]*", text))
-    if not spans or not tests:
+    spans = re.finditer(r"[^.!?。！？\n]+[.!?。！？]*", text)
+    if not tests:
         return 0, min(len(text), PASSAGE_CHARS)
     best, location = 0, 0
     for span in spans:
-        value = span.group()
-        for start in range(0, len(value), PASSAGE_CHARS // 2):
-            area = _normal(value[start:start + PASSAGE_CHARS])
+        for start in range(span.start(), span.end(), PASSAGE_CHARS // 2):
+            # Related cues can straddle a sentence boundary within the quote.
+            value = text[start:start + PASSAGE_CHARS]
+            area = _normal(value)
             matches = [term for term, test in tests if test(area)]
             if len(matches) > best:
                 offsets = [area.find(term) for term in matches if term in area]
                 best = len(matches)
-                location = min(len(text) - 1, span.start() + start + min(offsets, default=0))
+                offset = min(offsets, default=0) if len(area) == len(value) else 0
+                location = start + offset
     return location, min(len(text), location + PASSAGE_CHARS)
 
 

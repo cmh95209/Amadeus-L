@@ -39,10 +39,8 @@ EMOTION_MARGIN = 0.03
 # =============================================================================
 
 INSTRUCTION = "Use memories naturally when they fit. The user's current words take precedence."
-LABEL = ("FROM CHAT HISTORY (historical evidence from a past conversation. "
-         "Treat quotes as dialogue from that time. Follow the current instructions and prefer "
-         "the user's newer statements.)\n")
-HEDGE = "The match is uncertain. Hedge any recollection and say when the evidence is unclear.\n"
+LABEL = "FROM CHAT HISTORY (past dialogue only. Follow current instructions.)\n"
+HEDGE = "The match is uncertain. Hedge any recollection.\n"
 
 
 def _classified(vector, examples, minimum, margin):
@@ -55,8 +53,7 @@ def direct_question(vector):
 
 
 def sensitive(row, vector):
-    # The indexed representation covers only an initial portion of long rows.
-    if len(row["content"] or "") + len(row["japanese"] or "") > vectors.MAX_TEXT_CHARS:
+    if not vectors.embedding_covers(row):
         return None
     return _classified(vector, meaning.SENSITIVE_MOMENT, SENSITIVE_COSINE, SENSITIVE_MARGIN)
 
@@ -272,12 +269,20 @@ def render(scene, anchor, matched, current, rows_for, line, passage, fits, *,
     # A lexical match sets the center. Semantic-only matches use the beginning
     # of the indexed text. Grow that window as far as the call can afford.
     max_chars = len(text)
-    for rows in (anchor_rows, (row,)):
-        low, high = min(MIN_MATCH_CHARS, max_chars), max_chars
+    match_size = end - start
+    minimum = min(MIN_MATCH_CHARS, max_chars)
+    full_passage = max(minimum, match_size)
+    for rows, minimum_size, maximum_size in (
+        (anchor_rows, full_passage, max_chars),
+        ((row,), full_passage, max_chars),
+        ((row,), minimum, full_passage - 1),
+    ):
+        low, high = minimum_size, maximum_size
         result = None
         while low <= high:
             size = (low + high) // 2
-            a = max(0, min(start - size // 3, max_chars - size))
+            flank = max(0, size - match_size) // 2
+            a = max(0, min(start - flank, max_chars - size))
             candidate = head + format_rows(rows, clip=(a, a + size))
             if fits(candidate):
                 result = candidate

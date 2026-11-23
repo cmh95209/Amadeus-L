@@ -91,6 +91,26 @@ class IndexTests(unittest.TestCase):
         self._index()
         self.assertNotEqual(self.cache.entries[mid][0], changed)
 
+    def test_index_batch_bounds_multibyte_rows_and_preserves_both_wordings(self):
+        display = "蓝灯笼在屋顶上。" * 300
+        original = "青いランタンは屋上にある。" * 200
+        user = self._add(display)
+        assistant = self._add(display, "assistant", japanese=original)
+        self._index()
+
+        bilingual, plain = self.embed.call_args.args[0]
+        for text in (bilingual, plain):
+            self.assertLessEqual(len(text.encode("utf-8")), vectors.MAX_TEXT_BYTES)
+            self.assertLess(len(text), vectors.MAX_TEXT_CHARS)
+        spoken, translated = bilingual.split("\n")
+        self.assertTrue(original.startswith(spoken))
+        self.assertTrue(display.startswith(translated))
+        self.assertTrue(spoken and translated and display.startswith(plain))
+        self.assertEqual(set(self.cache.entries), {user, assistant})
+        rows = vectors.source_rows(self.transcript, [user, assistant])
+        self.assertFalse(any(vectors.embedding_covers(row) for row in rows))
+        self.assertTrue(vectors.embedding_covers({"content": "蓝灯笼", "japanese": "青いランタン"}))
+
     def test_edit_while_embedding_cannot_publish_a_stale_vector(self):
         mid = self._add("Before edit.")
 

@@ -24,6 +24,7 @@ import meaning
 # ============================== TUNABLES =====================================
 BATCH_SIZE = 4
 MAX_TEXT_CHARS = 2000
+MAX_TEXT_BYTES = 4000          # Bound work when the same character count encodes to more tokens.
 MAX_ROWS = 50_000
 SHORTLIST = 128
 QUERY_SECONDS = 0.250
@@ -41,7 +42,7 @@ SQLITE_TIMEOUT = 0.1
 # =============================================================================
 
 CACHE_FILE = "transcript_vectors.sqlite3"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SOURCE_SQL = """
     SELECT m.id, m.conversation_id, m.role, m.content, m.japanese, m.created_at, m.turn, c.title
@@ -69,13 +70,37 @@ def content_hash(row):
     return hashlib.sha256(original.encode("utf-8")).digest()
 
 
-def _embedding_text(row):
+def _embedding_parts(row):
     original = (row["japanese"] or "").strip()
     display = (row["content"] or "").strip()
     if original and display and original != display:
-        original = original[:max(MAX_TEXT_CHARS // 2, MAX_TEXT_CHARS - len(display) - 1)]
-        return original + "\n" + display[:MAX_TEXT_CHARS - len(original) - 1]
-    return (original or display)[:MAX_TEXT_CHARS]
+        return original, display
+    return (original or display,)
+
+
+def _embedding_prefix(text, chars=MAX_TEXT_CHARS, byte_limit=MAX_TEXT_BYTES):
+    return text[:chars].encode("utf-8", errors="replace")[:byte_limit].decode("utf-8", errors="ignore")
+
+
+def _embedding_text(row):
+    parts = _embedding_parts(row)
+    if len(parts) == 1:
+        return _embedding_prefix(parts[0])
+    original, display = parts
+    original = _embedding_prefix(
+        original, max(MAX_TEXT_CHARS // 2, MAX_TEXT_CHARS - len(display) - 1),
+        max(MAX_TEXT_BYTES // 2, MAX_TEXT_BYTES - len(display.encode("utf-8")) - 1),
+    )
+    return original + "\n" + _embedding_prefix(
+        display, MAX_TEXT_CHARS - len(original) - 1,
+        MAX_TEXT_BYTES - len(original.encode("utf-8")) - 1,
+    )
+
+
+def embedding_covers(row):
+    """Whether the vector includes all of the distinct text in the row."""
+    text = "\n".join(_embedding_parts(row))
+    return len(text) <= MAX_TEXT_CHARS and len(text.encode("utf-8")) <= MAX_TEXT_BYTES
 
 
 def _signature(vector):
@@ -103,7 +128,7 @@ def _normalized(response, count):
             normalized.append(array("f", (value / norm for value in vector)))
     except (TypeError, ValueError, OverflowError):
         return None
-    config = json.dumps([meaning.SIDECAR_URL, fingerprint, size, MAX_TEXT_CHARS])
+    config = json.dumps([meaning.SIDECAR_URL, fingerprint, size, MAX_TEXT_CHARS, MAX_TEXT_BYTES])
     return hashlib.sha256(config.encode()).hexdigest(), normalized
 
 
@@ -208,7 +233,7 @@ class _Cache:
 
 class _Query:
     def __init__(self, text, excluded, *, embedded=None, wait_seconds=None, prefetch=False):
-        self.text = text.strip()[:MAX_TEXT_CHARS]
+        self.text = _embedding_prefix(text.strip())
         self.excluded = frozenset(excluded)
         self.deadline = time.monotonic() + (
             QUERY_PREFETCH_SECONDS if prefetch else QUERY_SECONDS if wait_seconds is None else wait_seconds)

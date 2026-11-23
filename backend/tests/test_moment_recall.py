@@ -96,6 +96,39 @@ class SceneBudgetTests(unittest.TestCase):
         self.assertNotIn("INNER", rendered)
         self.assertLessEqual(window.count_text(rendered), 420)
 
+    def test_tight_scene_keeps_the_fact_when_topic_cues_follow_its_sentence(self):
+        cases = (
+            ("In notebook entry 23, I wrote about a blue lantern on the observatory roof.",
+             "My birthday is April 23.",
+             "We celebrate it on the observatory roof by lighting a blue lantern and passing around lemon cake.",
+             "birthday lemon cake", "April 23"),
+            ("ノートの第23項には天文台の屋上のことを書いたよ。",
+             "私の誕生日は4月23日です。", "屋上で青いランタンを灯してレモンケーキを切り分ける。",
+             "誕生日 青いランタン レモンケーキ", "4月23日"),
+            ("我在笔记本第23条记下了天文台屋顶的事。",
+             "我的生日是4月23日。", "我们会点起蓝灯笼，切开柠檬蛋糕。",
+             "生日 蓝灯笼 柠檬蛋糕", "4月23日"),
+        )
+        budget = 416
+        for opening, fact, cues, query, date in cases:
+            text = " ".join((opening, fact, cues, "Some unrelated background. " * 60))
+            anchor = exchange(1, 0, text, "A lengthy reply. " * 100)
+            lexical = cross_tab.query_terms(query)
+            start, stop = cross_tab._passage(text, lexical)
+            self.assertIn(date, text[start:stop])
+            for terms in (lexical, []):
+                with self.subTest(query=query, lexical=bool(terms)):
+                    rendered = moment.render(
+                        (anchor,), anchor, 10, 1, lambda ex: ex.rows, cross_tab._her_line,
+                        lambda value: cross_tab._passage(value, terms),
+                        lambda value: window.count_text(value) <= budget, now=NOW, weak=True,
+                    )
+                    self.assertIsNotNone(rendered)
+                    self.assertIn(date, rendered)
+                    self.assertIn("[matched]", rendered)
+                    self.assertIn("[/matched]", rendered)
+                    self.assertLessEqual(window.count_text(rendered), budget)
+
     def test_caps_use_the_effective_input_ceiling_and_actual_remaining_room(self):
         for total, builtin, expected in ((16_384, True, 933), (32_768, False, 2179),
                                          (120_000, False, 6000)):

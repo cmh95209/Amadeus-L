@@ -642,8 +642,8 @@ class SavedSourcesTests(unittest.TestCase):
             {"title": "A", "body": "a", "href": "https://a.example/", "date": "2026-10-24"},
             {"title": "B", "body": "b", "href": "https://b.example/"}])
         self.assertEqual(chat._parse_search_results(text), [
-            {"title": "A", "url": "https://a.example/", "date": "2026-10-24"},
-            {"title": "B", "url": "https://b.example/"}])
+            {"rank": 1, "title": "A", "url": "https://a.example/", "snippet": "a", "date": "2026-10-24"},
+            {"rank": 2, "title": "B", "url": "https://b.example/", "snippet": "b", "date": ""}])
 
         def fake_search(q):
             chat._note_search_engine("firecrawl")
@@ -880,7 +880,7 @@ class ReaderModeTests(unittest.TestCase):
     def run_search(self, plan, pages, reader, question="Who is on the banner?"):
         seen = []
 
-        def fake_fetch(url, timeout=None):
+        def fake_fetch(url, timeout, *, min_chars, retry_identity, read_pdf):
             return pages.get(url, {"status": "error"})
 
         def fake_reader_call(pin):

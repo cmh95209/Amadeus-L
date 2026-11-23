@@ -9,10 +9,11 @@ import io
 import json
 import os
 import sys
+import time
 import unittest
 import urllib.error
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -70,7 +71,7 @@ class EngineTests(unittest.TestCase):
             rows = websearch.exa_search("Genshin current banner")
         body = json.loads(op.call_args[0][0].data)
         self.assertEqual(body["params"], {"name": "web_search_exa",
-                                          "arguments": {"query": "Genshin current banner", "numResults": 5}})
+                                          "arguments": {"query": "Genshin current banner", "numResults": 8}})
         self.assertEqual([r["href"] for r in rows], ["https://www.prydwen.gg/genshin-impact/banners",
                                                      "https://game8.co/games/Genshin-Impact/archives/305012"])
         self.assertEqual(rows[0]["date"], "2026-10-24")
@@ -103,6 +104,40 @@ class EngineTests(unittest.TestCase):
     def test_no_results(self):
         with patch.object(websearch.urllib.request, "urlopen", return_value=rpc("No results found.")):
             self.assertEqual(websearch.exa_search("q"), [])
+
+    def test_each_engine_requests_eight(self):
+        websearch.reset_cooldown()
+        websearch.reset_keenable_cooldown()
+        self.addCleanup(websearch.reset_cooldown)
+        self.addCleanup(websearch.reset_keenable_cooldown)
+        fire = _Resp(json.dumps({"success": True, "data": {"web": []}}))
+        keen = _Resp(json.dumps({"results": []}))
+        backup = Mock()
+        backup.text.return_value = []
+        deadline = time.monotonic() + 30
+        with patch.object(websearch.urllib.request, "urlopen", side_effect=[
+                fire, fire, keen, keen, rpc("No results found.")]) as send, \
+             patch.dict(sys.modules, {"ddgs": Mock()}), \
+             patch.object(chat, "_get_search_client", return_value=backup):
+            chat._firecrawl_results("q", "w", deadline)
+            chat._keenable_results("q", "w", deadline)
+            chat._mcp_engine_results("exa", "q", deadline)
+            chat._ddgs_results("q", "w", deadline, False, False)
+        fire_fresh, fire_more, keen_fresh, keen_more, exa = [
+            json.loads(call.args[0].data) for call in send.call_args_list]
+        self.assertEqual([fire_fresh["limit"], fire_more["limit"], keen_fresh["max_results"],
+                          keen_more["max_results"], exa["params"]["arguments"]["numResults"]], [8] * 5)
+        self.assertEqual([call.kwargs["max_results"] for call in backup.text.call_args_list], [8, 8])
+
+    def test_keenable_state_merge_reserves_fresh_hits(self):
+        plain = [{"href": f"https://example.com/{i}"} for i in range(8)]
+        fresh = [{"href": "https://example.com/recent"}, {"href": "https://example.com/latest"}]
+        recent = [plain[0], fresh[0], fresh[0], fresh[1]]
+        with patch.object(websearch, "keenable_search", side_effect=lambda q, **kw:
+                          recent if kw["freshness"] else plain) as search:
+            merged = chat._keenable_results("q", "w", time.monotonic() + 30, state=True)
+        self.assertEqual(merged, plain[:6] + fresh)
+        self.assertEqual([call.kwargs["max_results"] for call in search.call_args_list], [8, 8])
 
 
 class OrderTests(unittest.TestCase):

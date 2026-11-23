@@ -41,6 +41,8 @@ import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta
 
+# --- TUNABLES ---------------------------------------------------------------
+SEARCH_RESULTS = 8
 SEARCH_URL = "https://api.firecrawl.dev/v2/search"
 DEFAULT_TIMEOUT = 6             # seconds, the single attempt
 QUOTA_COOLDOWN = 3 * 3600       # seconds to skip Firecrawl after "free limit used up"
@@ -161,7 +163,7 @@ def _clean_snippet(text) -> str:
     return t
 
 
-def firecrawl_search(query: str, max_results: int = 5, timeout: float = DEFAULT_TIMEOUT,
+def firecrawl_search(query: str, max_results: int = SEARCH_RESULTS, timeout: float = DEFAULT_TIMEOUT,
                      freshness=None) -> list:
     """Search Firecrawl (keyless) and return [{"title", "body", "href", "date"}]
     in rank order ("date" is "" when unknown). `freshness` ("d"/"w"/"m")
@@ -250,7 +252,7 @@ def keenable_cooling_down() -> bool:
     return time.monotonic() < _keenable_skip_until
 
 
-def keenable_search(query: str, max_results: int = 5, timeout: float = KEENABLE_TIMEOUT,
+def keenable_search(query: str, max_results: int = SEARCH_RESULTS, timeout: float = KEENABLE_TIMEOUT,
                     freshness=None) -> list:
     """Search Keenable (keyless) -> [{"title", "body", "href", "date"}] in rank
     order. `freshness` ("d"/"w"/"m") keeps pages published in the past day /
@@ -634,7 +636,7 @@ def _updated_date(text) -> str:
     return ""
 
 
-def exa_search(query: str, max_results: int = 5, timeout: float = MCP_TIMEOUT,
+def exa_search(query: str, max_results: int = SEARCH_RESULTS, timeout: float = MCP_TIMEOUT,
                freshness=None) -> list:
     """Search Exa (keyless) -> [{"title", "body", "href", "date"}]. Exa's
     answer is text blocks (Title / URL / Published / Highlights) split by

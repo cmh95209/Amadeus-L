@@ -12,10 +12,13 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import meaning
 import webfetch
 import webreader as wr
 
@@ -242,7 +245,7 @@ class ReadPagesTests(unittest.TestCase):
             return "- fact"
         said = []
         start = time.monotonic()
-        out = wr.read_pages("q", "q", self.pages(2), reader, time.monotonic() + 0.6, "d", 1000,
+        out = wr.read_pages("q", "q", self.pages(2), reader, time.monotonic() + 1.2, "d", 1000,
                             parallel=2, progress=lambda s, t: said.append(t))
         self.assertLess(time.monotonic() - start, 1.5)
         self.assertEqual([p["status"] for p in out], ["notes", "late"])
@@ -257,6 +260,219 @@ class ReadPagesTests(unittest.TestCase):
         wr.read_pages("Who is on the Genshin banner?", "Genshin Skirk banner", self.pages(1),
                       reader, time.monotonic() + 5, "d", 1500)
         self.assertIn("Skirk and Escoffier", seen[0])
+
+
+class SearchReaderTests(unittest.TestCase):
+    def test_skips_before_five_tries_and_preserves_original_rank(self):
+        import chat
+
+        urls = ["https://www.facebook.com/first", "https://pinterest.co.uk/card",
+                "https://youtube.com/clip", *(f"https://example.org/page{i}" for i in range(4, 10))]
+        results = [{"url": url, "rank": i} for i, url in enumerate(urls, 1)]
+        source = {}
+        with patch.object(chat, "_turn", SimpleNamespace(state_question=True)), \
+             patch.object(chat.store, "text_context_budget", return_value=4000), \
+             patch.object(wr, "SEARCH_PREVIEWS_ENABLED", False), \
+             patch.object(webfetch, "fetch_page", side_effect=lambda url, **_:
+                          ok_page("A readable source.") if url == urls[7] else {"status": "empty"}) as fetch, \
+             patch.object(chat, "_reader_call", return_value=lambda *_: "- A relevant fact."):
+            out, pages = chat._read_results("A topic", results, source, plan=("reader", 1, None, False))
+        self.assertCountEqual([call.args[0] for call in fetch.call_args_list], urls[3:8])
+        self.assertEqual([p["rank"] for p in pages], [8])
+        self.assertIn("[8]", out)
+        self.assertEqual([p["outcome"] for p in source["outcomes"][:3]], ["skipped"] * 3)
+
+    def test_skip_host_suffix_matching_is_dot_bounded(self):
+        self.assertTrue(webfetch.skip_search_host("https://M.Facebook.COM.:443/post"))
+        self.assertTrue(webfetch.skip_search_host("https://pinterest.co.uk/pin"))
+        self.assertTrue(webfetch.skip_search_host("https://video.youtube.com/watch"))
+        self.assertFalse(webfetch.skip_search_host("https://notfacebook.com/post"))
+        self.assertFalse(webfetch.skip_search_host("https://facebook.com.example.org/post"))
+        self.assertFalse(webfetch.skip_search_host("https://facebook.com@example.org/post"))
+
+    def test_short_search_page_can_produce_notes(self):
+        import chat
+
+        url = "http://93.184.216.34/short"
+        body = "Riverton's observatory offers evening tours. " * 16
+        source = {}
+
+        def reader(msgs, timeout):
+            self.assertIn(body.strip(), msgs[1]["content"])
+            return "- Riverton offers evening tours."
+
+        with patch.object(chat, "web_reading_plan", return_value=("reader", 1, None, False)), \
+             patch.object(chat, "_turn", SimpleNamespace()), \
+             patch.object(chat.store, "text_context_budget", return_value=4000), \
+             patch.object(chat, "_reader_call", return_value=reader), \
+             patch.object(webfetch, "_download", return_value=(None, body, "text/plain", 200, "primary")):
+            text, pages = chat._read_results("Riverton observatory", [{"url": url}], source)
+        self.assertIn("Riverton offers evening tours", text)
+        self.assertEqual((source["mode"], source["used"], pages[0]["status"]), ("reader", [url], "notes"))
+
+    def test_slow_fetch_leaves_time_for_reader(self):
+        import chat
+
+        release = threading.Event()
+        reader_timeouts = []
+        fetch_timeouts = []
+        slow, fast = RESULTS[:2]
+        source = {}
+
+        def fetch(url, timeout, *, min_chars, retry_identity, read_pdf):
+            fetch_timeouts.append(timeout)
+            self.assertEqual(min_chars, webfetch.SEARCH_MIN_PAGE_CHARS)
+            self.assertTrue(retry_identity)
+            self.assertTrue(read_pdf)
+            if url == slow["url"]:
+                release.wait(4)
+            return ok_page("A page about Riverton's evening tours.")
+
+        def reader(msgs, timeout):
+            reader_timeouts.append(timeout)
+            return "- Riverton has evening tours."
+
+        try:
+            with patch.object(chat, "web_reading_plan", return_value=("reader", 1, None, False)), \
+                 patch.object(chat, "_turn", SimpleNamespace()), \
+                 patch.object(chat.store, "text_context_budget", return_value=4000), \
+                 patch.object(chat, "READ_BUDGET_CLOUD", 2.5), \
+                 patch.object(wr, "READER_RESERVE_CLOUD", 1.5), \
+                 patch.object(webfetch, "fetch_page", side_effect=fetch), \
+                 patch.object(chat, "_reader_call", return_value=reader):
+                text, pages = chat._read_results("Riverton tours", [slow, fast], source)
+        finally:
+            release.set()
+        self.assertIn("Riverton has evening tours", text)
+        self.assertEqual([p["url"] for p in pages], [fast["url"]])
+        self.assertEqual(len(fetch_timeouts), 2)
+        self.assertLessEqual(max(fetch_timeouts), 1.0)
+        self.assertEqual(len(reader_timeouts), 1)
+        self.assertGreater(reader_timeouts[0], 1.2)
+
+
+class EmbedOrderTests(unittest.TestCase):
+    RESULTS = [dict(r, rank=i, snippet=f"Snippet {i}") for i, r in enumerate(RESULTS[:3], 1)]
+
+    def read_quick(self):
+        import chat
+
+        source = {}
+        with patch.object(chat, "_turn", SimpleNamespace(question="Raw user question")), \
+             patch.object(chat.store, "text_context_budget", return_value=4000), \
+             patch.object(webfetch, "fetch_page", return_value=ok_page("A readable source.")):
+            chat._read_results("Guarded search query", self.RESULTS, source,
+                               plan=("quick", 1, None, False))
+        return source["read"]
+
+    def test_embed_order_preserves_citations_and_today_preference(self):
+        import chat
+
+        results = [{"href": "https://youtube.com/post", "title": "Skipped", "body": "Skip this"}]
+        results += [{"href": r["url"], "title": r["title"], "body": "Tour schedule"} for r in RESULTS]
+        turn = SimpleNamespace(question="What can I do tonight?", sources=[])
+        requested = []
+
+        def search(query):
+            self.assertEqual(query, "Riverton schedule")
+            turn.state_question = True
+            return chat._format_search_results(results)
+
+        def embed(texts):
+            requested.append(texts)
+            return [(1, 0), (0, 1), (3, 4), (3, 4), (1, 0), (-1, 0)]
+
+        def fetch(url, **_):
+            text = "Tours run Oct 13 - Nov 3." if url == RESULTS[-1]["url"] else "About the observatory."
+            return ok_page(text)
+
+        covers_today = wr.webdates.covers_today
+        with patch.object(chat, "_turn", turn), patch.object(chat, "SEARCH_EMBED_ORDER", True), \
+             patch.object(chat, "web_reading_plan", return_value=("reader", 1, None, False)), \
+             patch.object(chat, "_run_web_search", side_effect=search), \
+             patch.object(chat, "_guard_query", return_value="Riverton schedule"), \
+             patch.object(chat.store, "text_context_budget", return_value=4000), \
+             patch.object(chat, "_reader_call", return_value=lambda *_: "- A relevant fact."), \
+             patch.object(meaning, "_embed_fn", embed), \
+             patch.object(wr, "SEARCH_PREVIEWS_ENABLED", False), \
+             patch.object(wr.webdates, "covers_today", side_effect=lambda text:
+                          covers_today(text, TodayFirstTests.TODAY)), \
+             patch.object(webfetch, "fetch_page", side_effect=fetch):
+            notes = chat._web_search_with_content("Riverton schedule 2022")
+        self.assertEqual(requested, [["Riverton schedule", *(f"R{i}\nTour schedule" for i in range(1, 6))]])
+        self.assertEqual(turn.sources[0]["used"], [RESULTS[i]["url"] for i in (4, 3, 1)])
+        self.assertLess(notes.index("[6] R5"), notes.index("[5] R4"))
+        self.assertLess(notes.index("[5] R4"), notes.index("[3] R2"))
+
+    def test_embed_timeout_or_invalid_vectors_keep_engine_order(self):
+        import chat
+
+        engine_first = self.RESULTS[0]["url"]
+        valid = (1, 0)
+        invalid = (None, [valid], [valid, (1,), valid, valid],
+                   [valid, valid, (float("nan"), 1), valid], [valid, valid, (0, 0), valid])
+        with patch.object(chat, "SEARCH_EMBED_ORDER", True):
+            for vectors in invalid:
+                with self.subTest(vectors=vectors), patch.object(meaning, "_embed_fn", return_value=vectors):
+                    self.assertEqual(self.read_quick(), engine_first)
+
+            started, release = threading.Event(), threading.Event()
+            lock = threading.Lock()
+            clock = SimpleNamespace(now=100.0)
+            waits = []
+
+            class ExpiringFuture(meaning.Future):
+                def result(self, timeout):
+                    if not started.wait(1):
+                        raise AssertionError("Embedder never started")
+                    waits.append(timeout)
+                    clock.now += timeout
+                    raise meaning.FutureTimeout
+
+            def slow_embed(_texts):
+                started.set()
+                release.wait()
+                return [valid, (0, 1), valid, valid]
+
+            with patch.object(meaning, "time", SimpleNamespace(monotonic=lambda: clock.now)), \
+                 patch.object(meaning, "Future", ExpiringFuture), \
+                 patch.object(meaning, "_search_embed_lock", lock), \
+                 patch.object(meaning, "_embed_fn", side_effect=slow_embed) as embed:
+                try:
+                    self.assertEqual(self.read_quick(), engine_first)
+                    self.assertEqual(self.read_quick(), engine_first)
+                    self.assertEqual(waits, [meaning.SEARCH_EMBED_TIMEOUT])
+                    embed.assert_called_once()
+                finally:
+                    release.set()
+                    if lock.acquire(timeout=1):
+                        lock.release()
+
+    def test_old_lookup_without_snippets_keeps_saved_order(self):
+        import chat
+
+        turn = SimpleNamespace(sources=[])
+        results = [dict(r, rank=i) for i, r in enumerate(RESULTS[:3], 1)]
+        lookup = {"id": 1, "query": "Riverton schedule", "results": results, "pages": [results[2]]}
+        with patch.object(chat, "_turn", turn), patch.object(chat, "SEARCH_EMBED_ORDER", True), \
+             patch.object(chat.store, "load_lookup", return_value=lookup), \
+             patch.object(chat, "_lookup_is_fresh", return_value=False), \
+             patch.object(chat, "web_reading_plan", return_value=("quick", 1, None, False)), \
+             patch.object(chat.store, "text_context_budget", return_value=4000), \
+             patch.object(webfetch, "fetch_page", return_value=ok_page("A readable source.")), \
+             patch.object(meaning, "_embed_fn") as embed:
+            out = chat._reread_lookup(lookup["id"])
+        embed.assert_not_called()
+        self.assertIn("result [3]", out)
+        self.assertEqual(turn.sources[0]["read"], results[2]["url"])
+
+    def test_embed_order_off_by_default(self):
+        import chat
+
+        self.assertFalse(chat.SEARCH_EMBED_ORDER)
+        with patch.object(meaning, "_embed_fn") as embed:
+            self.assertEqual(self.read_quick(), self.RESULTS[0]["url"])
+        embed.assert_not_called()
 
 
 class BlocksTests(unittest.TestCase):
@@ -312,10 +528,9 @@ class PageDetailsTests(unittest.TestCase):
             self.assertEqual(d["published"], "")
 
     def test_fetch_page_reports_details(self):
-        from unittest.mock import patch
         body = self.HTML.replace("<body>", "<body><main>" + "<p>Readable text.</p>" * 400 + "</main>")
         with patch.object(webfetch, "is_safe_public_url", return_value=(True, "")), \
-             patch.object(webfetch, "_download", return_value=(None, body, "text/html")):
+             patch.object(webfetch, "_download", return_value=(None, body, "text/html", 200, "primary")):
             page = webfetch.fetch_page("https://x.example/")
             status, text = webfetch.fetch_page_text("https://x.example/", max_chars=3000)
         self.assertEqual(page["status"], "ok")

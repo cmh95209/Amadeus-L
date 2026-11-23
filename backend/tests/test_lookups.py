@@ -126,7 +126,7 @@ class ReuseTests(_Db):
         return out, run, chat.take_turn_sources()
 
     def test_a_search_is_saved_and_a_similar_one_still_searches(self):
-        def read(query, results, source):
+        def read(query, results, source, **_):
             source["mode"], source["used"], source["read"] = "reader", [PAGES[0]["url"]], PAGES[0]["url"]
             return "notes block", [dict(p) for p in PAGES]
         chat._begin_turn_sources(1)

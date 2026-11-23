@@ -18,10 +18,12 @@ sidecar (they inject a fake embedder instead).
 """
 
 import json
+import math
 import os
 import threading
 import time
 import urllib.request
+from concurrent.futures import Future, TimeoutError as FutureTimeout
 
 # =============================================================================
 # TUNABLES
@@ -30,6 +32,7 @@ import urllib.request
 ENABLED = True
 SIDECAR_URL = os.environ.get("CM_SIDECAR_URL", "http://127.0.0.1:9870").rstrip("/")
 TIMEOUT = 1.5              # seconds for one message; slower -> word rules
+SEARCH_EMBED_TIMEOUT = 1.5 # seconds the search reader may wait for ranking
 WARM_TIMEOUT = 30.0        # the one-off example fetch (in the background)
 WARM_RETRY_SECONDS = 60    # sidecar not ready yet -> try again after this
 
@@ -232,6 +235,7 @@ OTHER_MEDIA = [
 # =============================================================================
 
 _lock = threading.Lock()
+_search_embed_lock = threading.Lock()
 _examples = {}          # text -> vector (filled once by _warm)
 _ready = False
 _started = False
@@ -343,6 +347,60 @@ def _vec(text: str):
 
 def _dot(a, b) -> float:
     return float(sum(x * y for x, y in zip(a, b)))
+
+
+def _batch_cosines(vectors, count):
+    if not isinstance(vectors, (list, tuple)) or len(vectors) != count:
+        return None
+    unit = []
+    dimensions = None
+    for vector in vectors:
+        if not isinstance(vector, (list, tuple)) or not vector:
+            return None
+        if dimensions is None:
+            dimensions = len(vector)
+        if len(vector) != dimensions or any(type(x) not in (int, float) or not math.isfinite(x)
+                                           for x in vector):
+            return None
+        norm = math.hypot(*vector)
+        if not norm or not math.isfinite(norm):
+            return None
+        unit.append([x / norm for x in vector])
+    return [_dot(unit[0], vector) for vector in unit[1:]]
+
+
+def batch_similarity(query, candidates, *, timeout=None):
+    """Cosines for one query and its candidates in a single sidecar request."""
+    budget = SEARCH_EMBED_TIMEOUT if timeout is None else min(timeout, SEARCH_EMBED_TIMEOUT)
+    deadline = time.monotonic() + budget
+    texts = [query, *candidates]
+    if (not ENABLED or budget <= 0 or not candidates or any(not text.strip() for text in texts)
+            or not _search_embed_lock.acquire(blocking=False)):
+        return None
+    result = Future()
+
+    def work():
+        scores = None
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                scores = _batch_cosines(_embed(texts, remaining), len(texts))
+        except Exception:
+            pass  # Malformed responses and sidecar failures use engine order.
+        finally:
+            _search_embed_lock.release()
+        result.set_result(scores)
+
+    try:
+        threading.Thread(target=work, daemon=True, name="search-embed").start()
+    except RuntimeError:
+        _search_embed_lock.release()
+        return None
+    try:
+        scores = result.result(timeout=max(0, deadline - time.monotonic()))
+    except FutureTimeout:
+        return None
+    return scores if time.monotonic() < deadline else None
 
 
 def _best(v, group) -> float:

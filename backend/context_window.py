@@ -374,11 +374,13 @@ class PromptHistory:
 class HistoryDraft(list):
     """Stored rows and summary snapshot, before the final request has a cost."""
 
-    def __init__(self, conversation_id, messages, summary):
+    def __init__(self, conversation_id, messages, summary, *, recall_excluded_ids=()):
         super().__init__(messages)
         self.conversation_id = conversation_id
         self.summary = summary
         self.last_history = None
+        self.recall_excluded_ids = frozenset(recall_excluded_ids)
+        self.reply_recall = None
 
 
 class PromptTooLarge(Exception):
@@ -406,7 +408,9 @@ def _without_optional(message):
         return reduced
     bases = message.get("_window_bases")
     if bases and isinstance(message["content"], str) and message["content"].startswith(bases[0]):
-        return {**message, "content": bases[1] + message["content"][len(bases[0]):]}
+        reduced = {**message, "content": bases[1] + message["content"][len(bases[0]):]}
+        reduced.pop("_window_recall", None)
+        return reduced
     return message
 
 
@@ -430,6 +434,31 @@ def _shorten_results(messages, excess, encoding):
                        "_window_result": False}
         shortened.append(message)
     return shortened
+
+
+def _add_recall(wire, selected, ids, ceiling, schema, encoding):
+    for index, message in enumerate(selected):
+        slot = message.get("_window_recall")
+        if slot is None:
+            continue
+        offset, render = slot
+        target = wire[index]
+        before, after = target["content"][:offset], target["content"][offset:]
+        available = ceiling - REQUEST_FRAMING - sum(
+            message_cost(m, encoding) for i, m in enumerate(wire) if i != index)
+        if schema:
+            available -= count_text(json.dumps(schema, ensure_ascii=False), encoding) + MESSAGE_FRAMING
+
+        def with_recall(text):
+            return {**target, "content": before + "\n\n" + text + after}
+
+        def fits(text):
+            return message_cost(with_recall(text), encoding) <= available
+
+        block = render(ids, wire, fits=fits)
+        if block:
+            wire[index] = with_recall(block["content"])
+        return
 
 
 def plan_history(messages, owner, ceiling, *, schema=None, encoding=None):
@@ -511,6 +540,7 @@ def plan_history(messages, owner, ceiling, *, schema=None, encoding=None):
             first_user["content"] = parts + moved
     if summary:
         wire[0]["content"] += "\n\n" + summary
+    _add_recall(wire, selected, ids, ceiling, schema, encoding)
     return PromptHistory(owner.conversation_id, wire, ids)
 
 

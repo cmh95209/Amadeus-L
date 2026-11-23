@@ -69,6 +69,11 @@ _threading.Thread(target=_clean_unsent_attachments, daemon=True, name="attachmen
 import meaning as _meaning
 _meaning.start()
 
+import cross_tab as _cross_tab
+import memory as _store
+import transcript_vector_index as _transcript_vectors
+_transcript_vectors.start(_store.PATH_TO_MEMORY, _store.DATA_DIR, _cross_tab.search_on)
+
 # Her built-in model (option A): loads in the background, unless the
 # launcher said "start without it". Settings can unload / load / switch it.
 import builtin_server as _builtin_server

@@ -2787,14 +2787,40 @@ def _optional_context(block):
 
 
 def _prompt_block(blocks, prefix=""):
+    recall = None
+    for index, block in enumerate(blocks):
+        if "_window_recall" in block:
+            before = prefix + "\n\n".join(m.get("content", "") for m in blocks[:index])
+            recall = (len(before), block["_window_recall"])
+            blocks = blocks[:index] + blocks[index + 1:]
+            break
     full = prefix + "\n\n".join(m.get("content", "") for m in blocks)
     required = prefix + "\n\n".join(
         m.get("_window_required_content", m.get("content", "")) for m in blocks
         if not m.get("_window_optional"))
     block = {"role": "system", "content": full}
+    if recall is not None:
+        block["_window_recall"] = recall
     if full != required:
         block["_window_bases"] = (full, required)
     return block
+
+
+def _reply_recall(context, last_user, conversation_id, memory_block):
+    """The shared search slot for packed, voice-first and regenerated replies."""
+    query = _content_text(last_user)
+    if not isinstance(context, context_window.HistoryDraft):
+        prior = list(context) + ([memory_block] if memory_block else [])
+        return cross_tab.search_block(query, conversation_id, prompt_messages=prior)
+    if context.reply_recall is None:
+        answering_id = next((m["_window_ids"][-1] for m in reversed(context)
+                             if m["role"] == "user" and m.get("_window_ids")), None)
+        context.reply_recall = cross_tab.prepare_search(
+            query, conversation_id, excluded_ids=context.recall_excluded_ids,
+            answering_id=answering_id)
+    if context.reply_recall:
+        return {"role": "system", "content": "", "_window_recall": context.reply_recall.block}
+    return None
 
 
 def _right_now_note() -> bool:
@@ -5360,9 +5386,7 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
     # The chat is read ONCE for every picture step of this reply, so a tab
     # switch while she answers can never mix two chats' pictures.
     picture_index = attachments.picture_index_message(picture_conv)
-    # Cross-tab search (cross_tab.py): other tabs' lines matching what the
-    # user just wrote - this reply only, so it rides in the changing part.
-    found = cross_tab.search_block(_content_text(last_user), picture_conv)
+    found = _reply_recall(message_context, last_user, picture_conv, memory_block)
 
     messages = _ordered_prompt(
         pack_rules,
@@ -5562,7 +5586,7 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
     except Exception:
         memory_block = None
     picture_index = attachments.picture_index_message(picture_conv)
-    found = cross_tab.search_block(_content_text(last_user), picture_conv)   # cross_tab.py
+    found = _reply_recall(message_context, last_user, picture_conv, memory_block)
 
     messages = _ordered_prompt(
         _lang_rules(_PLAIN_RULES_JA) if plain else _PACK_RULES_JA_ONLY,

@@ -271,13 +271,22 @@ _queue_truncated = False
 _embed_clock = threading.local()
 
 
+EMBED_MODEL = "Qwen/Qwen3-Embedding-0.6B"
+EMBED_FORMAT = 1  # Bump when the encoding or wire representation changes.
+
+
 class STEmbedder(EmbeddingProvider):
     """In-process CPU embedder. NAME+MODULE MATTER: persisted lore indexes
     were built by __main__.STEmbedder (fingerprint-verified) so seeded
     indexes load without rebuild. Do not rename (module-level definition is
     part of the fingerprint)."""
-    def __init__(self, model):
+    def __init__(self, model, bits):
         self._model = model
+        config = getattr(getattr(model[0], "auto_model", None), "config", None)
+        revision = getattr(config, "_commit_hash", None) or "default"
+        self.wire_fingerprint = (
+            f"{EMBED_MODEL}:{revision}:{bits}:{self.dim}:{model.max_seq_length}:{EMBED_FORMAT}"
+        )
     @property
     def dim(self):
         return self._model.get_embedding_dimension()
@@ -641,7 +650,7 @@ def _build_engine():
             from sentence_transformers import SentenceTransformer
             bits = _embedder_bits()
             model = SentenceTransformer(
-                "Qwen/Qwen3-Embedding-0.6B", device="cpu",
+                EMBED_MODEL, device="cpu",
                 model_kwargs={"torch_dtype": torch.float32 if bits == 32 else torch.float16,
                               "low_cpu_mem_usage": True})
             log(f"embedder loaded in {time.time()-t0:.1f}s (CPU {bits}-bit, "
@@ -659,7 +668,7 @@ def _build_engine():
 
             _seed_index()
             store = SQLiteStore(os.path.join(DATA_DIR, "memory.db"))
-            _emb = STEmbedder(model)
+            _emb = STEmbedder(model, bits)
             memories = [
                 CharacterInfoMemory(HybridSearch(_emb)),        # lore (RAG, no extraction)
                 UserFactMemory(store, HybridSearch(_emb)),
@@ -974,7 +983,8 @@ def embed_endpoint(req: EmbedIn):
     except Exception as e:
         log(f"embed failed: {e!r}")
         return {"ok": False, "note": "embed failed"}
-    return {"ok": True, "vectors": [[round(float(x), 5) for x in v] for v in vecs]}
+    return {"ok": True, "embedding_fingerprint": _emb.wire_fingerprint,
+            "vectors": [[round(float(x), 5) for x in v] for v in vecs]}
 
 
 @app.get("/memories")

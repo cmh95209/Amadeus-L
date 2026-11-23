@@ -250,7 +250,7 @@ def _all_examples() -> list:
     return list(dict.fromkeys(out))
 
 
-def _http_embed(texts, timeout):
+def _http_embed(texts, timeout, *, with_fingerprint=False):
     req = urllib.request.Request(
         SIDECAR_URL + "/embed", data=json.dumps({"texts": list(texts)}).encode("utf-8"),
         headers={"Content-Type": "application/json"}, method="POST")
@@ -258,14 +258,18 @@ def _http_embed(texts, timeout):
         data = json.loads(resp.read().decode("utf-8"))
     if not data.get("ok"):
         return None
-    return data.get("vectors")
+    vectors = data.get("vectors")
+    return (data.get("embedding_fingerprint"), vectors) if with_fingerprint else vectors
 
 
-def _embed(texts, timeout):
+def _embed(texts, timeout, *, with_fingerprint=False):
     """Vectors for texts, or None (any failure)."""
     try:
         if _embed_fn is not None:
-            return [list(v) for v in _embed_fn(list(texts))]
+            vectors = [list(v) for v in _embed_fn(list(texts))]
+            return ("test-embedder", vectors) if with_fingerprint else vectors
+        if with_fingerprint:
+            return _http_embed(texts, timeout, with_fingerprint=True)
         return _http_embed(texts, timeout)
     except Exception:
         return None

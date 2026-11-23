@@ -1,4 +1,4 @@
-"""Cross-tab memory (2026-11-12): what she knows about the user's OTHER chat tabs.
+"""Other-tab catch-up and transcript recall across all chats.
 
 Two independent features, each with its own switch in Settings -> Preferences
 (both ON by default; data/cross_tab.json):
@@ -10,13 +10,10 @@ Two independent features, each with its own switch in Settings -> Preferences
    It changes only when another tab changes (dates, not "2 hours ago"), so it
    sits with her fixed blocks and keeps the prompt-cache discount.
 
-2. SEARCH ("Search old chats") - search_block(query):
-   a plain-text search of every other tab for what the user just wrote, no
-   model call. Language-agnostic: words for scripts that use spaces, 2-letter
-   pieces for scripts that don't (Chinese, Japanese, Thai, ...), and words
-   that are too common in the user's own history weigh nothing (stop words
-   in any language, no word lists). The best few matches, each with its tab
-   name and date, go in her "right now" note for this reply only.
+2. SEARCH ("Search old chats") - ReplySearch:
+   language-agnostic keyword and semantic ranking across all chats. Messages
+   already in the reply's history are masked. A few dated excerpts go in
+   her "right now" note for this reply only.
 
 Plus LEARN ON LEAVE (always on): when the user leaves a tab with enough new
 messages, the memory service learns from it at once instead of waiting for
@@ -37,6 +34,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 import memory as store
+import transcript_vector_index as vectors
 
 # ============================== TUNABLES =====================================
 # Token budgets per brain: (catch-up, search). Cloud prompts are cached, so the
@@ -62,8 +60,9 @@ SEARCH_UNIQUE_HITS = 2         # a rare NAME this unique is a match on its own
 SEARCH_TAIL_SHARE = 0.5        # other matches need at least this share of the best one's score
 SEARCH_COMMON_SHARE = 0.08     # a term in more than this share of exchanges = stop word ...
 SEARCH_COMMON_MIN = 12         # ... and in more than this many (small histories)
-SEARCH_MAX_ROWS = 50000        # newest messages scanned at most
 SEARCH_MAX_TERMS = 40          # query terms used at most
+SEARCH_RANK_OFFSET = 5         # reciprocal-rank fusion balances keyword and semantic hits
+SEARCH_RENDER_POOL = 128       # candidates rechecked against the transcript before rendering
 STEM_FROM = 5                  # words this long also match their other forms ...
 STEM_MIN = 4                   # ... by their first letters: at least this many,
 STEM_CUT = 2                   # ... the word minus this many end letters
@@ -84,10 +83,9 @@ CATCH_UP_LABEL = (
     "it fits, and never mix them up with this chat; their files are not in front "
     "of you - describe only what is written here):\n")
 SEARCH_LABEL = (
-    "FROM YOUR OTHER CHATS (found by searching your other chat tabs for what "
-    "the user just wrote - it may or may not be what they mean; use it only if "
-    "it fits, and say which chat it was if you mention it; their files are not in "
-    "front of you - describe only what is written here):\n")
+    "FROM CHAT HISTORY (excerpts related to what the user just wrote. Use them "
+    "only if they fit. If you mention an excerpt from another chat, say which "
+    "chat it came from. Describe only what is written here):\n")
 # =============================================================================
 
 SETTINGS_FILE = "cross_tab.json"
@@ -368,18 +366,12 @@ def _matcher(term: str):
     return lambda text: term in text and pattern.search(text) is not None
 
 
-def _candidates(current: int) -> List[dict]:
-    if not _have_chats():
+def _candidates(ids=None) -> List[dict]:
+    if (ids is not None and not ids) or not _have_chats():
         return []
     conn = store._connect_db()
     try:
-        return _dicts(conn.cursor(),
-            "SELECT m.id, m.conversation_id, m.role, m.content, m.japanese, m.created_at, "
-            "       c.title FROM messages m JOIN conversations c ON c.id = m.conversation_id "
-            "WHERE m.conversation_id != ? AND COALESCE(m.active, 1) = 1 "
-            "AND COALESCE(m.aside, 0) = 0 AND COALESCE(m.greeting, 0) = 0 "
-            "AND m.role IN ('user', 'assistant') "
-            "ORDER BY m.id DESC LIMIT ?", (int(current), SEARCH_MAX_ROWS))
+        return vectors.source_rows(conn, ids)
     finally:
         conn.close()
 
@@ -398,26 +390,16 @@ def _exchanges(rows: List[dict]) -> List[dict]:
         for r in tab_rows:
             if r["role"] == "user" or unit is None or unit["her"] is not None:
                 unit = {"user": r if r["role"] == "user" else None,
-                        "her": r if r["role"] == "assistant" else None, "first": r}
+                        "her": r if r["role"] == "assistant" else None}
                 units.append(unit)
             else:
                 unit["her"] = r
-    for u in units:
-        parts = [(x["content"] or "") + "\n" + (x["japanese"] or "")
-                 for x in (u["user"], u["her"]) if x]
-        u["text"] = _normal("\n".join(parts))
     return units
 
 
-def search(query: str, conversation_id=None, limit: int = SEARCH_RESULTS) -> List[dict]:
-    """The best matching exchanges in other tabs: [{conversation_id, title,
-    created_at, id, score, user, her}] - best first."""
+def _keyword_ranks(query, units):
     terms = query_terms(query)
-    if not terms:
-        return []
-    current = store.load_active_conversation() if conversation_id is None else int(conversation_id)
-    units = _exchanges(_candidates(current))
-    if not units:
+    if not terms or not units:
         return []
     n = len(units)
     tests = {t: _matcher(t) for t in terms}
@@ -456,54 +438,174 @@ def search(query: str, conversation_id=None, limit: int = SEARCH_RESULTS) -> Lis
     best = max(score[i] for i in good)
     ranked = sorted((i for i in good if score[i] >= SEARCH_TAIL_SHARE * best),
                     key=lambda i: (score[i], units[i]["first"]["id"]), reverse=True)
-    total = sum(weights.values())
-    out = []
-    for i in ranked[:limit]:
-        u = units[i]
-        first = u["first"]
-        out.append({"conversation_id": first["conversation_id"], "title": first["title"],
-                    "created_at": first["created_at"], "id": first["id"],
-                    "score": round(score[i] / total, 3),
-                    "user": (u["user"] or {}).get("content") or "",
-                    "her": _her_line(u["her"]) if u["her"] else ""})
-    return out
+    return ranked
 
 
-def search_block(query, conversation_id=None, budget: Optional[int] = None) -> Optional[dict]:
-    """The search results as one system message for her "right now" note, or
-    None (switch off, nothing good enough, or any error)."""
-    try:
-        if not search_on() or not isinstance(query, str) or not query.strip():
-            return None
-        budget = budgets()[1] if budget is None else budget
-        found = search(query, conversation_id)
-        if not found:
-            return None
-        parts, used = [], _tokens(SEARCH_LABEL)
-        for f in found:
-            # Too long for what is left of the budget: the same match, cut
-            # shorter (a small budget - her built-in model - still gets the
-            # best match rather than nothing).
-            for chars in (SEARCH_EXCERPT_CHARS, SEARCH_EXCERPT_CHARS // 2, SEARCH_EXCERPT_CHARS // 4):
-                bits = []
-                if f["user"].strip():
-                    bits.append(f'User: "{_clip(f["user"], chars)}"')
-                if f["her"].strip():
-                    bits.append(f'You: "{_clip(f["her"], chars)}"')
-                line = f'- In "{_clip(str(f["title"] or "New chat"), 60)}" ({_day(f["created_at"])}): ' + " / ".join(bits)
-                cost = _tokens(line) + 1
-                if used + cost <= budget:
+def _quote_key(text):
+    return " ".join(_RUN.findall(_normal(text)))
+
+
+def _prompt_texts(messages):
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            yield content
+        elif isinstance(content, list):
+            yield from (p["text"] for p in content
+                        if isinstance(p, dict) and isinstance(p.get("text"), str))
+
+
+class ReplySearch:
+    """A reply's transcript snapshot and one semantic query, shared by retries."""
+
+    def __init__(self, query, conversation_id, *, excluded_ids=(), answering_id=None):
+        self.query = query
+        self.current = conversation_id
+        self.excluded = set(excluded_ids)
+        self.answering_id = answering_id
+        self.exchanges = None
+        self.semantic = None
+        self.ranks = {}
+
+    def _rank(self, verbatim_message_ids):
+        visible = frozenset(verbatim_message_ids)
+        if visible in self.ranks:
+            return self.ranks[visible]
+        masked = self.excluded | visible
+        if self.exchanges is None:
+            rows = _candidates()
+            if self.answering_id is not None:
+                self.excluded.update(r["id"] for r in rows
+                                     if r["conversation_id"] == self.current
+                                     and r["id"] >= self.answering_id)
+                masked = self.excluded | visible
+            self.semantic = vectors.begin_query(self.query, masked, store.PATH_TO_MEMORY)
+            self.exchanges = _exchanges(rows)
+
+        units = []
+        for exchange in self.exchanges:
+            # Mask only after pairing; otherwise a surviving reply can take
+            # the place of a different user's answer.
+            rows = [r for r in (exchange["user"], exchange["her"]) if r and r["id"] not in masked]
+            if rows:
+                text = "\n".join((r["content"] or "") + "\n" + (r["japanese"] or "") for r in rows)
+                units.append({"first": rows[0], "rows": rows, "text": _normal(text)})
+        keyword = _keyword_ranks(self.query, units)
+        matches = self.semantic.hits(masked) if self.semantic else {}
+
+        semantic = {}
+        if matches:
+            for i, unit in enumerate(units):
+                for row in unit["rows"]:
+                    hit = matches.get(row["id"])
+                    if hit and hit[0] == vectors.content_hash(row):
+                        semantic[i] = max(semantic.get(i, 0.0), hit[1])
+        semantic_rank = sorted(semantic, key=lambda i: (semantic[i], units[i]["first"]["id"]), reverse=True)
+        fused = {}
+        for ranking in (keyword, semantic_rank):
+            for rank, i in enumerate(ranking, start=1):
+                fused[i] = fused.get(i, 0) + 1 / (SEARCH_RANK_OFFSET + rank)
+        order = sorted(fused, key=lambda i: (fused[i], units[i]["first"]["id"]), reverse=True)
+        ranked = [(units[i]["rows"], fused[i]) for i in order[:SEARCH_RENDER_POOL]]
+        self.ranks[visible] = ranked
+        return ranked
+
+    def _fresh(self, verbatim_message_ids):
+        ranked = self._rank(verbatim_message_ids)
+        ids = [row["id"] for rows, _ in ranked for row in rows]
+        fresh = {row["id"]: row for row in _candidates(ids)}
+        for rows, score in ranked:
+            checked = [fresh.get(row["id"]) for row in rows]
+            if all(current is not None and current["content"] == old["content"]
+                   and current["japanese"] == old["japanese"] and current["role"] == old["role"]
+                   and current["conversation_id"] == old["conversation_id"]
+                   for current, old in zip(checked, rows)):
+                yield checked, score
+
+    def block(self, verbatim_message_ids=(), prompt_messages=(), *, budget=None, fits=None):
+        """Render fresh, nonredundant evidence within the shared excerpt cap."""
+        try:
+            budget = budgets()[1] if budget is None else budget
+            fits = fits or (lambda _text: True)
+            if not fits(SEARCH_LABEL) or _tokens(SEARCH_LABEL) >= budget:
+                return None
+            prompt = [" " + _quote_key(text) + " " for text in _prompt_texts(prompt_messages)]
+            seen, lines = set(), []
+
+            def duplicate(key):
+                return not key or key in seen or any(f" {key} " in existing for existing in prompt)
+
+            for rows, _ in self._fresh(verbatim_message_ids):
+                first = rows[0]
+                quotes = []
+                for row in rows:
+                    text = _her_line(row)
+                    key = _quote_key(text)
+                    catch_up_keys = [_quote_key(_clip(text, chars)) for chars in (LAST_LINE_CHARS, SHORT_CHARS)]
+                    if duplicate(key) or any(duplicate(clip) for clip in catch_up_keys if clip):
+                        continue
+                    who = "User" if row["role"] == "user" else "You"
+                    quotes.append((who, text, key))
+                if not quotes:
+                    continue
+                location = ("earlier in this chat" if first["conversation_id"] == self.current
+                            else f'In "{_clip(str(first["title"] or "New chat"), 60)}"')
+                head = f'- {location} ({_day(first["created_at"])}): '
+                for chars in (SEARCH_EXCERPT_CHARS, SEARCH_EXCERPT_CHARS // 2, SEARCH_EXCERPT_CHARS // 4):
+                    bits, keys = [], set()
+                    for who, text, key in quotes:
+                        clipped = _clip(text, chars)
+                        clipped_key = _quote_key(clipped)
+                        if key not in keys and clipped_key not in keys and not duplicate(clipped_key):
+                            bits.append(f'{who}: "{clipped}"')
+                            keys.update((key, clipped_key))
+                    if not bits:
+                        continue
+                    line = head + " / ".join(bits)
+                    rendered = SEARCH_LABEL + "\n".join([*lines, line])
+                    if _tokens(rendered) <= budget and fits(rendered):
+                        lines.append(line)
+                        seen.update(keys)
+                        prompt.append(" " + _quote_key(line) + " ")
+                        break
+                if len(lines) == SEARCH_RESULTS:
                     break
-            if used + cost > budget:
-                break
-            parts.append(line)
-            used += cost
-        if not parts:
+            return {"role": "system", "content": SEARCH_LABEL + "\n".join(lines)} if lines else None
+        except Exception as exc:
+            print(f"[Amadeus] transcript recall skipped: {type(exc).__name__}")
             return None
-        return {"role": "system", "content": SEARCH_LABEL + "\n".join(parts)}
-    except Exception as exc:
-        print(f"[Amadeus] cross-tab search skipped: {exc!r}")
-        return None
+
+
+def prepare_search(query, conversation_id, **kwargs):
+    if isinstance(query, str) and query.strip() and search_on():
+        current = store.load_active_conversation() if conversation_id is None else int(conversation_id)
+        return ReplySearch(query, current, **kwargs)
+    return None
+
+
+def search(query, conversation_id=None, limit=SEARCH_RESULTS, *, verbatim_message_ids=(), excluded_ids=()):
+    """Rank exchanges across chats, with already-visible rows masked."""
+    if not isinstance(query, str) or not query.strip() or limit <= 0:
+        return []
+    current = store.load_active_conversation() if conversation_id is None else int(conversation_id)
+    reply = ReplySearch(query, current, excluded_ids=excluded_ids)
+    found = []
+    for rows, score in reply._fresh(verbatim_message_ids):
+        first = rows[0]
+        quotes = {row["role"]: _her_line(row) for row in rows}
+        found.append({"conversation_id": first["conversation_id"], "title": first["title"],
+                      "created_at": first["created_at"], "id": first["id"], "score": score,
+                      "user": quotes.get("user", ""), "her": quotes.get("assistant", "")})
+        if len(found) >= limit:
+            break
+    return found
+
+
+def search_block(query, conversation_id=None, budget=None, *, verbatim_message_ids=(),
+                 excluded_ids=(), prompt_messages=()):
+    """Standalone search, including callers with a preassembled prompt."""
+    reply = prepare_search(query, conversation_id, excluded_ids=excluded_ids)
+    return reply.block(verbatim_message_ids, prompt_messages, budget=budget) if reply else None
 
 
 # --------------------------------------------------------- learn on leave --

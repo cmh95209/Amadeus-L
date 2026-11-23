@@ -67,6 +67,8 @@ Amadeus-Project/
 │   ├── chat.py                # conversation pipeline (voice-first)
 │   ├── memory.py              # SQLite conversation history and rolling summaries
 │   ├── context_window.py      # Provider limits, prompt accounting, and history selection
+│   ├── cross_tab.py           # Other-tab catch-up and transcript recall across chats
+│   ├── transcript_vector_index.py # Disposable SQLite transcript embeddings and lookup worker
 │   ├── llm.py                 # LLM clients for built-in, local, and cloud models
 │   ├── builtin_llm.py         # Built-in model tier and its separate prompt cap
 │   ├── builtin_server.py      # Built-in runner and its launched context window
@@ -163,6 +165,25 @@ summary of the omitted prefix, using a history revision and the latest
 requested cutoff when publishing. A larger cap restores fitting exchanges
 on the next call. The reply pack exposes the successful call's stored IDs
 as `verbatim_message_ids`.
+
+**Search old chats** uses those IDs to search earlier messages in the current
+chat and messages in other chats. It also excludes discarded answer versions
+during Regenerate. Keyword and semantic ranks share a cap of three dated
+excerpts and 300–600 estimated tokens, depending on the model. Excerpts fill
+available prompt space in the per-reply note, or the changing section of a
+custom local server's system message. The stable instructions and selected
+verbatim history are the same with or without a hit. The separate catch-up
+setting still covers other tabs.
+
+`transcript_vector_index.py` uses the memory sidecar's existing multilingual
+`/embed` endpoint. One backend worker reconciles active transcript rows and
+fills the newest missing vectors first. The latest 50,000 eligible rows are
+searchable. A separate, disposable `transcript_vectors.sqlite3` in the backend
+runtime data directory stores hashes and vectors. Changes to text, active
+versions, or deletions invalidate the affected entries. Schema and embedding
+configuration changes rebuild the cache. Search rechecks the transcript
+before including any quote. Semantic recall has a 250 ms wait budget per
+reply and falls back to keyword results when vectors are unavailable.
 
 The custom cap defaults to 16,384 tokens. A legacy custom value of 40,000
 selects automatic mode, and other custom values are carried over as total

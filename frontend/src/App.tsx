@@ -4369,9 +4369,7 @@ export default function App() {
                   <div className="settings-toggle-text">
                     <span className="settings-toggle-title">Search old chats</span>
                     <span className="settings-toggle-desc">
-                      Each time you write, she looks through all your other chats
-                      for the same topic and remembers the best matches. Works in
-                      any language; no extra cost.
+                      Searches earlier messages in this chat and other chats for related topics as you write.
                     </span>
                   </div>
                   <button

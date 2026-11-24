@@ -27,6 +27,7 @@ _thumb.jpg (thumb), _card.jpg, _f01.jpg..., _cloud.mp4, _video.json (state,
 frames, speech), _original<ext> (until prepared).
 """
 import base64
+import io
 import json
 import math
 import os
@@ -64,6 +65,14 @@ CARD_SIDE = 768
 WATCH_SHORT_SIDE = 720
 CLOUD_SHORT_SIDE = 480
 CLOUD_MAX_BYTES = 18 * 1024 * 1024     # Phase 0: 22 MB went through, 25 MB was refused
+ANIMATION_FPS = 50
+ANIMATION_STILLS_PER_SECOND = 4
+ANIMATION_CLOUD_FPS = 12
+ANIMATION_MAX_FRAMES = 600
+ANIMATION_PIXEL_BUDGET = 80_000_000
+ANIMATION_DECODE_SIDE = 1440
+ANIMATION_DEFAULT_DELAY_MS = 100
+ANIMATION_MIN_DELAY_MS = 20            # FFmpeg's GIF demuxer default
 UPLOADS = "_uploads"
 
 READY, PREPARING, FAILED = "ready", "preparing", "failed"
@@ -199,11 +208,16 @@ def _scale_long(side: int) -> str:
 
 def encode(src: str, dest: str, short_side: int, duration: float, has_audio: bool,
            avg_kbps: int, max_kbps: int, crf: int, fps=None, mono: bool = False,
-           on_pct=None) -> str:
+           on_pct=None, animation=False) -> str:
     """One H.264 MP4 copy; returns the encoder that made it. A failure on
     the card is tried once more on the processor."""
     def build(enc):
-        args = ["-i", src, "-map", "0:v:0", "-vf", _scale_short(short_side)]
+        scale = _scale_short(short_side)
+        if animation:
+            scale += f",fps={ANIMATION_FPS},tpad=stop_mode=clone:stop=-1"
+        args = ["-i", src, "-map", "0:v:0", "-vf", scale]
+        if animation:
+            args += ["-t", f"{duration:.3f}"]
         if fps:
             args += ["-r", str(fps)]
         args += _video_args(enc, avg_kbps, max_kbps, crf)
@@ -273,10 +287,11 @@ def probe(path: str) -> dict:
             "codec": str(video.get("codec_name") or "")}
 
 
-def frame_times(duration: float) -> list:
+def frame_times(duration: float, animation=False) -> list:
     """When the frames are taken: the middle of FRAME_COUNT equal stretches
-    (a clip under 16 s: one per second)."""
-    n = FRAME_COUNT if duration >= FRAME_COUNT else max(1, math.ceil(duration))
+    (short clips use per-second sampling, with denser sampling for loops)."""
+    rate = ANIMATION_STILLS_PER_SECOND if animation else 1
+    n = min(FRAME_COUNT, max(1, math.ceil(duration * rate)))
     return [round((i + 0.5) * duration / n, 2) for i in range(n)]
 
 
@@ -287,9 +302,9 @@ def length_text(seconds) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
-def estimate_tokens(duration: float, has_audio: bool, speech=None) -> int:
+def estimate_tokens(duration: float, has_audio: bool, speech=None, animation=False) -> int:
     """Her prompt room for this video: its frames + the written speech."""
-    frames = len(frame_times(duration)) * FRAME_TOKENS
+    frames = len(frame_times(duration, animation)) * FRAME_TOKENS
     if speech is not None:
         return frames + store.estimate_tokens(speech)
     return frames + (int(SPEECH_TOKENS_PER_MIN * duration / 60) if has_audio else 0)
@@ -476,6 +491,105 @@ def finish_upload(upload_id) -> dict:
     return row
 
 
+def _animation_delay(value):
+    return value if value >= ANIMATION_MIN_DELAY_MS else ANIMATION_DEFAULT_DELAY_MS
+
+
+def inspect_animation(data):
+    """Return video properties for a multi-frame GIF/WebP. Static files stay pictures."""
+    if len(data) > attachments.MAX_FILE_BYTES:
+        raise attachments.AttachmentError("too_big")
+    if Image is None:
+        raise attachments.AttachmentError("no_pillow")
+    try:
+        with Image.open(io.BytesIO(data), formats=("GIF", "WEBP")) as img:
+            width, height = img.size
+            if width * height > attachments.MAX_PIXELS:
+                raise attachments.AttachmentError("too_many_pixels")
+            try:
+                img.seek(1)
+            except EOFError:
+                return None
+            duration = 0
+            for index in range(ANIMATION_MAX_FRAMES + 1):
+                try:
+                    img.seek(index)
+                except EOFError:
+                    break
+                if index >= ANIMATION_MAX_FRAMES or width * height * (index + 1) > ANIMATION_PIXEL_BUDGET:
+                    raise attachments.AttachmentError("too_many_pixels")
+                img.load()
+                duration += _animation_delay(img.info.get("duration") or 0)
+            if duration > MAX_SECONDS * 1000:
+                raise attachments.AttachmentError("video_too_long")
+            return {"duration": duration / 1000, "width": width, "height": height,
+                    "has_audio": False, "codec": img.format.lower(), "gif": True}
+    except attachments.AttachmentError:
+        raise
+    except (OSError, ValueError, SyntaxError, EOFError, Image.DecompressionBombError):
+        raise attachments.AttachmentError("broken") from None
+
+
+def save_animation(name, data, conv, found, *, media_type, title=None, pack_name=None):
+    if not tools_ready():
+        raise attachments.AttachmentError("no_ffmpeg")
+    prepared = attachments.prepare_picture(name, data)
+    title = title or os.path.splitext(prepared["name"])[0] or prepared["name"]
+    conn = store._connect_db()
+    files = []
+    try:
+        c = conn.cursor()
+        store._ensure_attachments_table(c)
+        c.execute("INSERT INTO attachments (conversation_id, kind, name, mime, bytes, width, "
+                  "height, tokens, created_at, media_type, media_pack) "
+                  "VALUES (?, 'video', ?, 'video/mp4', ?, ?, ?, ?, ?, ?, ?)",
+                  (conv, title, len(data), found["width"], found["height"],
+                   estimate_tokens(found["duration"], False, animation=True),
+                   datetime.now().strftime("%Y-%m-%d %H:%M:%S"), media_type, pack_name))
+        new_id = c.lastrowid
+        base = f"{conv}/{new_id}_"
+        original, thumb = base + "original." + found["codec"], base + "thumb.jpg"
+        files = [original, thumb, base + "card.jpg", base + "video.json", base + "video.json.tmp"]
+        os.makedirs(_full(str(conv)), exist_ok=True)
+        Path(_full(original)).write_bytes(data)
+        Path(_full(thumb)).write_bytes(prepared["thumb"])
+        with Image.open(io.BytesIO(prepared["bytes"])) as card:
+            card.thumbnail((CARD_SIDE, CARD_SIDE), Image.Resampling.LANCZOS)
+            card.convert("RGB").save(_full(base + "card.jpg"), "JPEG")
+        c.execute("UPDATE attachments SET original = ?, thumb = ? WHERE id = ?",
+                  (original, thumb, new_id))
+        _save_meta({"id": new_id, "conversation_id": conv, "thumb": thumb},
+                   {"state": PREPARING, "step": "watch", "pct": 0, "message": "",
+                    **found, "frames": [], "watch": None, "cloud": None,
+                    "speech": {"state": "none"}})
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        store.remove_attachment_files(files)
+        raise
+    finally:
+        conn.close()
+    row = attachments.get(new_id)
+    start(row)
+    return row
+
+
+def _webp_to_apng(source, dest):
+    """Decode with Pillow so FFmpeg can read the frames and their individual delays."""
+    frames, delays = [], []
+    with Image.open(source) as img:
+        for index in range(img.n_frames):
+            img.seek(index)
+            frame = img.convert("RGBA")
+            delays.append(_animation_delay(img.info.get("duration") or 0))
+            frame.thumbnail((ANIMATION_DECODE_SIDE, ANIMATION_DECODE_SIDE), Image.Resampling.LANCZOS)
+            rgb = Image.new("RGB", frame.size, "white")
+            rgb.paste(frame, mask=frame.getchannel("A"))
+            frames.append(rgb)
+    frames[0].save(dest, format="PNG", save_all=True, append_images=frames[1:],
+                   duration=delays, loop=1)
+
+
 def drop(row) -> None:
     """Delete a video's row and every file it has (an upload that failed)."""
     conn = store._connect_db()
@@ -601,9 +715,17 @@ def prepare_job(attachment_id) -> None:
             if not src or not os.path.isfile(src):
                 raise RuntimeError("the uploaded video is missing")
             started = time.monotonic()
-            meta["encoder"] = encode(src, _full(base + "watch.mp4"), WATCH_SHORT_SIDE, duration,
-                                     has_audio, 1000, 2000, 26,
-                                     on_pct=lambda p: step("watch", p))
+            decoded = _full(base + "decoded.png") if meta.get("gif") and meta.get("codec") == "webp" else None
+            try:
+                if decoded:
+                    _webp_to_apng(src, decoded)
+                options = {"animation": True} if meta.get("gif") else {}
+                meta["encoder"] = encode(decoded or src, _full(base + "watch.mp4"), WATCH_SHORT_SIDE,
+                                         duration, has_audio, 1000, 2000, 26,
+                                         on_pct=lambda p: step("watch", p), **options)
+            finally:
+                if decoded:
+                    store.remove_attachment_files([base + "decoded.png"])
             meta["watch_seconds"] = round(time.monotonic() - started, 1)
             meta["watch"] = base + "watch.mp4"
             _live(attachment_id)
@@ -612,7 +734,7 @@ def prepare_job(attachment_id) -> None:
         watch = _full(meta["watch"])
         if not meta.get("frames"):
             step("frames")
-            times = frame_times(duration)
+            times = frame_times(duration, bool(meta.get("gif")))
             frames = []
             for i, t in enumerate(times, start=1):
                 rel = f"{base}f{i:02d}.jpg"
@@ -649,7 +771,8 @@ def prepare_job(attachment_id) -> None:
 def _tokens(meta) -> int:
     speech = meta.get("speech") or {}
     text = speech_text(speech.get("segments") or []) if speech.get("state") == "done" else None
-    return estimate_tokens(float(meta["duration"]), bool(meta.get("has_audio")), text)
+    return estimate_tokens(float(meta["duration"]), bool(meta.get("has_audio")), text,
+                           animation=bool(meta.get("gif")))
 
 
 def _finish(row, meta, state, message) -> None:
@@ -659,7 +782,7 @@ def _finish(row, meta, state, message) -> None:
         return
     meta.update(state=state, step="done", pct=100, message=message)
     _save_meta(row, meta)
-    if row.get("original"):          # V5a: only the watch copy is kept
+    if row.get("original") and not meta.get("gif"):
         store.remove_attachment_files([row["original"]])
         _update_row(row["id"], original=None)
 
@@ -675,20 +798,21 @@ def _fail(attachment_id, message: str) -> None:
 
 
 def make_cloud_copy(row, meta, on_pct=None) -> dict:
-    """The copy a cloud model that watches videos gets: 480p, 1 frame per
-    second, mono. Over CLOUD_MAX_BYTES it is made again at a lower rate;
+    """The 480p copy for cloud models, with denser sampling for animations.
+    Over CLOUD_MAX_BYTES it is made again at a lower bitrate;
     {"too_big": True} when even that does not fit (she gets the frames)."""
     base = _rel_base(row)
     rel = base + "cloud.mp4"
     src = _full(meta.get("watch") or row.get("original") or "")
     duration, has_audio = float(meta["duration"]), bool(meta.get("has_audio"))
-    encode(src, _full(rel), CLOUD_SHORT_SIDE, duration, has_audio, 150, 300, 30, fps=1,
+    fps = ANIMATION_CLOUD_FPS if meta.get("gif") else 1
+    encode(src, _full(rel), CLOUD_SHORT_SIDE, duration, has_audio, 150, 300, 30, fps=fps,
            mono=True, on_pct=on_pct)
     size = os.path.getsize(_full(rel))
     if size > CLOUD_MAX_BYTES:
         kbps = int(CLOUD_MAX_BYTES * 8 * 0.85 / duration / 1000) - (48 if has_audio else 0)
         if kbps >= 40:
-            ffmpeg(["-i", src, "-map", "0:v:0", "-vf", _scale_short(CLOUD_SHORT_SIDE), "-r", "1",
+            ffmpeg(["-i", src, "-map", "0:v:0", "-vf", _scale_short(CLOUD_SHORT_SIDE), "-r", str(fps),
                     "-c:v", "libx264", "-preset", "veryfast", "-b:v", f"{kbps}k",
                     "-maxrate", f"{kbps}k", "-bufsize", f"{2 * kbps}k"]
                    + (["-map", "0:a:0?", "-c:a", "aac", "-ac", "1", "-b:a", "48k"] if has_audio
@@ -703,10 +827,14 @@ def make_cloud_copy(row, meta, on_pct=None) -> dict:
 
 # ---------- Speech ----------
 
-def stamp(seconds) -> str:
+def stamp(seconds, fractional=False) -> str:
     """A moment in a video, "1:05" = in its 66th second (rounded down, so two
     stills a second apart never get the same mark)."""
-    total = int(max(0.0, float(seconds or 0)))
+    value = max(0.0, float(seconds or 0))
+    if fractional:
+        minutes, hundredths = divmod(round(value * 100), 6000)
+        return f"{minutes}:{hundredths // 100:02d}.{hundredths % 100:02d}"
+    total = int(value)
     return f"{total // 60}:{total % 60:02d}"
 
 
@@ -877,7 +1005,7 @@ def video_block(row, mode: str, note: str = "") -> list:
         for f in meta.get("frames") or []:
             url = _file_url(f["file"], "image/jpeg")
             if url:
-                stills += [{"type": "text", "text": f"[{stamp(f['t'])}]"},
+                stills += [{"type": "text", "text": f"[{stamp(f['t'], meta.get('gif'))}]"},
                            RenderedVideoFrame(url)]
         if stills:
             parts.append({"type": "text", "text": "STILLS FROM IT, each marked with its time "
@@ -892,7 +1020,8 @@ def video_block(row, mode: str, note: str = "") -> list:
             parts.append({"type": "text", "text": "YOUR WATCH NOTES ON IT (you wrote them earlier, "
                                                   "one per stretch, from more stills and what is "
                                                   "said):\n" + notes})
-    parts.append({"type": "text", "text": speech_part(meta)})
+    sound = "(This animation is silent.)" if meta.get("gif") else speech_part(meta)
+    parts.append({"type": "text", "text": sound})
     parts.append({"type": "text", "text": f"[End of video {number}]"})
     return parts
 
@@ -903,10 +1032,14 @@ def watched_words(row, mode: str) -> str:
     meta = load_meta(row)
     said = (meta.get("speech") or {}).get("state") == "done" and (meta["speech"].get("segments"))
     if mode == WATCH:
+        if meta.get("gif"):
+            return f"Video {number} (the whole animation)"
         return f"Video {number} (the whole video with its sound)"
     if mode == FRAMES:
         return (f"Video {number} ({len(meta.get('frames') or [])} stills"
                 + (" + what is said)" if said else ")"))
+    if meta.get("gif"):
+        return f"Video {number} (her model can't see pictures)"
     return f"Video {number} (only what is said - her model can't see pictures)"
 
 
@@ -921,14 +1054,17 @@ def write_caption(llm, row, see=True) -> str:
     """Its one-line note (her list, the label once it is off her desk, her
     long-term memory): from a few stills and what is said."""
     meta = load_meta(row)
-    parts = [{"type": "text", "text": CAPTION_PROMPT}]
+    media = store.picker_media_label(row)
+    prompt = CAPTION_PROMPT + (f"\nAttachment label: {media}" if media else "")
+    parts = [{"type": "text", "text": prompt}]
     frames = (meta.get("frames") or []) if see is not False else []
-    picked = [frames[(2 * i + 1) * len(frames) // (2 * CAPTION_STILLS)]
-              for i in range(min(CAPTION_STILLS, len(frames)))] if frames else []
+    count = min(CAPTION_STILLS, len(frames))
+    divisor = count if meta.get("gif") else CAPTION_STILLS
+    picked = [frames[(2 * i + 1) * len(frames) // (2 * divisor)] for i in range(count)]
     for f in picked:
         url = _file_url(f["file"], "image/jpeg")
         if url:
-            parts += [{"type": "text", "text": f"[{stamp(f['t'])}]"},
+            parts += [{"type": "text", "text": f"[{stamp(f['t'], meta.get('gif'))}]"},
                       {"type": "image_url", "image_url": {"url": url}}]
     speech = meta.get("speech") or {}
     said = speech_text(speech.get("segments") or []) if speech.get("state") == "done" else ""
@@ -1101,7 +1237,7 @@ def write_watch_notes(llm, row, see=None) -> bool:
             for f in span_stills(row, meta, a, b, STRETCH_STILLS):
                 url = _file_url(f["file"], "image/jpeg", keep=False)
                 if url:
-                    parts += [{"type": "text", "text": f"[{stamp(f['t'])}]"},
+                    parts += [{"type": "text", "text": f"[{stamp(f['t'], meta.get('gif'))}]"},
                               {"type": "image_url", "image_url": {"url": url}}]
         else:
             parts.append({"type": "text", "text": "(You can't see pictures: only what is said.)"})
@@ -1269,7 +1405,7 @@ def close_block(row, t, how: str, watch: bool) -> tuple:
         for f in span_stills(row, meta, a, b, CLOSE_STILLS):
             u = _file_url(f["file"], "image/jpeg", keep=False)
             if u:
-                stills += [{"type": "text", "text": f"[{stamp(f['t'])}]"},
+                stills += [{"type": "text", "text": f"[{stamp(f['t'], meta.get('gif'))}]"},
                            RenderedVideoFrame(u)]
         if stills:
             parts.append({"type": "text", "text": "STILLS FROM THAT STRETCH, each marked with its "
@@ -1302,6 +1438,8 @@ def card_info(row) -> dict:
                       "pct": int(meta.get("pct") or 0), "message": meta.get("message") or "",
                       "speech": speech, "frames": len(meta.get("frames") or [])},
             "video_url": f"/attachments/{row['id']}/file" if meta.get("watch") else None}
+    if meta.get("gif"):
+        info["gif"] = True
     if state == PREPARING:
         info["warning"] = f"{STEP_WORDS.get(meta.get('step'), 'Preparing')}... {info['video']['pct']}%"
     elif state == FAILED:

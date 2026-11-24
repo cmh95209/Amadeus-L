@@ -32,6 +32,8 @@ export type ComposerBoxHandle = {
   text: () => string;
   /** Empty the box (after sending). */
   clear: () => void;
+  /** Insert at the last cursor position or replace the selection. */
+  insert: (text: string) => void;
 };
 
 type Props = {
@@ -69,6 +71,13 @@ const ComposerBox = memo(forwardRef<ComposerBoxHandle, Props>(function ComposerB
   useImperativeHandle(ref, () => ({
     text: () => inputRef.current,
     clear: () => setInput(""),
+    insert: (text) => {
+      const box = boxRef.current;
+      if (!box || box.disabled) return;
+      box.setRangeText(text, box.selectionStart, box.selectionEnd, "end");
+      inputRef.current = box.value;
+      setInput(box.value);
+    },
   }), []);
 
   useEffect(() => {

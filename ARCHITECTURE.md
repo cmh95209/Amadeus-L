@@ -71,8 +71,8 @@ so providers can reuse (and discount) the start of the prompt:
      to cloud providers by `llm._right_now_note_as_user`).
    - The user's own local or LAN server: inside the fixed system message.
 
-Pictures are added after building (`attachments.with_pictures`); every helper call
-and the stored history stay text only.
+Pictures are added after building (`attachments.with_pictures`). Stored history uses
+text labels. With consent, ChatGPT attachment reactions can also use media previews.
 
 ## 4. Where settings and user data live
 
@@ -121,7 +121,11 @@ memory data in an issue, log paste or test fixture.
 | `transcript_vector_index.py` | disposable transcript embeddings and the background index worker |
 | `cross_files.py` | finding a file the user sent in another chat |
 | `attachments.py` | pictures and documents: upload, shrink, captions, her desk, `with_pictures` |
-| `video.py` | videos: resumable upload, watch copy, frames, preparation worker |
+| `video.py` | videos and animated GIF/WebP: resumable upload, watch copy, frames, preparation worker |
+| `gifs.py` | online GIF and sticker search through KLIPY and GIPHY, media downloads |
+| `picker.py` | picker state and selected media staged as attachment cards |
+| `picker_store.py` | recents, favourites and install ID in `backend/data/picker.json`, offline media copies |
+| `stickers.py` | imports, searches and manages user sticker packs in `backend/data/stickers/` |
 | `transcribe.py` | speech in videos -> text with times (runs `transcribe_helper.py`) |
 | `transcribe_helper.py` | the faster-whisper step, run with the voice engine's Python |
 | `ceremony.py` | the first-launch ceremony and its saved state |
@@ -158,13 +162,15 @@ memory data in an issue, log paste or test fixture.
 | File | Owns |
 |---|---|
 | `App.tsx` | the whole screen: chat, tabs, Settings, status (the biggest file) |
-| `api.ts` | every call to the backend (`API_BASE`) and the reply stream |
+| `api.ts` | shared backend address (`API_BASE`), chat and settings calls, reply stream |
 | `audio/SpeechPlayer.ts`, `audio/voicePacing.ts` | playing her voice smoothly |
 | `greetingFlow.ts` | placing greetings and the status bar text (`deriveFooter`) |
 | `attachments.ts`, `useAttachments.ts` | pictures, documents, videos in the composer |
 | `sources.ts`, `components/SourcesBar.tsx` | the "where this came from" chips |
 | `providers.ts`, `components/ModelPicker.tsx` | Settings: model provider and model |
 | `components/ChatGPTConnection.tsx`, `components/ChatGPTComposerPicker.tsx` | ChatGPT sign-in, consent, model and reasoning controls |
+| `picker/` | emoji, GIF and sticker picker, preferences and inline chat media |
+| `scripts/build_emoji_data.mjs` (under `frontend/`) | builds the picker's Unicode emoji data and localized search names |
 | `i18n.ts`, `lang/*.json` | page text in every display language |
 | `live2d/`, `components/Live2DCharacter.tsx` | her Live2D model |
 | `components/` | the other panels (mood, system, mobile access, quit, ...) |
@@ -206,14 +212,18 @@ Root start files: `start_windows.bat`, `start_linux.sh`, `start_macos.command`
 |---|---|
 | what she says / reply format / a guard or retry | `chat.py` (search the section banners) |
 | what goes into her prompt, and in what order | `chat._ordered_prompt`, `memory.build_prompt_messages` |
+| context window, history budgets and recall | `context_window.py`, `memory.py`, `moment_recall.py`, `transcript_vector_index.py` |
 | her personality or speaking rules | `backend/data/personality.default.txt`, `ja_voice.py` |
 | a new setting | reader in `memory.py` (or its own module), route in `api.py`, UI in `App.tsx` + `api.ts`, text in `lang/*.json` |
 | a new model provider | `providers.py`, `llm.py` |
+| ChatGPT sign-in, consent or model selection | `chatgpt_auth.py`, `chatgpt_llm.py`, `origin_guard.py`, `components/ChatGPTConnection.tsx`, `components/ChatGPTComposerPicker.tsx` |
 | long-term memory | `cm_bridge.py` (app side), `memory_sidecar/cm_sidecar.py` |
 | greetings | `chat.generate_greeting`, `memory.compute_greeting_situation`, `frontend/src/greetingFlow.ts` |
 | voice | `tts.py`, `speech_text.py`, `voice_lang.py`, `audio/SpeechPlayer.ts` |
 | web search / weather | `chat.py` web sections, `websearch.py`, `webreader.py`, `weather.py` |
+| reading web PDFs | `webfetch.py`, `webpdf.py`, `webreader.py` |
 | attachments / videos | `attachments.py`, `video.py`, `frontend/src/attachments.ts` |
+| emoji, GIF and sticker picker | `frontend/src/picker/`, `picker.py`, `gifs.py`, `picker_store.py`, `stickers.py` |
 | start-up, ports, logs | `scripts/launcher.py` |
 
 ## 10. Traps that break changes

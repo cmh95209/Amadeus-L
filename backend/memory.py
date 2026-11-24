@@ -3137,11 +3137,14 @@ def _ensure_attachments_table(c: sqlite3.Cursor) -> None:
             tokens INTEGER,
             read_chars INTEGER,
             read_tokens INTEGER,
-            notes INTEGER
+            notes INTEGER,
+            media_type TEXT,
+            media_pack TEXT
         )
     """)
     for column in ("chat_no INTEGER", "turn INTEGER", "original TEXT",   # tables made before them
-                   "tokens INTEGER", "read_chars INTEGER", "read_tokens INTEGER", "notes INTEGER"):
+                   "tokens INTEGER", "read_chars INTEGER", "read_tokens INTEGER", "notes INTEGER",
+                   "media_type TEXT", "media_pack TEXT"):
         _add_column(c, "attachments", *column.split(" ", 1))
     c.execute("CREATE INDEX IF NOT EXISTS attachments_msg ON attachments (message_id)")
     c.execute("CREATE INDEX IF NOT EXISTS attachments_conv ON attachments (conversation_id, id)")
@@ -3192,7 +3195,7 @@ def remove_attachment_files(files) -> None:
 
 ATTACHMENT_COLUMNS = ("id, conversation_id, message_id, kind, name, mime, bytes, width, "
                       "height, path, thumb, caption, on_desk, created_at, chat_no, turn, original, "
-                      "tokens, read_chars, read_tokens, notes")
+                      "tokens, read_chars, read_tokens, notes, media_type, media_pack")
 
 
 def attachment_row(row) -> dict:
@@ -3265,6 +3268,20 @@ def text_context_budget(conversation_id=None) -> int:
 _LABEL_CAPTION_MAX = 200
 
 
+def picker_media_label(row) -> str:
+    kind = row.get("media_type")
+    if kind not in ("gif", "sticker"):
+        return ""
+    title = re.sub(r'[\[\]"\s]+', " ", str(row.get("name") or "")).strip()[:120]
+    pack = re.sub(r'[\[\]"\s]+', " ", str(row.get("media_pack") or "")).strip()[:120]
+    label = "GIF" if kind == "gif" else "sticker"
+    if title:
+        label += f' "{title}"'
+    if kind == "sticker" and pack:
+        label += f' from pack "{pack}"'
+    return label
+
+
 def picture_label(row, note: str = "") -> str:
     """How a picture appears in her prompt text: [Picture 3 (turn 5) from the
     user: <caption>] - its number in this chat and the turn it was sent in
@@ -3275,6 +3292,9 @@ def picture_label(row, note: str = "") -> str:
     number = row.get("chat_no") or row.get("id")
     turn = f" (turn {int(row['turn'])})" if row.get("turn") else ""
     head = f"[Picture {int(number)}{turn} from the user{note}"
+    media = picker_media_label(row)
+    if media:
+        head += f": {media}"
     return head + (f": {text}]" if text else "]")
 
 
@@ -3330,7 +3350,8 @@ def video_label(row, note: str = "") -> str:
     name = re.sub(r"[\[\]\"\s]+", " ", str(row.get("name") or "video")).strip()[:120]
     text = re.sub(r"[\[\]\s]+", " ", str(row.get("caption") or "")).strip()[:_LABEL_CAPTION_MAX]
     length = video.length_text(video.load_meta(row).get("duration"))
-    head = f'[Video {int(number)}{turn} from the user{note}: "{name}", {length}'
+    description = picker_media_label(row) or f'"{name}"'
+    head = f"[Video {int(number)}{turn} from the user{note}: {description}, {length}"
     return head + (f": {text}]" if text else "]")
 
 
@@ -3367,6 +3388,8 @@ def attachments_for_ui(items) -> list:
                 "thumb_url": f"/attachments/{a['id']}/thumb",
                 "url": f"/attachments/{a['id']}/file",
                 "original_url": f"/attachments/{a['id']}/original"}
+        if a.get("media_type"):
+            item.update(media_type=a["media_type"], media_pack=a.get("media_pack"))
         if a.get("kind") == "document":
             read = a.get("read_tokens")
             item.update({"thumb_url": None, "text_url": f"/attachments/{a['id']}/text",
@@ -3384,6 +3407,8 @@ def attachments_for_ui(items) -> list:
                          "duration": meta.get("duration"), "has_audio": bool(meta.get("has_audio")),
                          "info_url": f"/attachments/{a['id']}/watch",
                          "video_url": item["url"] if meta.get("watch") else None})
+            if a.get("media_type"):
+                item["gif"] = True
         out.append(item)
     return out
 

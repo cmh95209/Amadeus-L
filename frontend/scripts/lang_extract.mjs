@@ -52,7 +52,7 @@ const letters = (s) => (s.match(/\p{L}/gu) || []).length;
 // Never translated: names, commands, file paths, css/animation names.
 const IGNORE = new Set(["Alex", "Amadeus", "AMADEUS", "CharacterMemory", "GPT-SoVITS", "en-US",
   "PatReaction", "TapReaction", "personality-help personality-hint", "tailscale funnel reset",
-  "backend/data", "Pasted text.txt", "Mac", "JSON key", "Top K", "Top P", "Min P"]);
+  "backend/data", "Pasted text.txt", "Mac", "JSON key", "Top K", "Top P", "Min P", "Content-Type"]);
 
 // Text a user reads: at least two letters, not code-looking.
 function looksLikeText(s, strict) {
@@ -159,7 +159,7 @@ function readJson(p) {
 const found = collect();
 if (process.argv.includes("--check")) {
   const keys = [...found.keys()];
-  for (const name of readdirSync(LANG).filter((n) => n.endsWith(".json") && n !== "en.json")) {
+  for (const name of readdirSync(LANG).filter((n) => n.endsWith(".json"))) {
     const data = readJson(join(LANG, name));
     const page = data.page || {};
     const missing = keys.filter((k) => !(k in page));

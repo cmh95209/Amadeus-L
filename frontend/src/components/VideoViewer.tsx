@@ -63,7 +63,8 @@ export function VideoViewer({ video, onClose }: { video: PictureInfo; onClose: (
         </header>
         <div className="video-body">
           {src && !failed
-            ? <video src={src} controls playsInline preload="metadata"
+            ? <video src={src} controls={!shown.gif} muted={shown.gif} autoPlay={shown.gif} loop={shown.gif}
+              playsInline preload="metadata"
               poster={absoluteUrl(shown.thumb_url ?? undefined)} />
             : (
               <p className="document-problem">

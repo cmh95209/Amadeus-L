@@ -50,7 +50,7 @@ export function AttachmentTray({ cards, desk, privacyNote, onRemoveCard, onRemov
                   <button type="button" className="desk-thumb" title={p.caption || p.name}
                     onClick={() => onOpenPicture(p)}>
                     <img src={absoluteUrl(p.thumb_url ?? undefined)} alt={p.caption || p.name} />
-                    {isVideo(p) && <PlayMark length={p.length} />}
+                    {isVideo(p) && !p.gif && <PlayMark length={p.length} />}
                     {p.number != null && <span className="picture-number">{p.number}</span>}
                   </button>
                 )}
@@ -70,7 +70,7 @@ export function AttachmentTray({ cards, desk, privacyNote, onRemoveCard, onRemov
                 ? (
                   <span className="tray-thumb">
                     <img src={card.thumbUrl} alt="" />
-                    {card.kind === "video" && <PlayMark length={card.length} />}
+                    {card.kind === "video" && !card.media?.gif && <PlayMark length={card.length} />}
                   </span>
                 )
                 : <span className="tray-placeholder" aria-hidden="true">

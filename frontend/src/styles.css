@@ -2831,6 +2831,10 @@ button {
     order: -1;
   }
 
+  .composer-plan {
+    grid-row: 3;
+  }
+
   .composer .web-toggle {
     justify-self: start;
   }

@@ -1,5 +1,6 @@
 import { absoluteUrl, isDocument, isVideo, pagesText } from "../attachments";
 import type { PictureInfo } from "../attachments";
+import { ChatMedia } from "../picker/ChatMedia";
 
 /** ▶ and the length ("0:42") over a video's picture. */
 export function PlayMark({ length }: { length?: string }) {
@@ -33,7 +34,7 @@ export function PictureStrip({ pictures, onOpen }: { pictures: PictureInfo[]; on
     <span className="picture-strip">
       {pictures.map((p) => (isDocument(p)
         ? <DocumentChip key={p.id} doc={p} onOpen={onOpen} />
-        : (
+        : p.gif || p.media_type ? <ChatMedia key={p.id} picture={p} onOpen={onOpen} /> : (
           <button key={p.id} type="button" className="picture-thumb" onClick={() => onOpen(p)}
             title={[p.caption || p.name, p.length].filter(Boolean).join(" - ")}
             aria-label={isVideo(p) ? `Play video ${p.number ?? ""} (${p.length ?? ""})`

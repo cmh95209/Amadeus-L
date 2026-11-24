@@ -36,6 +36,9 @@ export type PictureInfo = {
   video_url?: string | null;
   info_url?: string;
   video?: VideoProgress;
+  gif?: boolean;
+  media_type?: "gif" | "sticker";
+  media_pack?: string | null;
 };
 
 export type VideoProgress = {
@@ -66,6 +69,8 @@ export type TrayCard = {
   /** A video: its length ("0:42"), and "Uploading 45%" while it goes up. */
   length?: string;
   progress?: string;
+  media?: PictureInfo;
+  suppressReaction?: boolean;
 };
 
 export type Capabilities = {

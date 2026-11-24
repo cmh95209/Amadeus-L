@@ -1,0 +1,26 @@
+export const SEND_ON_PICK = true;
+export const RECENT_LIMIT = 40; // Matches the Phase A store.
+export const SEARCH_DELAY_MS = 300;
+export const LONG_PRESS_MS = 500;
+export const LONG_PRESS_SLOP = 10;
+export const PREVIEW_MARGIN = 96;
+export const FIRST_PAGE = 1;
+export const CATEGORY_SCROLL_TOLERANCE = 1;
+
+export const PHONE_WIDTH = 640;
+export const PANEL_WIDTH = 416;
+export const PANEL_HEIGHT = 448;
+export const PHONE_PANEL_HEIGHT = 55; // Percent of the visible screen.
+export const PANEL_GAP = 8;
+export const EMOJI_CELL = 42;
+export const MEDIA_CELL = 92;
+export const STICKER_CELL = 76;
+export const CATEGORY_SIZE = 32;
+export const CATEGORY_ICON_SIZE = 26;
+export const SEARCH_HEIGHT = 36;
+export const TAB_HEIGHT = 34;
+export const TILE_ACTION_SIZE = 28;
+export const CHAT_STICKER_SIZE = 154;
+export const CHAT_GIF_WIDTH = 208;
+export const CHAT_GIF_HEIGHT = 156;
+export const ONLINE_QUERY_LIMIT = 50; // Matches the discovery route.

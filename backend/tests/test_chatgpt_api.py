@@ -38,6 +38,25 @@ def env(monkeypatch, tmp_path):
                            data=tmp_path / "data", status=status)
 
 
+@pytest.mark.parametrize(("configured", "effective"), [(120000, 120000), (None, 32768)])
+def test_context_budget_reports_active_cap_for_unknown_cloud_model(env, monkeypatch, configured, effective):
+    window = env.api.context_window
+    reply_client = SimpleNamespace(openai_api_base="https://aiplatform.googleapis.com/v1/openapi",
+                                   model_name="google/gemini-unlisted")
+    monkeypatch.setattr(env.api.chat, "_reply_llm", lambda: reply_client)
+    monkeypatch.setattr(env.api.llm.memory, "load_context_budget", lambda: configured)
+    monkeypatch.setattr(window, "_metadata", {})
+    response = Mock()
+    response.json.return_value = {"data": []}
+    monkeypatch.setattr(window.requests, "get", Mock(return_value=response))
+
+    result = env.client.get("/getContextBudget")
+    assert result.status_code == 200
+    assert result.json == {"budget": configured, "default": 32768, "model_limit": effective,
+                           "model_input_limit": None, "estimated": True,
+                           "uses_prompt_cap": True, "mode": "custom"}
+
+
 def test_switching_keeps_custom_files(env):
     files = [env.data.parent / "llm_server.txt", env.data / "api_key.txt",
              env.data / "api_keys.json", env.data / "llm_provider.txt"]

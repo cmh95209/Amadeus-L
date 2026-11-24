@@ -102,7 +102,7 @@ memory data in an issue, log paste or test fixture.
 | `chat.py` | **the core**: reply and greeting pipelines, web-search loop, triage, honesty nets and retries, prompt ordering, translation line, trust re-check, summary merge |
 | `memory.py` | SQLite store (`memory.db`): messages, tabs, versions, presence, attachments index; most setting readers; `build_prompt_messages`; rolling summary |
 | `llm.py` | model client (`get_llm`), server address probing, local-vs-cloud rules, reasoning levels |
-| `context_window.py` | model limits, prompt token accounting and history selection |
+| `context_window.py` | provider limits and background metadata caching, prompt token accounting and history selection |
 | `chatgpt_auth.py` | ChatGPT sign-in, renewal, sign-out and consent |
 | `chatgpt_llm.py` | ChatGPT Responses client, reasoning levels and background usage limits |
 | `origin_guard.py` | browser origin, host and route checks |

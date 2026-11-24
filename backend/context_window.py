@@ -19,12 +19,13 @@ SUMMARY_SHARE = 0.15
 SUMMARY_MAX_TOKENS = 4096
 DEFAULT_TOTAL_CAP_CLOUD = 32768
 DEFAULT_TOTAL_CAP_LOCAL = 16384
-UNKNOWN_WINDOW_FALLBACK = 8192
+LOCAL_WINDOW_FALLBACK = 8192
 MIN_MARGIN = 256
 MARGIN_SHARE = 0.05
 VERBATIM_HEADROOM = 0.10
 METADATA_TTL = 3600
 METADATA_TIMEOUT = (1, 2)
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 SUMMARY_CHUNK_TOKENS = 2048
 MESSAGE_FRAMING = 12
 REQUEST_FRAMING = 16
@@ -46,16 +47,21 @@ RESULT_TRUNCATED = "\n[Lookup output shortened to fit the context.]"
 
 @dataclass(frozen=True)
 class ModelLimits:
-    total: int
+    total: int | None
     input_limit: int | None = None
     estimated: bool = False
+    completion_limit: int | None = None
+
+    def total_or(self, prompt_cap):
+        return self.total if self.total is not None else prompt_cap
 
 
-UNKNOWN_LIMITS = ModelLimits(UNKNOWN_WINDOW_FALLBACK, estimated=True)
+UNKNOWN_LIMITS = ModelLimits(None, estimated=True)
+LOCAL_UNKNOWN_LIMITS = ModelLimits(LOCAL_WINDOW_FALLBACK, estimated=True)
 
 # Published model cards: developers.openai.com/api/docs/models and
 # docs.cloud.google.com/gemini-enterprise-agent-platform/models.
-# List aliases and snapshots explicitly. An unrecognized ID uses the fallback.
+# List aliases and snapshots explicitly. Unrecognized cloud IDs use metadata.
 _OPENAI_WINDOWS = {
     1_050_000: (
         "gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.1-terra", "gpt-6-luna",
@@ -109,6 +115,12 @@ _VERTEX_INPUTS = {
 }
 _VERTEX_LIMITS = {model: ModelLimits(window, window) for window, models in _VERTEX_INPUTS.items()
                   for model in models}
+# Gemini 4 uses a shared input and output window.
+_VERTEX_LIMITS.update(dict.fromkeys((
+    "gemini-4-argon", "gemini-4-argon-cyber-permissive",
+    "gemini-4-carbon", "gemini-4-carbon-cyber-permissive",
+    "gemini-4-hydrogen", "gemini-4-neon", "gemini-4-neon-cyber-permissive",
+), ModelLimits(1_048_576)))
 
 
 def _positive(value):
@@ -129,8 +141,12 @@ def migrate_total_cap(value, *, history_only=False, automatic=None):
 
 
 def input_ceiling(limits, user_cap, reply_allowance):
-    capacity = min(user_cap - reply_allowance, limits.total - reply_allowance,
-                   limits.input_limit or limits.total)
+    total = limits.total_or(user_cap)
+    # Keep the configured reservation under the user's cap even if the
+    # catalog reports a smaller completion limit for the model.
+    model_reply = min(reply_allowance, limits.completion_limit or reply_allowance)
+    capacity = min(user_cap - reply_allowance, total - model_reply,
+                   limits.input_limit or total)
     return max(0, capacity - max(MIN_MARGIN, math.ceil(capacity * MARGIN_SHARE)))
 
 
@@ -141,18 +157,18 @@ _metadata_lock = threading.Lock()
 def _cached_metadata(key, fetch, *, wait=False):
     """Refresh outside the reply path. A settings read may wait briefly."""
     with _metadata_lock:
-        expiry, limits, pending = _metadata.get(key, (0, UNKNOWN_LIMITS, None))
+        expiry, value, pending = _metadata.get(key, (0, None, None))
         if expiry > time.monotonic():
-            return limits
+            return value
         if pending is None:
             pending = threading.Event()
-            _metadata[key] = expiry, limits, pending
+            _metadata[key] = expiry, value, pending
 
             def refresh():
                 try:
-                    result = fetch() or UNKNOWN_LIMITS
+                    result = fetch()
                 except Exception:
-                    result = UNKNOWN_LIMITS
+                    result = None
                 with _metadata_lock:
                     _metadata[key] = time.monotonic() + METADATA_TTL, result, None
                 pending.set()
@@ -161,7 +177,7 @@ def _cached_metadata(key, fetch, *, wait=False):
     if wait and pending.wait(sum(METADATA_TIMEOUT)):
         with _metadata_lock:
             return _metadata[key][1]
-    return UNKNOWN_LIMITS
+    return None
 
 
 def _provider_matches(route, names):
@@ -200,10 +216,10 @@ def openrouter_limits(endpoints, policy, required_parameters=()):
     if not eligible:
         return UNKNOWN_LIMITS
     totals = [_positive(r.get("context_length")) for r in eligible]
-    inputs = [_positive(r.get("max_prompt_tokens")) or total or UNKNOWN_WINDOW_FALLBACK
+    inputs = [_positive(r.get("max_prompt_tokens")) or total
               for r, total in zip(eligible, totals)]
-    return ModelLimits(min(t or UNKNOWN_WINDOW_FALLBACK for t in totals), min(inputs),
-                       estimated=0 in totals)
+    return ModelLimits(min(filter(None, totals), default=None),
+                       min(filter(None, inputs), default=None), estimated=0 in totals)
 
 
 def _router_metadata(model, policy, required_parameters, wait):
@@ -213,7 +229,7 @@ def _router_metadata(model, policy, required_parameters, wait):
     key = ("openrouter", model, json.dumps(policy, sort_keys=True), required_parameters)
 
     def fetch():
-        url = "https://openrouter.ai/api/v1/models/" + quote(slug, safe="/") + "/endpoints"
+        url = OPENROUTER_MODELS_URL + "/" + quote(slug, safe="/") + "/endpoints"
         response = requests.get(url, timeout=METADATA_TIMEOUT)
         response.raise_for_status()
         endpoints = response.json()["data"]["endpoints"]
@@ -223,7 +239,28 @@ def _router_metadata(model, policy, required_parameters, wait):
                 for k in ("prompt", "completion"))]
         return openrouter_limits(endpoints, policy, required_parameters)
 
-    return _cached_metadata(key, fetch, wait=wait)
+    return _cached_metadata(key, fetch, wait=wait) or UNKNOWN_LIMITS
+
+
+def _catalog_metadata(model, wait):
+    def fetch():
+        response = requests.get(OPENROUTER_MODELS_URL, timeout=METADATA_TIMEOUT,
+                                allow_redirects=False)
+        response.raise_for_status()
+        return {row["id"].lower(): row for row in response.json()["data"]
+                if isinstance(row, dict) and isinstance(row.get("id"), str)}
+
+    catalog = _cached_metadata(("openrouter-models",), fetch, wait=wait)
+    entry = (catalog or {}).get(model)
+    if entry is None:
+        return UNKNOWN_LIMITS
+    top = entry.get("top_provider")
+    top = top if isinstance(top, dict) else {}
+    total = _positive(entry.get("context_length")) or _positive(top.get("context_length"))
+    prompt = _positive(top.get("max_prompt_tokens")) or _positive(entry.get("max_prompt_tokens"))
+    completion = _positive(top.get("max_completion_tokens"))
+    return ModelLimits(total or None, prompt or None, estimated=not total,
+                       completion_limit=completion or None)
 
 
 def _local_metadata(base_url, model, wait):
@@ -234,13 +271,14 @@ def _local_metadata(base_url, model, wait):
         response.raise_for_status()
         settings = response.json().get("default_generation_settings") or {}
         context = _positive(settings.get("n_ctx"))
-        return ModelLimits(context) if context else UNKNOWN_LIMITS
+        return ModelLimits(context) if context else None
 
-    return _cached_metadata(("local", base_url, model), fetch, wait=wait)
+    return _cached_metadata(("local", base_url, model), fetch, wait=wait) or LOCAL_UNKNOWN_LIMITS
 
 
 def resolve_limits(base_url, model, *, local=False, builtin_window=None,
                    options=None, wait=False):
+    """Resolve model metadata, leaving an unknown cloud total to the prompt cap."""
     if builtin_window:
         return ModelLimits(builtin_window)
     host = (urlsplit(base_url).hostname or "").lower()
@@ -254,20 +292,29 @@ def resolve_limits(base_url, model, *, local=False, builtin_window=None,
         models = (model, *(options.get("models") or ()))
         limits = [_router_metadata(m, policy, required, wait)
                   for m in dict.fromkeys(models)]
-        if all(item == UNKNOWN_LIMITS for item in limits):
-            return UNKNOWN_LIMITS
-        return ModelLimits(min(item.total for item in limits),
-                           min(item.input_limit or item.total for item in limits),
+        return ModelLimits(min((item.total for item in limits if item.total), default=None),
+                           min(filter(None, (item.input_limit or item.total for item in limits)),
+                               default=None),
                            any(item.estimated for item in limits))
     if host == "api.openai.com":
-        return _OPENAI_LIMITS.get(model, UNKNOWN_LIMITS)
-    if host == "aiplatform.googleapis.com" or host.endswith("-aiplatform.googleapis.com") \
+        known = _OPENAI_LIMITS.get(model.removeprefix("openai/"))
+        if known is not None:
+            return known
+        if model and "/" not in model:
+            model = "openai/" + model
+    elif host == "aiplatform.googleapis.com" or host.endswith("-aiplatform.googleapis.com") \
             or host == "generativelanguage.googleapis.com":
-        return _VERTEX_LIMITS.get(model.removeprefix("google/"), UNKNOWN_LIMITS)
-    if local and base_url:
+        known = _VERTEX_LIMITS.get(model.removeprefix("google/"))
+        if known is not None:
+            return known
+        if model and "/" not in model:
+            model = "google/" + model
+    elif local:
+        if not base_url:
+            return LOCAL_UNKNOWN_LIMITS
         context = _positive(options.get("n_ctx") or os.environ.get("AMADEUS_LLAMA_N_CTX"))
         return ModelLimits(context) if context else _local_metadata(base_url, model, wait)
-    return UNKNOWN_LIMITS
+    return _catalog_metadata(model, wait) if host and model else UNKNOWN_LIMITS
 
 
 def _binding(client):
@@ -312,7 +359,6 @@ def warm_tokenizer(model):
     if model in _OPENAI_LIMITS:
         def load():
             _encodings[model] = _tokenizer(model)
-            return UNKNOWN_LIMITS
         _cached_metadata(("tokenizer", model), load)
 
 

@@ -4066,9 +4066,11 @@ export default function App() {
               </p>
               {contextBudgetInfo?.modelLimit != null && (
                 <p className="settings-help">
-                  {contextBudgetInfo.estimated
-                    ? `Estimated model context limit: ${contextBudgetInfo.modelLimit.toLocaleString()} tokens.`
-                    : `Model context limit: ${contextBudgetInfo.modelLimit.toLocaleString()} tokens.`}
+                  {contextBudgetInfo.usesPromptCap
+                    ? `Model context limit unknown. Using a prompt cap of ${contextBudgetInfo.modelLimit.toLocaleString()} tokens.`
+                    : contextBudgetInfo.estimated
+                      ? `Estimated model context limit: ${contextBudgetInfo.modelLimit.toLocaleString()} tokens.`
+                      : `Model context limit: ${contextBudgetInfo.modelLimit.toLocaleString()} tokens.`}
                 </p>
               )}
               {contextBudgetInfo?.modelInputLimit != null &&

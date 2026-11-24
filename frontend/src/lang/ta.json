@@ -277,6 +277,7 @@
   "Enter your API key": "உங்கள் API சாவியை உள்ளிடவும்",
   "Enter your API key and press Save.": "உங்கள் API சாவியை உள்ளிட்டு \"சேமி\" அழுத்தவும்.",
   "Estimated model context limit: {1} tokens.": "மாதிரியின் மதிப்பிடப்பட்ட சூழல் வரம்பு: {1} டோக்கன்கள்.",
+  "Model context limit unknown. Using a prompt cap of {1} tokens.": "மாதிரியின் சூழல் வரம்பு தெரியவில்லை. தூண்டுரைக்கு {1} டோக்கன்கள் வரம்பாகப் பயன்படுத்தப்படுகின்றன.",
   "Every time": "ஒவ்வொரு முறையும்",
   "Every time, then quiet for ~5 minutes": "ஒவ்வொரு முறையும், பிறகு ~5 நிமிடம் அமைதி",
   "Everything else was saved.": "மற்றவை அனைத்தும் சேமிக்கப்பட்டன.",

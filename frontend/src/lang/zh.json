@@ -277,6 +277,7 @@
   "Enter your API key": "输入你的 API 密钥",
   "Enter your API key and press Save.": "输入你的 API 密钥并按“保存”。",
   "Estimated model context limit: {1} tokens.": "模型上下文上限估算值：{1} token。",
+  "Model context limit unknown. Using a prompt cap of {1} tokens.": "模型的上下文上限未知，提示词上限设为 {1} token。",
   "Every time": "每次",
   "Every time, then quiet for ~5 minutes": "每次，之后安静约 5 分钟",
   "Everything else was saved.": "其余部分已保存。",

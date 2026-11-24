@@ -7093,8 +7093,11 @@ def _merge_summary_llm(current_summary: str, new_exchange: str, token_cap: int) 
     limits_for = getattr(_llm_module, "context_limits", None)
     limits = limits_for(core, options) if limits_for else context_window.UNKNOWN_LIMITS
     cap = min(token_cap, context_window.SUMMARY_CHUNK_TOKENS)
+    total = limits.total
+    if total is None:
+        total = store.load_context_budget() or context_window.DEFAULT_TOTAL_CAP_CLOUD
     if (context_window.message_cost({"content": prompt}) + context_window.REQUEST_FRAMING
-            > context_window.input_ceiling(limits, limits.total, cap)):
+            > context_window.input_ceiling(limits, total, cap)):
         raise context_window.PromptTooLarge()
     reply = llm.bind(max_tokens=cap).invoke([{"role": "user", "content": prompt}])
     content = reply.content if isinstance(reply.content, str) else str(reply.content)

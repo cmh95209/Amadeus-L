@@ -195,6 +195,7 @@
   "Automatic cap: {1} tokens.": "Automatic cap: {1} tokens.",
   "Model context limit: {1} tokens.": "Model context limit: {1} tokens.",
   "Estimated model context limit: {1} tokens.": "Estimated model context limit: {1} tokens.",
+  "Model context limit unknown. Using a prompt cap of {1} tokens.": "Model context limit unknown. Using a prompt cap of {1} tokens.",
   "Model input limit: {1} tokens.": "Model input limit: {1} tokens.",
   "Conversation renamed": "Conversation renamed",
   "Conversations": "Conversations",

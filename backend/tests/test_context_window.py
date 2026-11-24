@@ -93,12 +93,83 @@ class ProviderTests(unittest.TestCase):
 
     def test_published_limits_use_exact_ids(self):
         vertex = "https://us-central1-aiplatform.googleapis.com/v1/openapi"
-        self.assertEqual(window.resolve_limits(vertex, "google/gemini-3.8-flash").input_limit, 1048576)
-        self.assertEqual(window.resolve_limits(vertex, "gemini-3.8-flash-made-up"),
-                         window.UNKNOWN_LIMITS)
         openai = "https://api.openai.com/v1"
-        self.assertEqual(window.resolve_limits(openai, "gpt-4.1-2025-04-14").total, 1047576)
-        self.assertEqual(window.resolve_limits(openai, "chat-latest").total, 400000)
+        with patch.object(window.requests, "get") as get:
+            self.assertEqual(window.resolve_limits(vertex, "google/gemini-3.8-flash"),
+                             window.ModelLimits(1_048_576, 1_048_576))
+            self.assertEqual(window.resolve_limits(vertex, "google/gemini-4-argon"),
+                             window.ModelLimits(1_048_576))
+            self.assertEqual(window.resolve_limits(openai, "gpt-4.1-2025-04-14").total, 1047576)
+            self.assertEqual(window.resolve_limits(openai, "chat-latest").total, 400000)
+            self.assertEqual(window.resolve_limits(openai, "anything", builtin_window=49152),
+                             window.ModelLimits(49152))
+            get.assert_not_called()
+
+    def test_catalog_hit_matches_provider_ids_and_shares_the_cache(self):
+        response = Mock()
+        response.json.return_value = {"data": [
+            {"id": "google/gemini-3.8-flash-made-up", "context_length": 200000,
+             "top_provider": {"max_completion_tokens": 2000, "max_prompt_tokens": 120000}},
+            {"id": "openai/gpt-next", "context_length": 16000,
+             "top_provider": {"max_completion_tokens": 1000}},
+            {"id": "vendor/custom-model", "context_length": 64000, "max_prompt_tokens": 32000},
+        ]}
+        vertex = "https://us-central1-aiplatform.googleapis.com/v1/openapi"
+        gemini = "https://generativelanguage.googleapis.com/v1beta/openai"
+        with patch.object(window, "_metadata", {}), patch.object(window.requests, "get",
+                                                                return_value=response) as get:
+            limits = window.resolve_limits(vertex, "gemini-3.8-flash-made-up", wait=True)
+            self.assertEqual(limits, window.ModelLimits(200000, 120000, completion_limit=2000))
+            self.assertEqual(window.resolve_limits(gemini, "google/gemini-3.8-flash-made-up"), limits)
+            self.assertEqual(window.resolve_limits("https://proxy.example/v1", "vendor/custom-model"),
+                             window.ModelLimits(64000, 32000))
+            openai = window.resolve_limits("https://api.openai.com/v1", "gpt-next")
+            self.assertEqual(openai, window.ModelLimits(16000, completion_limit=1000))
+            self.assertEqual(window.input_ceiling(openai, 120000, 4000), 14250)
+            get.assert_called_once_with(window.OPENROUTER_MODELS_URL,
+                                        timeout=window.METADATA_TIMEOUT, allow_redirects=False)
+
+    def test_catalog_miss_uses_the_custom_or_automatic_cloud_cap(self):
+        response = Mock()
+        response.json.return_value = {"data": [{"id": "vendor/model-other", "context_length": 8192}]}
+        with patch.object(window, "_metadata", {}), patch.object(window.requests, "get",
+                                                                return_value=response):
+            limits = window.resolve_limits("https://proxy.example/v1", "vendor/model", wait=True)
+        self.assertEqual(limits, window.UNKNOWN_LIMITS)
+        self.assertEqual(limits.total_or(120000), 120000)
+        self.assertEqual(limits.total_or(window.DEFAULT_TOTAL_CAP_CLOUD), 32768)
+        ceiling = window.input_ceiling(limits, 120000, 4000)
+        self.assertEqual(ceiling, 110200)
+        self.assertEqual(window.input_ceiling(limits, window.DEFAULT_TOTAL_CAP_CLOUD, 4000), 27329)
+        owner = window.HistoryDraft(1, [], None)
+        messages = [{"role": "system", "content": "x" * 20000, "_window_owner": owner}]
+        self.assertEqual(window.plan_history(messages, owner, ceiling).messages,
+                         window.provider_messages(messages))
+
+    def test_catalog_timeout_is_cached_as_unknown(self):
+        with patch.object(window, "_metadata", {}), patch.object(
+                window.requests, "get", side_effect=window.requests.Timeout) as get:
+            self.assertEqual(window.resolve_limits("https://api.openai.com/v1", "gpt-next", wait=True),
+                             window.UNKNOWN_LIMITS)
+            self.assertEqual(window.resolve_limits("https://proxy.example/v1", "vendor/model"),
+                             window.UNKNOWN_LIMITS)
+            get.assert_called_once()
+
+    def test_catalog_refresh_does_not_wait_on_the_reply_path(self):
+        response = Mock()
+        response.json.return_value = {"data": [{"id": "vendor/model", "context_length": 32000}]}
+        release = window.threading.Event()
+
+        def fetch(*args, **kwargs):
+            if not release.wait(2):
+                raise window.requests.Timeout()
+            return response
+
+        base = "https://proxy.example/v1"
+        with patch.object(window, "_metadata", {}), patch.object(window.requests, "get", side_effect=fetch):
+            self.assertEqual(window.resolve_limits(base, "vendor/model"), window.UNKNOWN_LIMITS)
+            release.set()
+            self.assertEqual(window.resolve_limits(base, "vendor/model", wait=True), window.ModelLimits(32000))
 
     def test_route_policy_change_and_metadata_cache(self):
         host = "https://openrouter.ai/api/v1"
@@ -125,6 +196,10 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(window.resolve_limits("https://openrouter.ai/api/v1",
                                                    "vendor/model", wait=True), window.UNKNOWN_LIMITS)
 
+    def test_partial_openrouter_metadata_preserves_known_route_limits(self):
+        limits = window.openrouter_limits([self.endpoints[0], {"tag": "unknown"}], {})
+        self.assertEqual(limits, window.ModelLimits(32000, 24000, estimated=True))
+
     def test_custom_llama_cpp_uses_per_request_context(self):
         response = Mock()
         response.json.return_value = {"total_slots": 4, "default_generation_settings": {"n_ctx": 32768}}
@@ -137,6 +212,18 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(get.call_args.args[0], "http://127.0.0.1:1234/props")
             self.assertEqual(window.resolve_limits(base, "gemma", local=True, options={"n_ctx": 49152}),
                              window.ModelLimits(49152))
+
+    def test_unknown_local_context_keeps_the_8192_token_fallback(self):
+        response = Mock()
+        response.json.return_value = {"default_generation_settings": {}}
+        with patch.object(window, "_metadata", {}), patch.dict(
+                window.os.environ, {"AMADEUS_LLAMA_N_CTX": ""}), patch.object(
+                window.requests, "get", return_value=response) as get:
+            limits = window.resolve_limits("http://127.0.0.1:1234/v1", "gemma", local=True, wait=True)
+            self.assertEqual(limits, window.ModelLimits(8192, estimated=True))
+            self.assertEqual(window.input_ceiling(limits, 120000, 4000), 3936)
+            get.assert_called_once_with("http://127.0.0.1:1234/props",
+                                        timeout=window.METADATA_TIMEOUT, allow_redirects=False)
 
 
 class MigrationTests(unittest.TestCase):

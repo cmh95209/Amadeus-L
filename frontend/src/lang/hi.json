@@ -277,6 +277,7 @@
   "Enter your API key": "अपनी API कुंजी डालें",
   "Enter your API key and press Save.": "अपनी API कुंजी डालें और \"सहेजें\" दबाएँ।",
   "Estimated model context limit: {1} tokens.": "मॉडल की अनुमानित संदर्भ सीमा: {1} टोकन।",
+  "Model context limit unknown. Using a prompt cap of {1} tokens.": "मॉडल की संदर्भ सीमा अज्ञात है। प्रॉम्प्ट के लिए {1} टोकन की सीमा लागू है।",
   "Every time": "हर बार",
   "Every time, then quiet for ~5 minutes": "हर बार, फिर ~5 मिनट शांत",
   "Everything else was saved.": "बाकी सब कुछ सहेज लिया गया।",

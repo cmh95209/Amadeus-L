@@ -277,6 +277,7 @@
   "Enter your API key": "Введите ваш API-ключ",
   "Enter your API key and press Save.": "Введите ваш API-ключ и нажмите «Сохранить».",
   "Estimated model context limit: {1} tokens.": "Примерный лимит контекста модели: {1} токенов.",
+  "Model context limit unknown. Using a prompt cap of {1} tokens.": "Лимит контекста модели неизвестен. Для запроса действует лимит в {1} токенов.",
   "Every time": "Каждый раз",
   "Every time, then quiet for ~5 minutes": "Каждый раз, затем тишина ~5 минут",
   "Everything else was saved.": "Всё остальное сохранено.",

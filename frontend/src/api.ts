@@ -889,6 +889,7 @@ export type ContextBudgetInfo = {
   modelLimit: number | null;
   modelInputLimit: number | null;
   estimated: boolean;
+  usesPromptCap: boolean;
 };
 
 export async function getContextBudgetInfo(): Promise<ContextBudgetInfo> {
@@ -899,6 +900,7 @@ export async function getContextBudgetInfo(): Promise<ContextBudgetInfo> {
     modelLimit: typeof data.model_limit === "number" ? data.model_limit : null,
     modelInputLimit: typeof data.model_input_limit === "number" ? data.model_input_limit : null,
     estimated: data.estimated === true,
+    usesPromptCap: data.uses_prompt_cap === true,
   };
 }
 

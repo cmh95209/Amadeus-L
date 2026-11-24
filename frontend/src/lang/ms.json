@@ -277,6 +277,7 @@
   "Enter your API key": "Masukkan kunci API anda",
   "Enter your API key and press Save.": "Masukkan kunci API anda dan tekan Simpan.",
   "Estimated model context limit: {1} tokens.": "Anggaran had konteks model: {1} token.",
+  "Model context limit unknown. Using a prompt cap of {1} tokens.": "Had konteks model tidak diketahui. Gesaan dihadkan kepada {1} token.",
   "Every time": "Setiap kali",
   "Every time, then quiet for ~5 minutes": "Setiap kali, kemudian senyap ~5 minit",
   "Everything else was saved.": "Semua yang lain telah disimpan.",

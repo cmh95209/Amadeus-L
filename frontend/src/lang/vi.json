@@ -277,6 +277,7 @@
   "Enter your API key": "Nhập khóa API của bạn",
   "Enter your API key and press Save.": "Nhập khóa API rồi nhấn Lưu.",
   "Estimated model context limit: {1} tokens.": "Giới hạn ngữ cảnh ước tính của mô hình: {1} token.",
+  "Model context limit unknown. Using a prompt cap of {1} tokens.": "Chưa biết giới hạn ngữ cảnh của mô hình. Lời nhắc được giới hạn ở {1} token.",
   "Every time": "Mỗi lần",
   "Every time, then quiet for ~5 minutes": "Mỗi lần, rồi im lặng ~5 phút",
   "Everything else was saved.": "Mọi thứ còn lại đã được lưu.",

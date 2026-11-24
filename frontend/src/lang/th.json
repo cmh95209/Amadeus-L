@@ -277,6 +277,7 @@
   "Enter your API key": "ใส่คีย์ API ของคุณ",
   "Enter your API key and press Save.": "ใส่คีย์ API ของคุณแล้วกด บันทึก",
   "Estimated model context limit: {1} tokens.": "ขีดจำกัดบริบทโดยประมาณของโมเดล: {1} โทเคน",
+  "Model context limit unknown. Using a prompt cap of {1} tokens.": "ไม่ทราบขีดจำกัดบริบทของโมเดล จึงจำกัดพรอมต์ไว้ที่ {1} โทเคน",
   "Every time": "ทุกครั้ง",
   "Every time, then quiet for ~5 minutes": "ทุกครั้ง แล้วเงียบ ~5 นาที",
   "Everything else was saved.": "อย่างอื่นทั้งหมดถูกบันทึกแล้ว",

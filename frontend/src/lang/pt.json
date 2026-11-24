@@ -277,6 +277,7 @@
   "Enter your API key": "Digite sua chave de API",
   "Enter your API key and press Save.": "Digite sua chave de API e pressione Salvar.",
   "Estimated model context limit: {1} tokens.": "Limite de contexto estimado do modelo: {1} tokens.",
+  "Model context limit unknown. Using a prompt cap of {1} tokens.": "O limite de contexto do modelo é desconhecido. O prompt fica limitado a {1} tokens.",
   "Every time": "Sempre",
   "Every time, then quiet for ~5 minutes": "Sempre, depois silêncio por ~5 minutos",
   "Everything else was saved.": "O resto foi salvo.",

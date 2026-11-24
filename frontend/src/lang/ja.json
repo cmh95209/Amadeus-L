@@ -277,6 +277,7 @@
   "Enter your API key": "API キーを入力",
   "Enter your API key and press Save.": "API キーを入力して「保存」を押してください。",
   "Estimated model context limit: {1} tokens.": "モデルの推定コンテキスト上限：{1}トークン。",
+  "Model context limit unknown. Using a prompt cap of {1} tokens.": "モデルのコンテキスト上限が不明です。プロンプトの上限を{1}トークンに設定します。",
   "Every time": "毎回",
   "Every time, then quiet for ~5 minutes": "毎回、その後約 5 分は静かに",
   "Everything else was saved.": "それ以外は保存できました。",

@@ -277,6 +277,7 @@
   "Enter your API key": "أدخل مفتاح API",
   "Enter your API key and press Save.": "أدخل مفتاح API واضغط حفظ.",
   "Estimated model context limit: {1} tokens.": "الحد التقديري لسياق النموذج: {1} رمز.",
+  "Model context limit unknown. Using a prompt cap of {1} tokens.": "حد سياق النموذج غير معروف. سيُستخدم حدّ أقصى للموجّه قدره {1} رمز.",
   "Every time": "في كل مرة",
   "Every time, then quiet for ~5 minutes": "في كل مرة، ثم صمت نحو 5 دقائق",
   "Everything else was saved.": "تم حفظ كل شيء آخر.",

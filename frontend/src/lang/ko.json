@@ -277,6 +277,7 @@
   "Enter your API key": "API 키 입력",
   "Enter your API key and press Save.": "API 키를 입력하고 \"저장\"을 누르세요.",
   "Estimated model context limit: {1} tokens.": "예상 모델 컨텍스트 한도: {1}토큰.",
+  "Model context limit unknown. Using a prompt cap of {1} tokens.": "모델 컨텍스트 한도를 알 수 없습니다. 프롬프트 한도를 {1}토큰으로 적용합니다.",
   "Every time": "매번",
   "Every time, then quiet for ~5 minutes": "매번, 그 후 약 5분간 조용히",
   "Everything else was saved.": "나머지는 모두 저장되었습니다.",

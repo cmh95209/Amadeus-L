@@ -1741,13 +1741,14 @@ def set_names():
 
 @application.route("/getContextBudget", methods=["GET"])
 def get_context_budget():
-    """Show the stored total cap alongside the active model's limits."""
+    """Show the stored total cap and the effective model limits."""
     client = chat._reply_llm()
     configured, default, limits = llm.context_budget_info(client, wait=True)
     builtin = bool(getattr(client, "_amadeus_builtin", False))
     return jsonify({"budget": configured, "default": default,
-                    "model_limit": limits.total, "model_input_limit": limits.input_limit,
-                    "estimated": limits.estimated,
+                    "model_limit": limits.total_or(configured or default),
+                    "model_input_limit": limits.input_limit, "estimated": limits.estimated,
+                    "uses_prompt_cap": limits.total is None,
                     "mode": "builtin" if builtin else "custom"})
 
 

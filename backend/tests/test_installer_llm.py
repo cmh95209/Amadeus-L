@@ -15,6 +15,7 @@ this PC:
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -38,6 +39,50 @@ def _ps(args, stdin_text="", timeout=180):
     env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
     return subprocess.run([_POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass"] + args,
                           input=stdin_text, capture_output=True, text=True, timeout=timeout, env=env)
+
+
+class InstallerChoiceTextTests(unittest.TestCase):
+    def check_menu_and_summary(self, source, machine, summary):
+        self.assertIn(
+            "A) Install and set up a local model automatically "
+            f"(private, runs on this {machine}, no account needed)", source)
+        self.assertIn(
+            "B) I'll do it myself (choose this if using a cloud model or your own local model)", source)
+        self.assertIn(
+            "C) Use my ChatGPT plan (Plus or Pro) - no model download, you sign in inside the app", source)
+        self.assertIn("Type A, B or C", source)
+        self.assertIn('go to Settings -> Connection and click "Sign in with ChatGPT".', summary)
+        self.assertIn("You'll need a ChatGPT Plus or Pro plan.", summary)
+        self.assertIn("it walks you through connecting your model, step by step.", summary)
+        self.assertIn("press Save. Then pick your model (type to search) and press Test.", summary)
+        self.assertIn("nothing to connect.", summary)
+
+    def check_personal_pattern(self, pattern):
+        files = (
+            "backend/data/chatgpt_auth.json",
+            "backend/data/chatgpt_settings.json",
+            "backend/data/chatgpt_model.txt",
+            "backend/data/chatgpt_reasoning.txt",
+            "backend/data/memory_bridge.secret",
+        )
+        self.assertEqual(tuple(filter(re.compile(pattern).search, files)), files)
+
+    def test_windows_choice_text_and_personal_files(self):
+        source = _INSTALLER.read_text(encoding="utf-8")
+        self.check_menu_and_summary(source, "PC", source.split('Step 11 "ALL DONE!"', 1)[1])
+        self.check_personal_pattern(re.search(r'\$personal = "([^"]+)"', source)[1])
+
+    def check_posix_installer(self, name, machine):
+        source = _INSTALLER.with_name(name).read_text(encoding="utf-8")
+        self.check_menu_and_summary(source, machine, source.split('step 11 "All done"', 1)[1])
+        personal = source.split('personal="$(git', 1)[1]
+        self.check_personal_pattern(re.search(r"grep -E '([^']+)'", personal)[1])
+
+    def test_linux_choice_text_and_personal_files(self):
+        self.check_posix_installer("install_linux.sh", "PC")
+
+    def test_macos_choice_text_and_personal_files(self):
+        self.check_posix_installer("install_macos.sh", "Mac")
 
 
 @unittest.skipUnless(_POWERSHELL, "Windows PowerShell not available")
@@ -102,6 +147,35 @@ class ScreenTests(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.assertEqual((self.choice()["tier"], self.choice()["context"]), ("12-15", 24576))
         self.assertEqual(self.settings()["context"], 24576)
+
+    def test_option_c_prepares_the_runner_and_keeps_in_app_sign_in(self):
+        out = self.screens(["C"], "-SimulateVramGB", "24", "-SimulateRamGB", "32")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        choice = self.choice()
+        self.assertEqual(choice["mode"], "chatgpt")
+        self.assertNotIn("model", choice)
+        settings = self.settings()
+        self.assertEqual((settings["mode"], settings["model"]), ("custom", "12B"))
+        self.assertFalse(settings["model_ok"])
+
+        self.set_app_mode("chatgpt")
+        signed_in = self.settings()
+        out = self.screens(["Y"], "-SimulateVramGB", "24", "-SimulateRamGB", "32")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("Last time you chose: C)", out.stdout)
+        self.assertIn("In the app you switched to ChatGPT since", out.stdout)
+        self.assertEqual(self.choice(), {**choice, "kept": True})
+        # The kept ChatGPT mode stays; only the refresh stamp may change.
+        after = self.settings()
+        self.assertEqual(after["mode"], "chatgpt")
+        self.assertEqual({k: v for k, v in after.items() if k != "written"},
+                         {k: v for k, v in signed_in.items() if k != "written"})
+
+    def test_option_c_without_a_runner_starts_in_custom_mode(self):
+        out = self.screens(["C"], "-SimulateVramGB", "0")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertEqual(self.choice()["mode"], "chatgpt")
+        self.assertEqual(self.settings(), {"mode": "custom"})
 
     def set_app_mode(self, mode):
         # What the app's own Settings screen saves (json.dump, indent=4)

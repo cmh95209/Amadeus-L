@@ -52,6 +52,7 @@
 #  WHAT'S NEW IN v3.2.1 (November 2026):
 #   - The language question lists Brazilian Portuguese and European
 #     Portuguese as two choices (17 languages).
+#   - Option C sets up Amadeus for in-app sign-in with a ChatGPT Plus or Pro plan.
 #
 #  WHAT'S NEW IN v3.2.0 (November 2026):
 #   - The first question asks which language Amadeus shows (her page and
@@ -590,7 +591,7 @@ app_llm_mode() {
     local cfg="$1/backend/data/local_llm.json" m
     [ -f "$cfg" ] || return 0
     m="$(json_get "$cfg" mode)"
-    case "$m" in builtin|custom) printf '%s' "$m" ;; esac
+    case "$m" in builtin|custom|chatgpt) printf '%s' "$m" ;; esac
 }
 
 # Ask until the answer is one of the valid ones (upper-cased): sets ANSWER.
@@ -614,7 +615,7 @@ read_answer() {
 
 # The chosen option (CHOICE_*), saved next to the project so a re-run asks
 # only "keep it?".
-set_choice_custom() { CHOICE_MODE="custom"; CHOICE_MODEL=""; CHOICE_CHOSEN="$(date '+%Y-%m-%dT%H:%M:%S')"; }
+set_choice_custom() { CHOICE_MODE="${1:-custom}"; CHOICE_MODEL=""; CHOICE_CHOSEN="$(date '+%Y-%m-%dT%H:%M:%S')"; }
 set_choice_from_check() {   # $1 = mode (builtin / custom), $2 = chosen time ("" = now)
     CHOICE_MODE="$1"; CHOICE_MODEL="$CH_MODEL"; CHOICE_TIER="$CH_TIER"; CHOICE_BUILD="$CH_BUILD"
     CHOICE_CONTEXT="$CH_CONTEXT"; CHOICE_KV="$CH_KV"; CHOICE_HISTORY="$CH_HISTORY"
@@ -628,7 +629,7 @@ write_choice_file() {
             "$CHOICE_MODEL" "$CHOICE_TIER" "$CHOICE_BUILD" "$CHOICE_CONTEXT" "$CHOICE_KV" \
             "$CHOICE_HISTORY" "$CHOICE_NEED" "$(json_bool "$CHOICE_SIMULATED")" "$CHOICE_CHOSEN" > "$LLM_CHOICE_FILE"
     else
-        printf '{\n    "mode": "custom",\n    "chosen": "%s"\n}\n' "$CHOICE_CHOSEN" > "$LLM_CHOICE_FILE"
+        printf '{\n    "mode": "%s",\n    "chosen": "%s"\n}\n' "$CHOICE_MODE" "$CHOICE_CHOSEN" > "$LLM_CHOICE_FILE"
     fi
 }
 
@@ -671,16 +672,20 @@ llm_choice_step() {
         prev_mode="$(json_get "$LLM_CHOICE_FILE" mode)"
         prev_model="$(json_get "$LLM_CHOICE_FILE" model)"
         prev_chosen="$(json_get "$LLM_CHOICE_FILE" chosen)"
-        if [ "$prev_mode" = "custom" ] || { [ "$prev_mode" = "builtin" ] && [ -n "$(model_field "$prev_model" 1)" ]; }; then
+        if [ "$prev_mode" = "custom" ] || [ "$prev_mode" = "chatgpt" ] || { [ "$prev_mode" = "builtin" ] && [ -n "$(model_field "$prev_model" 1)" ]; }; then
             if [ "$prev_mode" = "builtin" ]; then log "  Last time you chose: A) her built-in local model - $(model_field "$prev_model" 2)"
+            elif [ "$prev_mode" = "chatgpt" ]; then log "  Last time you chose: C) use your ChatGPT plan (Plus or Pro)"
             else log "  Last time you chose: B) you connect a model yourself"; fi
             # What the app uses NOW: if the user switched the mode in
             # Settings since the last install, say so (the app's mode wins).
-            local app_mode
+            local app_mode expected_mode="$prev_mode"
+            if [ "$prev_mode" = "chatgpt" ]; then expected_mode="custom"; fi
             app_mode="$(app_llm_mode "$PROJ")"
-            if [ -n "$app_mode" ] && [ "$app_mode" != "$prev_mode" ]; then
+            if [ -n "$app_mode" ] && [ "$app_mode" != "$expected_mode" ]; then
                 if [ "$app_mode" = "custom" ]; then
                     log "  In the app you switched to your own model since - that stays. (The built-in model is still kept up to date, so you can switch back in Settings.)"
+                elif [ "$app_mode" = "chatgpt" ]; then
+                    log "  In the app you switched to ChatGPT since - that stays."
                 else
                     log "  In the app you switched to her built-in model since - that stays."
                 fi
@@ -700,7 +705,7 @@ llm_choice_step() {
                     CHOICE_SIMULATED="$([ "$(json_get "$LLM_CHOICE_FILE" simulated)" = "true" ] && echo 1 || echo 0)"
                     CHOICE_CHOSEN="$prev_chosen"
                 else
-                    CHOICE_MODE="custom"; CHOICE_MODEL=""; CHOICE_CHOSEN="$prev_chosen"
+                    CHOICE_MODE="$prev_mode"; CHOICE_MODEL=""; CHOICE_CHOSEN="$prev_chosen"
                 fi
                 write_choice_file
                 return 0
@@ -710,12 +715,19 @@ llm_choice_step() {
     log "  How should Amadeus think?"
     log "    A) Install and set up a local model automatically (private, runs on this Mac, no account needed)"
     log "    B) I'll do it myself (choose this if using a cloud model or your own local model)"
+    log "    C) Use my ChatGPT plan (Plus or Pro) - no model download, you sign in inside the app"
     CHOICE_KEPT=0   # a fresh choice sets the mode from the answer
-    read_answer "Type A or B" A B
-    if [ "$ANSWER" = "A" ]; then confirm_local_model; else set_choice_custom; fi
+    read_answer "Type A, B or C" A B C
+    case "$ANSWER" in
+        A) confirm_local_model ;;
+        B) set_choice_custom ;;
+        C) set_choice_custom chatgpt ;;
+    esac
     write_choice_file
     if [ "$CHOICE_MODE" = "builtin" ]; then
         log "  Chosen: $(model_field "$CHOICE_MODEL" 2) - it downloads in the background while everything else installs."
+    elif [ "$CHOICE_MODE" = "chatgpt" ]; then
+        log "  Chosen: option C - sign in with ChatGPT in Settings after the install."
     else
         log "  Chosen: option B - you connect a model yourself in Settings after the install."
     fi
@@ -850,9 +862,16 @@ write_local_llm_config() {
     local proj="$1" mode="$2" exe="$3" server_ok="$4" model_path="$5" model_ok="$6"
     local cfg="$proj/backend/data/local_llm.json" sel="" budget="" extra="" app_mode=""
     mkdir -p "$proj/backend/data"
+    if [ "${CHOICE_KEPT:-0}" = 1 ]; then
+        app_mode="$(app_llm_mode "$proj")"
+        # Only in-app sign-in can set ChatGPT mode. A kept choice keeps it (other fields still refresh).
+    fi
     if [ "$mode" = "custom" ] && [ -z "$CHOICE_MODEL" ]; then
+        if [ "$app_mode" = "chatgpt" ]; then return 0; fi
         if [ -f "$cfg" ]; then
-            sed 's/^\([[:space:]]*"mode":[[:space:]]*\)"builtin"/\1"custom"/' "$cfg" > "$cfg.tmp" && mv -f "$cfg.tmp" "$cfg"
+            sed -E 's/^([[:space:]]*"mode":[[:space:]]*)"(builtin|chatgpt)"/\1"custom"/' "$cfg" > "$cfg.tmp" && mv -f "$cfg.tmp" "$cfg"
+        elif [ "$CHOICE_MODE" = "chatgpt" ]; then
+            printf '{\n    "mode": "custom"\n}\n' > "$cfg.tmp" && mv -f "$cfg.tmp" "$cfg"
         fi
         return 0
     fi
@@ -860,10 +879,7 @@ write_local_llm_config() {
         sel="$(json_get "$cfg" selected_file)"
         budget="$(json_get "$cfg" history_budget)"
     fi
-    if [ "${CHOICE_KEPT:-0}" = 1 ] && [ -f "$cfg" ]; then
-        app_mode="$(json_get "$cfg" mode)"
-        case "$app_mode" in builtin|custom) mode="$app_mode" ;; esac
-    fi
+    case "$app_mode" in builtin|custom|chatgpt) mode="$app_mode" ;; esac
     if [ -n "$sel" ] && [ -f "$sel" ]; then extra="$extra,
     \"selected_file\": $(json_str "$sel")"; fi
     case "$budget" in ''|*[!0-9]*) ;; *) extra="$extra,
@@ -1617,7 +1633,7 @@ if [ -d "$PROJ/.git" ]; then
     # that are actually changed are shelved, and only a shelf made here is
     # put back afterwards.
     personal="$(git -C "$PROJ" diff --name-only 2>/dev/null \
-                | grep -E '(^|/)(llm_server|llm_model|personality)\.txt$' || true)"
+                | grep -E '(^|/)((llm_server|llm_model|personality|chatgpt_model|chatgpt_reasoning)\.txt|chatgpt_(auth|settings)\.json|memory_bridge\.secret)$' || true)"
     stashed=""
     if [ -n "$personal" ] && git -C "$PROJ" stash push --quiet -m "amadeus-installer-personal" -- $personal; then
         stashed="$(git -C "$PROJ" rev-parse --verify --quiet 'stash@{0}' || true)"
@@ -2050,15 +2066,22 @@ fi
 log "  Here is what to do next:"
 log "  1) Double-click this file to START Amadeus:"
 log "       $PROJ/start_macos.command"
-log "  2) When she opens in your browser, read her introduction message -"
-log "     it walks you through connecting your model, step by step."
-log "  3) (Shortcut) You can also open Settings -> Connection, pick your"
-log "     provider (or type your server's address), paste its API key and"
-log "     press Save. Then pick your model (type to search) and press Test."
+if [ "$CHOICE_MODE" = "chatgpt" ]; then
+    log '  2) In Amadeus, go to Settings -> Connection and click "Sign in with ChatGPT".'
+    log "     You'll need a ChatGPT Plus or Pro plan."
+else
+    log "  2) When she opens in your browser, read her introduction message -"
+    log "     it walks you through connecting your model, step by step."
+    log "  3) (Shortcut) You can also open Settings -> Connection, pick your"
+    log "     provider (or type your server's address), paste its API key and"
+    log "     press Save. Then pick your model (type to search) and press Test."
+fi
 log "     Also enter your name under Preferences and press Save - she waits"
 log "     for it."
-log "     On a Mac, good choices: a cloud service (OpenRouter, OpenAI...)"
-log "     or a local model server like Ollama, LM Studio or llama.cpp."
+if [ "$CHOICE_MODE" = "custom" ]; then
+    log "     On a Mac, good choices: a cloud service (OpenRouter, OpenAI...)"
+    log "     or a local model server like Ollama, LM Studio or llama.cpp."
+fi
 if [ "$LLM_READY" = 1 ]; then
     log "  To run a GGUF model on this Mac instead: put the file in"
     log "       $MODELS_DIR"

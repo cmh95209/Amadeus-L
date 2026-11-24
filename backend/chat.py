@@ -1,5 +1,6 @@
 import memory as store
 import builtin_llm
+import chatgpt_llm
 import providers
 import context_window
 from llm import get_llm, reset_llm, maybe_strip_rejected_params
@@ -15,6 +16,7 @@ import unicodedata
 import time
 import concurrent.futures
 import difflib
+from contextvars import copy_context
 from datetime import datetime
 from urllib.parse import urlsplit
 import concerns
@@ -60,6 +62,8 @@ def setLLMModel(new_model: str):
 #      else, return the LLM Model e.g., "deepseek/deepseek-v3.2-exp"
 def getLLMModel():
     global LLM_Model
+    if chatgpt_llm.active():
+        return chatgpt_llm.selected_model() or chatgpt_llm.DEFAULT_MODEL
     if builtin_llm.active():
         return builtin_llm.model_name()   # what the built-in server serves
     return LLM_Model.strip() if LLM_Model else "No Model Selected."
@@ -96,7 +100,7 @@ def has_api_key() -> bool:
     # keyless one is fine, the model client sends a placeholder instead
     # (llm.py). A cloud provider with no key anywhere still answers
     # "No API key. Add one in Settings."
-    if builtin_llm.active() or bool(API_KEY.strip()):
+    if chatgpt_llm.active() or builtin_llm.active() or bool(API_KEY.strip()):
         return True
     return providers.get(providers.active_id())["kind"] != "cloud"
 
@@ -1167,6 +1171,7 @@ def _aside_messages(topic: str, context, local: bool, avoid=None):
                            [], ctx, right_now=_right_now_note(), conversation_id=conv)
 
 
+@chatgpt_llm.background_task
 def _write_aside(run: "_AsideRun", topic: str, context, conv, emit) -> None:
     started = time.monotonic()
     try:
@@ -1469,6 +1474,8 @@ def _reread_lookup(lookup_id) -> str:
         ordered = sorted(results, key=lambda r: (r["url"] not in urls, r["rank"]))
         try:
             extra, pages = _read_results(lookup["query"], ordered, source)
+        except chatgpt_llm.ChatGPTError:
+            raise
         except Exception:
             print(f"[Amadeus] Re-reading lookup #{lookup['id']} failed")
             extra, pages = "", []
@@ -1845,6 +1852,8 @@ def _web_search_with_content(query: str) -> str:
         elif mode == "reader":
             source["topup_stop"] = ("time" if deadline - reserve - time.monotonic() < SEARCH_MIN_ENGINE_TIME
                                     else "limit")
+    except chatgpt_llm.ChatGPTError:
+        raise
     except Exception:
         print("[Amadeus] Reading search result pages failed")
     finally:
@@ -2321,6 +2330,8 @@ def _ensure_japanese(pack: "AmadeusPack", llm) -> "AmadeusPack":
         if _speaks_japanese(jps):
             print("[Amadeus] JPS was not Japanese - repaired with a translation pass")
             return AmadeusPack(assistant_reply_JPS=jps, assistant_reply_ENG=pack.assistant_reply_ENG)
+    except chatgpt_llm.ChatGPTError:
+        raise
     except Exception as e:
         print("[Amadeus] Japanese repair failed:", repr(e))
     return pack
@@ -2368,6 +2379,8 @@ def _ensure_english(pack: "AmadeusPack", llm) -> "AmadeusPack":
             print("[Amadeus] ENG was not English - repaired with a translation pass")
             return AmadeusPack(assistant_reply_JPS=pack.assistant_reply_JPS, assistant_reply_ENG=new_eng)
         print(f"[Amadeus] Translation pass unusable - kept the line as it was - raw: {new_eng[:120]!r}")
+    except chatgpt_llm.ChatGPTError:
+        raise
     except Exception as e:
         print("[Amadeus] English repair failed:", repr(e))
     # Fallback: show the Japanese line rather than an empty box.
@@ -2507,6 +2520,8 @@ def _salvage_plain_text(raw, llm) -> "AmadeusPack":
                 ),
             }])
             eng = _strip_thinking(trans.content if isinstance(trans.content, str) else str(trans.content)).strip()
+        except chatgpt_llm.ChatGPTError:
+            raise
         except Exception as e:
             print("[Amadeus] Salvage: English translation failed:", repr(e))
         return AmadeusPack(assistant_reply_JPS=jps, assistant_reply_ENG=eng or jps)
@@ -2525,6 +2540,8 @@ def _salvage_plain_text(raw, llm) -> "AmadeusPack":
             ),
         }])
         jps = _strip_thinking(trans.content if isinstance(trans.content, str) else str(trans.content)).strip()
+    except chatgpt_llm.ChatGPTError:
+        raise
     except Exception as e:
         print("[Amadeus] Salvage: Japanese translation failed:", repr(e))
     return AmadeusPack(assistant_reply_JPS=jps or eng, assistant_reply_ENG=eng)
@@ -2565,6 +2582,8 @@ def _translate_to_japanese(llm, text: str) -> str:
         }])
         jps = _clean_tts_text(_strip_thinking(trans.content if isinstance(trans.content, str) else str(trans.content)))
         return jps if _speaks_japanese(jps) else ""
+    except chatgpt_llm.ChatGPTError:
+        raise
     except Exception as e:
         print("[Amadeus] Voice-first: Japanese repair failed:", repr(e))
         return ""
@@ -2888,6 +2907,8 @@ def _invoke_forced(bound_llm, convo):
     """
     try:
         return _invoke_prompt(bound_llm, convo)
+    except (context_window.PromptTooLarge, chatgpt_llm.ChatGPTError):
+        raise
     except Exception as exc:
         if _forced_tool_choice_rejected(exc):
             print("[Amadeus] Server rejected forced tool choice; retrying with tool_choice=auto:",
@@ -3529,6 +3550,8 @@ def _web_on_false_refusal_net(pack: "AmadeusPack", llm, messages) -> "AmadeusPac
              )}])
     try:
         reply = _invoke_forced(rewrite_llm, convo)
+    except chatgpt_llm.ChatGPTError:
+        raise
     except Exception as exc:
         print("[Amadeus] Web ON: corrective rewrite failed:", repr(exc))
         return pack
@@ -3604,6 +3627,8 @@ def _pretend_lookup_net(pack: "AmadeusPack", llm, messages) -> "AmadeusPack":
             new = _pack_from_args(calls[0].get("args"))
             if not _claims_lookup(new) and not _degenerate_pack(new):
                 return new
+    except chatgpt_llm.ChatGPTError:
+        raise
     except Exception as exc:
         print("[Amadeus] Web ON: pretend-lookup rewrite failed:", repr(exc))
     print("[Amadeus] Web ON: rewrite still claims a lookup - serving the honest line.")
@@ -3666,6 +3691,8 @@ def _tense_net(pack: "AmadeusPack", llm, messages) -> "AmadeusPack":
             still_future, still_last = _date_problems(new)
             if not _degenerate_pack(new) and not still_future and not still_last:
                 return new
+    except chatgpt_llm.ChatGPTError:
+        raise
     except Exception as exc:
         print("[Amadeus] Web ON: tense rewrite failed:", repr(exc))
     print("[Amadeus] Web ON: tense rewrite did not help - serving the original.")
@@ -3675,16 +3702,15 @@ def _tense_net(pack: "AmadeusPack", llm, messages) -> "AmadeusPack":
 def _getResponsePackedWithWebSearch(llm, messages) -> "AmadeusPack":
     """Web-search turn with a hard honesty guarantee.
 
-    Any failure inside the loop (rate limit, timeout, dropped connection,
-    unusable model output) returns _honest_search_failure_pack() instead of
-    propagating. Why not let the generic outer fallback retry? It retries with
+    Context and ChatGPT errors go straight to the caller. Other loop failures
+    return _honest_search_failure_pack(). The generic outer fallback retries with
     the ORIGINAL messages - which lack any search results from this turn - so it
     can at best reproduce her pre-search announcement as the "answer" (the exact
     failure this guard exists to remove).
     """
     try:
         pack = _web_search_loop(llm, messages)
-    except context_window.PromptTooLarge:
+    except (context_window.PromptTooLarge, chatgpt_llm.ChatGPTError):
         raise
     except Exception as exc:
         if maybe_strip_rejected_params(exc, LLM_Model):
@@ -3694,7 +3720,7 @@ def _getResponsePackedWithWebSearch(llm, messages) -> "AmadeusPack":
             try:
                 llm = _reply_llm()
                 pack = _web_search_loop(llm, messages)
-            except context_window.PromptTooLarge:
+            except (context_window.PromptTooLarge, chatgpt_llm.ChatGPTError):
                 raise
             except Exception as exc2:
                 print("[Amadeus] Web loop: retry after sampling-parameter rejection failed -",
@@ -3767,6 +3793,8 @@ def _weather_retry(pack: "AmadeusPack", llm, messages) -> "AmadeusPack":
     try:
         again = _web_search_loop(llm, live_lookup.add_turn_note(
             list(messages), _RIGHT_NOW_LABEL, live_lookup.RETRY_NOTE))
+    except chatgpt_llm.ChatGPTError:
+        raise
     except Exception as exc:
         print("[Amadeus] Weather retry failed:", repr(exc))
         return pack
@@ -4035,6 +4063,8 @@ def _web_triage(llm, messages):
                   % (route["weather"], route["place"],
                      route["search"], route["topic"], route["check"]))
             return route
+    except chatgpt_llm.ChatGPTError:
+        raise
     except Exception as exc:
         print("[Amadeus] Web triage call failed - falling back to keyword routing:",
               repr(exc))
@@ -4163,7 +4193,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
         if think_state["on"]:
             try:
                 return _invoke_forced(think_llm, convo_)
-            except context_window.PromptTooLarge:
+            except (context_window.PromptTooLarge, chatgpt_llm.ChatGPTError):
                 raise
             except Exception as exc:
                 think_state["on"] = False
@@ -4223,6 +4253,8 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
             and _web_triage_candidate(last_user, messages):
         try:
             triaged = _web_triage(llm, messages)
+        except chatgpt_llm.ChatGPTError:
+            raise
         except Exception:
             triaged = None
         triage_failed = triaged is None
@@ -4560,7 +4592,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
                 return _pack_from_args(calls[0].get("args"))
             raw = (reply.content if isinstance(reply.content, str)
                    else str(reply.content or ""))
-        except context_window.PromptTooLarge:
+        except (context_window.PromptTooLarge, chatgpt_llm.ChatGPTError):
             raise
         except Exception as exc:
             print("[Amadeus] Web loop: final-answer retry failed - honest "
@@ -4616,7 +4648,7 @@ def _web_search_loop(llm, messages) -> "AmadeusPack":
                     print("[Amadeus] Web loop: retry still degenerate - "
                           "honest fallback.")
                     return _honest_search_failure_pack(weather=weather_handled)
-            except context_window.PromptTooLarge:
+            except (context_window.PromptTooLarge, chatgpt_llm.ChatGPTError):
                 raise
             except Exception as exc:
                 print("[Amadeus] Web loop: bounded retry failed - honest "
@@ -5365,7 +5397,7 @@ def generate_greeting(mode: str = "startup",
     llm = _reply_llm()
     try:
         pack = _greeting_call(llm, arrival)
-    except context_window.PromptTooLarge:
+    except (context_window.PromptTooLarge, chatgpt_llm.ChatGPTError):
         raise
     except Exception as e:
         # One bounded retry with a fresh client: either the connection
@@ -5402,6 +5434,8 @@ def generate_greeting(mode: str = "startup",
             try:
                 corrected = _out(_greeting_call(
                     llm, arrival + " " + _greeting_correction_line(situation)))
+            except chatgpt_llm.ChatGPTError:
+                raise
             except Exception as e3:
                 print("[Amadeus] Greeting correction call failed:", repr(e3))
             if corrected is not None and _greeting_time_lie_check(
@@ -5493,6 +5527,15 @@ ATTACH_REACTION_INSTRUCTION = {
         "conversation above shows that. Do not search for anything."),
 }
 
+ATTACH_PREVIEW_REACTION_INSTRUCTION = {
+    "role": "system",
+    "content": (
+        "The user just attached files that are waiting to be sent. Say one short, natural line "
+        "as yourself about something you can see or read in the available previews. "
+        "Use details from those previews and don't guess about files without one. "
+        "If none are ready, react to the fact they attached something. Do not search for anything."),
+}
+
 
 # The user took back what they had attached, after she had already reacted
 # to it (MH 2026-10-27: she notices, in her own words - "didn't you want to
@@ -5520,6 +5563,9 @@ def generate_attach_reaction(attachment_ids, conversation_id=None):
         return None
     ctx = store.build_prompt_messages(conversation_id=conv, proactive=True)
     history = " ".join(_content_text(m.get("content")) for m in ctx)
+    if chatgpt_llm.active():
+        return _attach_line(conv, ctx, attachments.reaction_preview(rows, history),
+                            ATTACH_PREVIEW_REACTION_INSTRUCTION)
     return _attach_line(conv, ctx, attachments.reaction_event(rows, history),
                         ATTACH_REACTION_INSTRUCTION)
 
@@ -5566,6 +5612,7 @@ def _attach_line(conv, ctx, event_line, instruction):
     return pack, assistant_id, conv_id
 
 
+@chatgpt_llm.user_message
 def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
     llm = _reply_llm()
     picture_conv = getattr(message_context, "conversation_id", None)
@@ -5666,7 +5713,7 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
                 return _honest_search_failure_pack(detail=why)
             raise ValueError(f"structured reply unusable ({why})")
         return _out(out)
-    except context_window.PromptTooLarge:
+    except (context_window.PromptTooLarge, chatgpt_llm.ChatGPTError):
         raise
     except Exception as e:
         # The server may REJECT a sampling parameter (strict cloud compat
@@ -5678,7 +5725,7 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
             try:
                 out = _attempt(_reply_llm())
                 return _out(out)
-            except context_window.PromptTooLarge:
+            except (context_window.PromptTooLarge, chatgpt_llm.ChatGPTError):
                 raise
             except Exception:
                 pass  # the retry also failed; the ladder below handles it
@@ -5766,6 +5813,8 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
                     return _out(_salvage_plain_text(raw2, llm))
                 print("[Amadeus] Follow-up stalled too - serving the original "
                       "line.")
+            except chatgpt_llm.ChatGPTError:
+                raise
             except Exception as e3:
                 print("[Amadeus] Check-promise follow-up failed; serving the "
                       "original line:", repr(e3))
@@ -5790,6 +5839,7 @@ def getResponsePacked(message_context, internal_context=None) -> AmadeusPack:
 #   assistant_reply_JPS and an EMPTY assistant_reply_ENG - the English display
 #   line is written by call 2 (getOutputPackedVoiceFirst's background
 #   backfill) while her voice is already playing
+@chatgpt_llm.user_message
 def getResponsePackedVoiceFirst(message_context, internal_context=None) -> AmadeusPack:
     llm = _reply_llm()
     picture_conv = getattr(message_context, "conversation_id", None)
@@ -5810,8 +5860,16 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
     except Exception:
         memory_block = None
     picture_index = attachments.picture_index_message(picture_conv)
+
+    rules = _lang_rules(_PLAIN_RULES_JA) if plain else _PACK_RULES_JA_ONLY
+    if isinstance(llm, chatgpt_llm.ChatGPTClient):
+        rules = {**rules, "content": (
+            "Every sentence in assistant_reply_JPS must be natural spoken Japanese from start to finish. "
+            "Understand the user in whichever language they write. Use Japanese grammar and wording "
+            "throughout the voice line, even if the user's language shares characters with Japanese. "
+            "The user's display language is handled in a separate translation.\n\n" + rules["content"])}
     messages = _ordered_prompt(
-        _lang_rules(_PLAIN_RULES_JA) if plain else _PACK_RULES_JA_ONLY,
+        rules,
         NO_WEB_BLOCK,
         [{**block, "_window_optional": True} for block in book_messages]
         + _optional_context(memory_block)
@@ -5868,7 +5926,7 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
         if why:
             raise ValueError(f"structured reply unusable ({why})")
         return _out(_jps_of(out))
-    except context_window.PromptTooLarge:
+    except (context_window.PromptTooLarge, chatgpt_llm.ChatGPTError):
         raise
     except Exception as e:
         # Same ladder as the single-call path, with the JA-only twins: one
@@ -5880,7 +5938,7 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
                 out = _attempt(_reply_llm())
                 if out is not None:
                     return _out(_jps_of(out))
-            except context_window.PromptTooLarge:
+            except (context_window.PromptTooLarge, chatgpt_llm.ChatGPTError):
                 raise
             except Exception:
                 pass  # the retry also failed; the ladder below handles it
@@ -5946,6 +6004,8 @@ def getResponsePackedVoiceFirst(message_context, internal_context=None) -> Amade
                     print("[Amadeus] Voice-first: follow-up finished the reply as plain text; salvaging.")
                     return _out(_salvage_jps_plain_text(raw2, llm))
                 print("[Amadeus] Voice-first: follow-up stalled too - serving the original line.")
+            except chatgpt_llm.ChatGPTError:
+                raise
             except Exception as e3:
                 print("[Amadeus] Voice-first: check-promise follow-up failed; serving the original line:", repr(e3))
             if owner is not None:
@@ -5987,7 +6047,7 @@ def _with_picture_retry(reply, cleanup=None):
     reply = lambda: _checked(original)  # noqa: E731
     try:
         return reply()
-    except (reply_errors.ReplyFailed, context_window.PromptTooLarge):
+    except (reply_errors.ReplyFailed, context_window.PromptTooLarge, chatgpt_llm.ChatGPTError):
         raise
     except Exception as exc:
         if attachments.took_video() and attachments.is_video_rejection(exc):
@@ -6019,9 +6079,10 @@ def _after_picture_turn(conv, user_id, user_text, her_line, her_id=None) -> None
     def gone(message_id) -> bool:
         return message_id is not None and store.message_turn(message_id) is None
 
+    @chatgpt_llm.background_task
     def work():
         try:
-            client = _translation_llm()
+            client = _translation_llm() if chatgpt_llm.background_allowed() else None
         except Exception as exc:
             print("[Amadeus] Picture caption: model server unreachable:", repr(exc))
             client = None
@@ -6130,6 +6191,7 @@ class VoiceFirstTurn:
         # English line (the text falls back to the Japanese line).
         self.en_pending = threading.Event()
         self.en_failed = False
+        self.en_error = ""
         # Low-priority calls of this turn (captions, trust rescore): run
         # after the English line so they do not compete with it.
         self.after_english = []
@@ -6343,6 +6405,7 @@ def _translate_retry_wait(exc) -> float:
     return TRANSLATE_RETRY_WAIT_S
 
 
+@chatgpt_llm.deferred_translation
 def _backfill_english(turn: "VoiceFirstTurn", llm, context_lines) -> None:
     """Call 2, in a background thread: write the English display line for the
     Japanese line call 1 already stored, then publish it (the stored row and
@@ -6363,6 +6426,8 @@ def _backfill_english(turn: "VoiceFirstTurn", llm, context_lines) -> None:
     try:
         try:
             en = _translate_reply_en(llm, jps, context_lines)
+        except chatgpt_llm.ChatGPTError:
+            raise
         except Exception as exc:
             if getattr(exc, "amadeus_retried", False):
                 raise
@@ -6376,6 +6441,8 @@ def _backfill_english(turn: "VoiceFirstTurn", llm, context_lines) -> None:
             en = _translate_reply_en(llm, jps, context_lines)
     except Exception as exc:
         print("[Amadeus] Voice-first: English backfill failed:", repr(exc))
+        if isinstance(exc, chatgpt_llm.ChatGPTError):
+            turn.en_error = str(exc)
         en = ""
     timing.english_done(turn.assistant_id, started)
     final = en or jps
@@ -6701,6 +6768,7 @@ def _apply_check_concerns(text) -> None:
         print(f"[Amadeus] Concern noted: {found[:80]}")
 
 
+@chatgpt_llm.background_task
 def run_trust_rescore() -> None:
     """Background: nudge trust a small step in the direction the rapport is moving.
 
@@ -6710,6 +6778,8 @@ def run_trust_rescore() -> None:
     snapping to whatever the last few messages happen to look like. The same call
     reports small changes to her short-term feelings (feelings.py).
     """
+    if not chatgpt_llm.background_allowed():
+        return
     # Voice on the processor: not while she is speaking (voice_gate).
     voice_gate.wait_quiet()
     try:
@@ -6804,6 +6874,8 @@ def _note_reply_feelings() -> None:
 
 def maybe_schedule_trust_rescore() -> None:
     """Count your messages; every ~5, re-judge trust in the background (never blocks chat)."""
+    if not chatgpt_llm.background_allowed():
+        return
     try:
         count = stats.adjust_stat("_user_msg_counter", 1)
         if count >= 5:
@@ -6880,9 +6952,11 @@ def suggest_name_reading(name: str) -> str:
     # must not wait that long, so the call is capped here.
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        reply = pool.submit(_ask).result(timeout=_NAME_READING_TIMEOUT_S)
+        reply = pool.submit(copy_context().run, _ask).result(timeout=_NAME_READING_TIMEOUT_S)
         content = reply.content if isinstance(reply.content, str) else str(reply.content)
         reading = _strip_thinking(content).strip().strip("\"'「」『』。").strip()
+    except chatgpt_llm.ChatGPTError:
+        raise
     except Exception as e:
         print("[Amadeus] Name reading suggestion failed:", repr(e))
         return ""
@@ -6901,7 +6975,10 @@ def suggest_name_reading(name: str) -> str:
 _SEED_MAX = 3
 
 
+@chatgpt_llm.background_task
 def seed_concerns_once() -> None:
+    if not chatgpt_llm.background_allowed():
+        return
     import os
     path = _concerns_path()
     if os.path.exists(path):
@@ -6941,9 +7018,10 @@ def seed_concerns_once() -> None:
         print(f"[Amadeus] Concerns seed skipped (will retry next start): {exc!r}")
 
 
+@chatgpt_llm.background_task
 def backfill_japanese_voice() -> None:
     global _BACKFILL_STARTED
-    if _BACKFILL_STARTED:
+    if _BACKFILL_STARTED or not chatgpt_llm.background_allowed():
         return
     _BACKFILL_STARTED = True
     try:
@@ -6972,6 +7050,8 @@ def backfill_japanese_voice() -> None:
                 store.set_message_japanese(row["id"], jps)
                 failures = 0
                 print(f"[Amadeus] Backfill: voiced message {row['id']}")
+            except chatgpt_llm.ChatGPTError:
+                return
             except Exception as exc:
                 failures += 1
                 print(f"[Amadeus] Backfill failed at message {row['id']}: {exc!r}")
@@ -6990,7 +7070,10 @@ def backfill_japanese_voice() -> None:
 # (get_llm raises) or the reply is unusable, memory.py falls back to a plain
 # text fold, so the window always closes.
 
+@chatgpt_llm.background_task
 def _merge_summary_llm(current_summary: str, new_exchange: str, token_cap: int) -> str:
+    if not chatgpt_llm.background_allowed():
+        return ""  # memory.py can fold the exchange without a model
     llm = get_llm(API_KEY, LLM_Model)
     prompt = (
         "You maintain a running summary of a chat conversation so its older "

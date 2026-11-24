@@ -16,6 +16,7 @@ try {
   // here from 2026-10 to 2026-11-19 - its tap wait was shorter than the
   // 5.5 s tap motion - and stopped the run before speech.test.ts.)
   await server.ssrLoadModule("/tests/greeting.test.ts");
+  await server.ssrLoadModule("/tests/brainSwitchNotice.test.ts");
   await server.ssrLoadModule("/tests/modelPicker.test.ts");
   await server.ssrLoadModule("/tests/providers.test.ts");
   await server.ssrLoadModule("/tests/nameList.test.ts");

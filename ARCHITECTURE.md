@@ -102,6 +102,10 @@ memory data in an issue, log paste or test fixture.
 | `chat.py` | **the core**: reply and greeting pipelines, web-search loop, triage, honesty nets and retries, prompt ordering, translation line, trust re-check, summary merge |
 | `memory.py` | SQLite store (`memory.db`): messages, tabs, versions, presence, attachments index; most setting readers; `build_prompt_messages`; rolling summary |
 | `llm.py` | model client (`get_llm`), server address probing, local-vs-cloud rules, reasoning levels |
+| `context_window.py` | model limits, prompt token accounting and history selection |
+| `chatgpt_auth.py` | ChatGPT sign-in, renewal, sign-out and consent |
+| `chatgpt_llm.py` | ChatGPT Responses client, reasoning levels and background usage limits |
+| `origin_guard.py` | browser origin, host and route checks |
 | `providers.py` | the provider list in Settings and per-provider keys |
 | `vertex_auth.py` | Google Vertex AI sign-in (service-account JSON -> short-lived token) |
 | `vertex_priority.py` | the Vertex "Priority" switch (request headers) |
@@ -109,9 +113,12 @@ memory data in an issue, log paste or test fixture.
 | `reply_errors.py` | plain error messages when a reply cannot be completed |
 | `builtin_llm.py` | talking to the built-in model (mode, file choice, fixed alias) |
 | `builtin_server.py` | starting/stopping the built-in llama-server on :8091 |
-| `cm_bridge.py` | the only door to the memory sidecar: `save_turn`, `learn_now`, `fetch_memory_block` (never blocks, never raises) |
+| `cm_bridge.py` | backend calls to the memory sidecar: `save_turn`, `learn_now`, `fetch_memory_block` |
+| `memory_plan_bridge.py` | authenticated loopback route for consented sidecar extraction on the ChatGPT plan |
 | `meaning.py` | meaning checks through the sidecar's embedder (`/embed`); returns None when it is off, callers keep their old rule |
 | `cross_tab.py` | what she knows about the user's other tabs (catch-up block, search block) |
+| `moment_recall.py` | scene boundaries, recall evidence, cadence and excerpt rendering |
+| `transcript_vector_index.py` | disposable transcript embeddings and the background index worker |
 | `cross_files.py` | finding a file the user sent in another chat |
 | `attachments.py` | pictures and documents: upload, shrink, captions, her desk, `with_pictures` |
 | `video.py` | videos: resumable upload, watch copy, frames, preparation worker |
@@ -131,6 +138,7 @@ memory data in an issue, log paste or test fixture.
 | `websearch.py` | keyless search engines and their fallback order |
 | `webfetch.py` | reading a URL into clean text (bounded, private-address guard) |
 | `webreader.py` | reader mode / quick mode: notes from pages for her answer |
+| `webpdf.py` | bounded text extraction from PDF search results |
 | `weblinks.py` | links the user pastes: find and open them |
 | `webdates.py` | dates in web text relative to today |
 | `tts.py` | voice client for GPT-SoVITS: streaming to the page, saved files |
@@ -156,6 +164,7 @@ memory data in an issue, log paste or test fixture.
 | `attachments.ts`, `useAttachments.ts` | pictures, documents, videos in the composer |
 | `sources.ts`, `components/SourcesBar.tsx` | the "where this came from" chips |
 | `providers.ts`, `components/ModelPicker.tsx` | Settings: model provider and model |
+| `components/ChatGPTConnection.tsx`, `components/ChatGPTComposerPicker.tsx` | ChatGPT sign-in, consent, model and reasoning controls |
 | `i18n.ts`, `lang/*.json` | page text in every display language |
 | `live2d/`, `components/Live2DCharacter.tsx` | her Live2D model |
 | `components/` | the other panels (mood, system, mobile access, quit, ...) |
@@ -165,10 +174,12 @@ memory data in an issue, log paste or test fixture.
 | File | Owns |
 |---|---|
 | `memory_sidecar/cm_sidecar.py` | the service on :9870: `/health`, `/save`, `/context`, `/extract` (learning), `/embed` (Qwen3-Embedding-0.6B), `/memories` |
+| `memory_sidecar/transcript_embed_jobs.py` | the single background job slot for transcript embeddings |
 
 `lib/` is the vendored CharacterMemory engine (GPL-3.0, kept in its own
-process); `seed_index/` is her lore, seeded on first start. It follows the
-app's model settings and calls the model itself to learn.
+process). `seed_index/` is her lore, seeded on first start. A durable SQLite
+queue runs learning through the configured provider or through the app's
+ChatGPT bridge when the user has signed in and enabled background use.
 
 ## 8. Launcher and scripts (`scripts/`)
 
@@ -181,6 +192,7 @@ app's model settings and calls the model itself to learn.
 | `scripts/lang_her.py` | collects her fixed lines and error texts into `frontend/src/lang/en.json` |
 | `scripts/lang_fill.py` | translates the lines a language file is missing (`--check` lists them) |
 | `scripts/measure_asks.py`, `scripts/measure_meaning.py` | measuring tools for `meaning.py` against the running sidecar (development only) |
+| `scripts/bench_embed_order.py` | measures embedding latency for web search result ordering |
 
 New page text: write the English, run `node frontend/scripts/lang_extract.mjs`,
 then `scripts/lang_her.py` and `scripts/lang_fill.py`.

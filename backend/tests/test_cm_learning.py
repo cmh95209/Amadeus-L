@@ -270,7 +270,7 @@ def test_startup_worker_resumes_due_pending_jobs(db):
         ("_run_learning_worker", "_start_background_extract"),
         _learning_jobs=db.jobs, _extract_requests={}, _extracting_chats=set(),
         _extract_condition=RunUntilIdle(), agent=db, log=db.logs.append,
-        _extract_with_current_llm=lambda collect: collect(fresh),
+        _extract_for_learning_job=lambda collect: collect(fresh),
     )
     with pytest.raises(WorkerIdle):
         scope["_run_learning_worker"]()

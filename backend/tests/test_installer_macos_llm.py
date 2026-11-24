@@ -210,6 +210,35 @@ class ScreenTests(_Base):
         self.assertNotIn("selected_file", self.settings())
         self.assertEqual(self.settings()["history_budget"], 9000)
 
+    def test_option_c_prepares_the_runner_and_keeps_in_app_sign_in(self):
+        out = self.screens(["C"], ram=24)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        choice = self.choice()
+        self.assertEqual(choice["mode"], "chatgpt")
+        self.assertNotIn("model", choice)
+        settings = self.settings()
+        self.assertEqual((settings["mode"], settings["model"]), ("custom", "12B"))
+        self.assertFalse(settings["model_ok"])
+
+        self.set_app_mode("chatgpt")
+        signed_in = self.settings()
+        out = self.screens(["Y"], ram=24)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("Last time you chose: C)", out.stdout)
+        self.assertIn("In the app you switched to ChatGPT since", out.stdout)
+        self.assertEqual(self.choice(), choice)
+        # The kept ChatGPT mode stays; only the refresh stamp may change.
+        after = self.settings()
+        self.assertEqual(after["mode"], "chatgpt")
+        self.assertEqual({k: v for k, v in after.items() if k != "written"},
+                         {k: v for k, v in signed_in.items() if k != "written"})
+
+    def test_option_c_without_a_runner_starts_in_custom_mode(self):
+        out = self.screens(["C"], ram=24, chip="intel")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertEqual(self.choice()["mode"], "chatgpt")
+        self.assertEqual(self.settings(), {"mode": "custom"})
+
     def set_app_mode(self, mode):
         # What the app's own Settings screen saves (json.dump, indent=4)
         # without the installer knowing: the user switched the mode in-app.

@@ -23,6 +23,7 @@ its own - chat.py wires it up, tests pass fakes.
 from __future__ import annotations
 
 import concurrent.futures
+from chatgpt_llm import ChatGPTError
 import math
 import re
 import time
@@ -502,6 +503,8 @@ def read_pages(question, query, pages, reader, deadline, today, page_chars,
             return None, "late", 0.0
         try:
             result = reader(msgs, max(MIN_READER_TIMEOUT, remaining))
+        except ChatGPTError:
+            raise
         except TimeoutError:
             return None, "timed_out", time.monotonic() - start
         except Exception:
@@ -523,6 +526,8 @@ def read_pages(question, query, pages, reader, deadline, today, page_chars,
                 p.update(notes=notes, status="failed" if links and status == "timed_out" else status)
                 if not links:
                     p["reader_seconds"] = seconds
+            except ChatGPTError:
+                raise
             except Exception:
                 p["status"] = "failed"
             done += 1

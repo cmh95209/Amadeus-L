@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import type { ConnectionStatus, MemoryMessage } from "../src/api";
 import { getGreeting, speakMessage } from "../src/api";
-import { deriveFooter, isCeremonyWaitLine, NOT_LISTED_GRACE_MS, placeGreeting, waitUntilQuiet } from "../src/greetingFlow";
+import {
+  canRequestGreeting, chatGPTGreetingState, createGreetingRequestQueue, deriveFooter,
+  greetingLine, isCeremonyPending, isCeremonyWaitLine, NOT_LISTED_GRACE_MS, placeGreeting, waitUntilQuiet,
+} from "../src/greetingFlow";
 import type { GreetPhase } from "../src/greetingFlow";
 
 const greeting = (id: number): MemoryMessage => ({
@@ -125,6 +128,50 @@ assert.equal(isCeremonyWaitLine("builtin_intro", true), true, "flagged built-in 
 assert.equal(isCeremonyWaitLine("wake", false), false);
 assert.equal(isCeremonyWaitLine("builtin_fallback", false), false);
 assert.equal(isCeremonyWaitLine(undefined, undefined), false);
+
+// ---- ChatGPT first launch: sign-in, then name Save and wake-up ----
+{
+  const signedIn = { signed_in: true, welcome_seen: true, background_use_allowed: true };
+  const ready = chatGPTGreetingState(signedIn);
+  assert.equal(canRequestGreeting(false, "chatgpt", ready), false, "history must load before the greeting");
+  assert.equal(canRequestGreeting(true, "chatgpt", chatGPTGreetingState(null)), false);
+  assert.equal(canRequestGreeting(true, "chatgpt", chatGPTGreetingState({ ...signedIn, signed_in: false })), false);
+  assert.equal(canRequestGreeting(true, "chatgpt", chatGPTGreetingState({ ...signedIn, welcome_seen: false })), false);
+  assert.equal(canRequestGreeting(true, "chatgpt", ready), true, "sign-in with consent can greet immediately");
+  assert.equal(canRequestGreeting(true, "builtin", "waiting"), true);
+  assert.equal(canRequestGreeting(true, "custom", "waiting"), true);
+  const declined = chatGPTGreetingState({ ...signedIn, background_use_allowed: false });
+  assert.equal(canRequestGreeting(true, "chatgpt", declined), false);
+  assert.equal(isCeremonyPending("intro", declined === "disabled"), false, "declining greetings leaves chat open");
+  assert.equal(isCeremonyPending(null), false, "the page is unlocked before the first report");
+  assert.equal(isCeremonyPending("done"), false, "a returning signed-in user can chat");
+
+  const intro = greetingLine({ ready: false, kind: "intro", response: "Introduction", assistantId: 1 });
+  const name = greetingLine({ ready: true, kind: "need_name", wait: true, response: "Your name?", assistantId: 2 });
+  const connection = greetingLine({ ready: false, kind: "need_connection", wait: true, response: "Connect me", assistantId: 3 });
+  const wake = greetingLine({ ready: true, kind: "wake", response: "I'm here", assistantId: 4 });
+  const fallback = greetingLine({ ready: true, kind: "fallback", response: "I'm online", assistantId: 4 });
+  assert.ok(intro?.waiting && name?.waiting && connection?.waiting);
+  assert.equal(isCeremonyPending("intro"), true);
+  assert.equal(isCeremonyPending("connecting"), true);
+  assert.ok(wake && !wake.waiting && wake.message.greeting_regenerable);
+  assert.ok(fallback && !fallback.waiting && !fallback.message.greeting_regenerable);
+  const beforeWake = placeGreeting(placeGreeting(placeGreeting([], intro.message), name.message), connection.message);
+  assert.deepEqual(ids(placeGreeting(beforeWake, wake.message)), [1, 2, 3, 4]);
+  assert.deepEqual(ids(placeGreeting(beforeWake, fallback.message)), [1, 2, 3, 4]);
+}
+
+// Name Save during a poll: even a silent reply releases one fresh probe.
+{
+  const requests = createGreetingRequestQueue();
+  assert.equal(requests.start(false), true);
+  assert.equal(requests.start(true), false, "save queues while the first request is out");
+  assert.equal(requests.start(false), false, "a poll cannot displace the saved recheck");
+  assert.equal(greetingLine({ ready: false, ceremony: "intro" }), null);
+  assert.equal(requests.finish(), true, "a silent reply still schedules the saved recheck");
+  assert.equal(requests.start(true), true);
+  assert.equal(requests.finish(), false, "each save is rechecked once");
+}
 
 // ---- getGreeting keeps EVERY flagged wait line while the model is down ----
 // (2026-10-24 VM test: "need_connection" and the built-in waiting lines were

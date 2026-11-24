@@ -19,6 +19,7 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 import logging
 from api import application
+import memory_plan_bridge
 import providers
 
 # One-time background job: give old replies their Japanese voice lines.
@@ -105,9 +106,10 @@ from tqdm import tqdm
 tqdm.disable = True
 
 def run_flask():
+    memory_plan_bridge.initialize()
     # Google Vertex: keep the sign-in pass fresh while it is the chosen provider.
     providers.start_vertex_keeper()
-    application.run(port=5050)
+    application.run(port=application.config["BACKEND_PORT"])
 if __name__ == "__main__":
     run_flask()
 

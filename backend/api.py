@@ -1,5 +1,5 @@
-from flask import Flask, request, jsonify, Response, send_from_directory
-from flask_cors import CORS
+from flask import Flask, abort, request, jsonify, Response, send_from_directory
+import origin_guard
 
 from chat import (
     getOutputPacked,
@@ -28,6 +28,8 @@ import video
 import builtin_llm
 import builtin_server
 import ceremony
+import chatgpt_auth
+import chatgpt_llm
 import concerns
 import context_window
 import cross_tab
@@ -38,6 +40,7 @@ import defaults_refresh
 import feelings
 import llm
 import memory
+import memory_plan_bridge
 import remote_access
 import restart_control
 import speech_text
@@ -55,16 +58,36 @@ import requests
 
 import chat
 import json
+import logging
 import os
 import queue
 import threading
 import uuid
 import time
+from html import escape
+from urllib.parse import unquote
 from itertools import chain
 from pathlib import Path
 
+# ---- TUNABLES ----
+MESSAGE_AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg"}  # Formats allowed for replay.
+
+_CALLBACK_PATH = "/auth/callback"
+
 application = Flask(__name__)
-CORS(application)
+application.config["BACKEND_PORT"] = 5050
+# Only her own page (this PC, or the user's own Tailscale name) may call the
+# backend from a browser; see origin_guard.py (was an open CORS(application)).
+origin_guard.install(application)
+
+
+class _QuietChatGPTCallback(logging.Filter):
+    def filter(self, record):
+        message = unquote(record.getMessage())
+        return _CALLBACK_PATH not in message and memory_plan_bridge.PATH not in message
+
+
+logging.getLogger("werkzeug").addFilter(_QuietChatGPTCallback())
 
 
 # LLM provider picker (feature/provider-picker): the provider table and the
@@ -255,6 +278,8 @@ def _model_not_found_message() -> str:
 def _model_server_address() -> str:
     """The model server Amadeus is using: the built-in one when that mode is
     on, else the saved address (or the auto-detected local port)."""
+    if chatgpt_llm.active():
+        return chatgpt_auth.RESOURCE
     if builtin_llm.active():
         return builtin_llm.server_url()
     return memory.load_llm_server() or llm._server_url()
@@ -284,6 +309,9 @@ def _llm_error_message(exc: Exception) -> str:
             "attachments, or increase the prompt cap in Settings.",
             "error.contextTooLarge",
         )
+    cause = exc.cause if isinstance(exc, reply_errors.ReplyFailed) else exc
+    if isinstance(cause, chatgpt_llm.ChatGPTError):
+        return str(cause)
     if isinstance(exc, reply_errors.ReplyFailed):
         try:
             model = getLLMModel().strip()
@@ -674,6 +702,7 @@ def speech_model_download():
 
 
 @application.route("/attachments/<int:attachment_id>", methods=["DELETE"])
+@chatgpt_llm.background_task
 def remove_attachment(attachment_id):
     row = attachments.get(attachment_id)
     result = attachments.remove(attachment_id)
@@ -682,7 +711,8 @@ def remove_attachment(attachment_id):
     out = {"status": "ok", "result": result}
     # ?react=1: a card taken back after her reaction to it - she notices it
     # in her own words (MH 2026-10-27). Never blocks the removal itself.
-    if result == "deleted" and request.args.get("react") == "1" and has_api_key():
+    if (result == "deleted" and request.args.get("react") == "1"
+            and chatgpt_llm.background_allowed() and has_api_key()):
         try:
             line = chat.generate_withdraw_reaction(row, row.get("conversation_id"))
         except GreetingSuperseded:
@@ -802,7 +832,10 @@ def attachments_capabilities():
 # answers {"status": "skipped"} when the reaction setting says quiet, 409
 # when the user sent first (the line is dropped).
 @application.route("/attachments/react", methods=["POST"])
+@chatgpt_llm.background_task
 def attachments_react():
+    if not chatgpt_llm.background_allowed():
+        return jsonify({"status": "skipped"})
     if not has_api_key():
         return jsonify({"message": "No API key. Add one in Settings."}), 400
     data = request.get_json(silent=True) or {}
@@ -959,11 +992,12 @@ def request_message():
         else:
             english = turn.wait_en(timeout=180.0)
         failed = bool(getattr(turn, "en_failed", False))
+        error = getattr(turn, "en_error", "")
         yield "data: " + json.dumps(
             {"phase": "text", "assistant_id": turn.assistant_id, "response": english,
              # True: no English line - "response" is her Japanese line (old
              # clients show it); the page shows "Translate again" instead.
-             "translation_failed": failed},
+             "translation_failed": failed, **({"message": error} if error else {})},
             ensure_ascii=False) + "\n\n"
 
     response = Response(generate(), mimetype="text/event-stream")
@@ -1092,7 +1126,7 @@ def getCurrLLMModel():
     # Settings' model field is the user's OWN (custom) model. In built-in
     # mode getLLMModel() names the built-in one, and saving that back would
     # overwrite the user's custom choice - so the field gets the saved one.
-    if builtin_llm.active():
+    if builtin_llm.active() or chatgpt_llm.active():
         LLM_Model = (chat.LLM_Model or "").strip() or "No Model Selected."
     else:
         LLM_Model = getLLMModel()
@@ -1598,7 +1632,7 @@ def get_brain_mode():
     return jsonify(builtin_llm.describe())
 
 
-# pre: body {"mode": "builtin" | "custom"}; "builtin" only when available
+# pre: body {"mode": "builtin" | "custom" | "chatgpt"}; "builtin" only when available
 # post: the choice is saved in data/local_llm.json and applied at once:
 #       "builtin" loads her model (in the background), "custom" unloads it
 #       and frees its graphics memory.
@@ -1606,8 +1640,13 @@ def get_brain_mode():
 def set_brain_mode():
     data = request.get_json(silent=True)
     mode = data.get("mode") if isinstance(data, dict) else None
-    if mode not in ("builtin", "custom"):
-        return jsonify({"message": "mode must be 'builtin' or 'custom'"}), 400
+    if mode not in ("builtin", "custom", "chatgpt"):
+        return jsonify({"message": "Choose Built-in, Custom Model, or ChatGPT."}), 400
+    was_chatgpt = chatgpt_llm.active()
+    if mode == "chatgpt" and not _chatgpt_user_device():
+        return jsonify({"message": _CHATGPT_PRIVATE}), 403
+    if mode == "chatgpt" and not chatgpt_auth.status()["signed_in"]:
+        return jsonify({"message": chatgpt_llm.SIGNED_OUT}), 400
     try:
         builtin_llm.save_mode(mode)
     except LookupError as exc:
@@ -1627,11 +1666,174 @@ def set_brain_mode():
         # - the keeper pauses while the built-in model is active, so the
         # pass in api_key.txt may be expired, and the first chat after the
         # switch must not race the keeper's next round.
-        providers.refresh_vertex_if_due(force=True)
+        if mode == "custom" and not was_chatgpt:
+            providers.refresh_vertex_if_due(force=True)
     info = builtin_llm.describe()
     info["restart_needed"] = False
     info["server"] = builtin_server.status()
     return jsonify(info)
+
+
+_chatgpt_launch = None
+_chatgpt_sign_in_error = ""
+_chatgpt_launch_lock = threading.Lock()
+_SIGN_IN_HERE = "Sign in on the PC running Amadeus"
+_CHATGPT_PRIVATE = "Use ChatGPT from this PC or a signed-in Tailscale device."
+
+
+def _chatgpt_loopback():
+    local = origin_guard.is_local_name
+    return (_from_this_pc() and local(origin_guard._split_host(request.host))
+            and (not request.headers.get("X-Forwarded-Host") or
+                 local(origin_guard._split_host(request.headers["X-Forwarded-Host"]))))
+
+
+memory_plan_bridge.register(application, _chatgpt_loopback)
+
+
+def _chatgpt_user_device():
+    # Serve forwards a signed-in tailnet identity from loopback. Public
+    # Funnel requests arrive without this identity.
+    return (_chatgpt_loopback() or
+            (request.remote_addr in ("127.0.0.1", "::1") and
+             bool(request.headers.get("Tailscale-User-Login"))))
+
+
+@application.before_request
+def _chatgpt_check_device():
+    if request.path == memory_plan_bridge.PATH or request.method == "OPTIONS" or request.endpoint in (
+            "chatgpt_signin", "chatgpt_authorize", "chatgpt_callback"):
+        return None
+    if not _chatgpt_user_device() and (request.path.startswith("/chatgpt/") or chatgpt_llm.active()):
+        return jsonify({"message": _CHATGPT_PRIVATE}), 403
+    return None
+
+
+@application.after_request
+def _chatgpt_private_response(response):
+    if request.path.startswith(("/chatgpt/", _CALLBACK_PATH)):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@application.errorhandler(chatgpt_auth.ChatGPTSignInError)
+def _chatgpt_error(exc):
+    return jsonify({"message": str(chatgpt_llm.safe_auth_error(exc))}), 400
+
+
+@application.route("/chatgpt/signin", methods=["POST"])
+def chatgpt_signin():
+    if (not _chatgpt_loopback() or not origin_guard.is_local_page_origin(request.headers.get("Origin", ""))
+            or any(name.lower().startswith("x-forwarded-")
+                   or name.lower() in ("forwarded", "tailscale-user-login")
+                   for name, _ in request.headers)):
+        return jsonify({"message": _SIGN_IN_HERE}), 403
+    global _chatgpt_launch, _chatgpt_sign_in_error
+    port = application.config["BACKEND_PORT"]
+    launch_id = uuid.uuid4().hex
+    with _chatgpt_launch_lock:
+        target = chatgpt_auth.start_sign_in(port)
+        _chatgpt_launch = (launch_id, target, time.monotonic() + chatgpt_auth.PENDING_TTL)
+        _chatgpt_sign_in_error = ""
+    return jsonify({"url": f"http://127.0.0.1:{port}/chatgpt/authorize/{launch_id}"})
+
+
+@application.route("/chatgpt/authorize/<launch_id>", methods=["GET"])
+def chatgpt_authorize(launch_id):
+    # The authorization URL includes OAuth registration identifiers. Pass
+    # them only in the browser's redirect, outside the Settings JSON.
+    if not _chatgpt_loopback():
+        return _SIGN_IN_HERE, 403
+    global _chatgpt_launch
+    with _chatgpt_launch_lock:
+        launch = _chatgpt_launch
+        if not launch or launch_id != launch[0] or time.monotonic() >= launch[2]:
+            return "This ChatGPT sign-in attempt has expired. Start sign-in again.", 400
+        _chatgpt_launch = None
+    return Response(status=302, headers={"Location": launch[1]})
+
+
+@application.route(_CALLBACK_PATH, methods=["GET"], strict_slashes=False, merge_slashes=False)
+def chatgpt_callback():
+    global _chatgpt_sign_in_error
+    status = 200
+    if not _chatgpt_loopback():
+        message, status = _SIGN_IN_HERE, 403
+    else:
+        with _chatgpt_launch_lock:
+            try:
+                chatgpt_auth.finish_sign_in(request.args)
+                message = "Signed in to ChatGPT - you can close this tab and go back to Amadeus."
+                _chatgpt_sign_in_error = ""
+            except chatgpt_auth.ChatGPTSignInError as exc:
+                message, status = str(chatgpt_llm.safe_auth_error(exc)), 400
+                _chatgpt_sign_in_error = message
+    body = ("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\">"
+            "<title>ChatGPT sign-in</title><p>" + escape(message) +
+            "</p><script>window.close();</script></html>")
+    return Response(body, status=status, mimetype="text/html",
+                    headers={"Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors 'none'"})
+
+
+@application.route("/chatgpt/status", methods=["GET"])
+def chatgpt_status():
+    with chatgpt_auth.session_lock:
+        return jsonify({**chatgpt_auth.status(), **chatgpt_llm.selection(),
+                        "background_use_allowed": chatgpt_auth.get_background_use_allowed(),
+                        "welcome_seen": chatgpt_auth.get_welcome_seen(),
+                        "sign_in_error": _chatgpt_sign_in_error})
+
+
+@application.route("/chatgpt/models", methods=["GET"])
+def chatgpt_models():
+    models, choices = chatgpt_llm.models_and_selection()
+    return jsonify({"models": models, **choices})
+
+
+@application.route("/chatgpt/model", methods=["POST"])
+def chatgpt_save_model():
+    data = request.get_json(silent=True)
+    model = data.get("model") if isinstance(data, dict) else None
+    if not isinstance(model, str) or not model:
+        return jsonify({"message": "Choose a ChatGPT model from the list."}), 400
+    _, choices = chatgpt_llm.models_and_selection(model)
+    return jsonify(choices)
+
+
+@application.route("/chatgpt/reasoning", methods=["POST"])
+def chatgpt_save_reasoning():
+    data = request.get_json(silent=True)
+    level = data.get("level") if isinstance(data, dict) else None
+    return jsonify({"level": chatgpt_llm.set_reasoning_level(level)})
+
+
+@application.route("/chatgpt/signout", methods=["POST"])
+def chatgpt_signout():
+    global _chatgpt_launch, _chatgpt_sign_in_error
+    with _chatgpt_launch_lock:
+        _chatgpt_launch = None
+        _chatgpt_sign_in_error = ""
+        chatgpt_auth.sign_out()
+    return chatgpt_status()
+
+
+@application.route("/chatgpt/background", methods=["POST"])
+def chatgpt_background():
+    data = request.get_json(silent=True)
+    allowed = data.get("allowed") if isinstance(data, dict) else None
+    with chatgpt_auth.session_lock:
+        if allowed is True and not chatgpt_auth.status()["signed_in"]:
+            return jsonify({"message": chatgpt_llm.SIGNED_OUT}), 400
+        return jsonify({"background_use_allowed": chatgpt_auth.set_background_use_allowed(allowed)})
+
+
+@application.route("/chatgpt/welcome-seen", methods=["POST"])
+def chatgpt_welcome_seen():
+    with chatgpt_auth.session_lock:
+        if not chatgpt_auth.status()["signed_in"]:
+            return jsonify({"message": chatgpt_llm.SIGNED_OUT}), 400
+        return jsonify({"welcome_seen": chatgpt_auth.set_welcome_seen(True)})
 
 
 # pre: none
@@ -1864,7 +2066,8 @@ def llm_test_model():
     provider = data.get("provider")
     address = data.get("address")
     model = data.get("model")
-    if not isinstance(provider, str) or providers.get(provider) is None:
+    if not isinstance(provider, str) or (providers.get(provider) is None and
+                                         not (provider == "chatgpt" and chatgpt_llm.active())):
         return jsonify({"message": "Unknown provider"}), 400
     return jsonify(providers.test_model(
         provider, address if isinstance(address, str) else "",
@@ -2048,10 +2251,11 @@ def set_username():
 #       and saved; returns the reading ('' = none could be made - the user
 #       can type it). An existing reading is returned untouched.
 @application.route("/suggestUsernameReading", methods=["POST"])
+@chatgpt_llm.background_task
 def suggest_username_reading():
     name = memory.load_username()
     reading = memory.load_username_reading()
-    if name and not reading:
+    if name and not reading and chatgpt_llm.background_allowed():
         reading = chat.suggest_name_reading(name)
         if reading:
             memory.save_username_reading(reading)
@@ -2189,6 +2393,14 @@ def _settle_model_after_switch(provider: str, probe: dict) -> str:
 #       endpoint and reports reachability plus the model names it offers
 @application.route("/testConnection", methods=["GET"])
 def test_connection():
+    if chatgpt_llm.active():
+        ready = chatgpt_auth.status()["signed_in"]
+        model = chatgpt_llm.selected_model()
+        return jsonify({"address": chatgpt_auth.RESOURCE, "configured": True, "reachable": ready,
+                        "models": [model] if model else [], "configured_model": model,
+                        "model_configured": ready, "model_found": ready,
+                        "error": "" if ready else chatgpt_llm.SIGNED_OUT,
+                        "voice_reachable": _voice_engine_reachable(), "builtin": False})
     builtin = builtin_llm.active()
     configured = True if builtin else memory.load_llm_server()
     address = _model_server_address()
@@ -2244,15 +2456,26 @@ def _voice_engine_reachable(timeout: float = 2.0) -> bool:
 
 # pre: relpath points inside the backend folder (generated/ or assets/)
 # post: a stored voice line is streamed back for replay
-@application.route("/message_audio/<path:relpath>", methods=["GET"])
+@application.route("/message_audio/<path:relpath>", methods=["GET"], merge_slashes=False)
 def message_audio(relpath):
+    parts = relpath.split("/")
+    if (parts[0] not in ("generated", "assets") or len(parts) < 2
+            or any(part in ("", ".", "..") for part in parts)
+            or any(char in relpath for char in ("\\", ":", "\x00"))
+            or Path(parts[-1]).suffix.lower() not in MESSAGE_AUDIO_EXTENSIONS):
+        abort(404)
+    root = Path(__file__).resolve().parent / parts[0]
+    try:
+        target = root.joinpath(*parts[1:]).resolve()
+    except (OSError, RuntimeError, ValueError):
+        abort(404)
+    if not target.is_relative_to(root) or target.suffix.lower() not in MESSAGE_AUDIO_EXTENSIONS:
+        abort(404)
     # Lines saved before v2.1.2 kept the engine's "0 bytes" WAV header, which
     # Firefox will not replay: write the real sizes in on first replay.
-    if relpath.startswith("generated/") and relpath.endswith(".wav"):
-        target = (Path(__file__).resolve().parent / relpath).resolve()
-        if target.parent == (Path(__file__).resolve().parent / "generated").resolve():
-            tts_module.fix_wav_sizes(target)
-    response = send_from_directory(Path(__file__).resolve().parent, relpath, conditional=True)
+    if parts[0] == "generated" and target.parent == root and target.suffix.lower() == ".wav":
+        tts_module.fix_wav_sizes(target)
+    response = send_from_directory(root, target.relative_to(root).as_posix(), conditional=True)
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -2378,6 +2601,9 @@ def model_ready() -> Dict[str, object]:
     route only fires when the footer would show 'connected'. No LLM generation
     is attempted here - this is a cheap reachability + model-name check only.
     """
+    if chatgpt_llm.active():
+        signed_in = chatgpt_auth.status()["signed_in"]
+        return {"ready": signed_in, "reason": "" if signed_in else chatgpt_llm.SIGNED_OUT}
     address = _model_server_address()
     model_name = getLLMModel()
     if builtin_llm.active() and builtin_llm.model_missing():
@@ -2476,7 +2702,7 @@ def _serve_wake_up():
         try:
             pack, assistant_id, conv_id = generate_greeting(mode="wake")
             voice = pack.assistant_reply_JPS
-        except context_window.PromptTooLarge as exc:
+        except (context_window.PromptTooLarge, chatgpt_llm.ChatGPTError) as exc:
             return _llm_error_response(exc)
         except Exception as exc:
             print("[Flask] Wake-up failure:", repr(exc))
@@ -2518,7 +2744,11 @@ def _serve_wake_up():
 #       attempt, which re-says the "trying" line and restarts the
 #       reminder clock even while already "connecting".
 @application.route("/greet", methods=["POST"])
+@chatgpt_llm.background_task
 def greet():
+    if not chatgpt_llm.background_allowed():
+        return jsonify({"ready": False, "reason": chatgpt_llm.BACKGROUND_DISABLED,
+                        "superseded": True, "ceremony": memory.CEREMONY_DONE})
     body = request.get_json(silent=True)
     just_saved = bool(body.get("just_saved")) if isinstance(body, dict) else False
     # The page reloaded after a restart from Settings: she says she is back.
@@ -2624,7 +2854,11 @@ def greet():
 #       200 with {"ready": false, "reason": ...}: the client treats that as
 #       "no line", never an error (a tab switch must never break).
 @application.route("/conversations/<int:conversation_id>/greet", methods=["POST"])
+@chatgpt_llm.background_task
 def greet_conversation(conversation_id):
+    if not chatgpt_llm.background_allowed():
+        return jsonify({"ready": False, "reason": chatgpt_llm.BACKGROUND_DISABLED,
+                        "superseded": True})
     # While the first-launch ceremony runs, tab switches deliver no line:
     # the chat box stays locked until the wake-up (or fallback) line lands,
     # and nothing may speak before it. The guard sits before ANY store

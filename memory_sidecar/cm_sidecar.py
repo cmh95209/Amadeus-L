@@ -43,7 +43,7 @@ Design decisions:
   Test/advanced overrides (every fresh install uses the defaults):
   CM_SIDECAR_PORT, CM_DATA_DIR, CM_ASSETS_DIR, CM_SEED_DIR,
   CM_SERVER_FILE, CM_MODEL_FILE, CM_KEY_FILE, CM_PRONOUNS_FILE,
-  CM_ENGINE_DELAY_SECONDS.
+  CM_ENGINE_DELAY_SECONDS, CM_BACKEND_URL, CM_BRIDGE_SECRET_FILE.
 
 Endpoints:
   GET  /health
@@ -62,6 +62,7 @@ requirements.txt); or directly: venv/Scripts/python.exe cm_sidecar.py
 import json, os, random, shutil, sys, threading, time, urllib.request
 from datetime import datetime
 from typing import Optional
+from urllib.error import HTTPError
 
 # ============================== TUNABLES =====================================
 EMBED_MAX_TEXTS = 64
@@ -134,6 +135,9 @@ PERSONA_BLURB = (
 SERVER_FILE = os.environ.get("CM_SERVER_FILE") or os.path.join(PROJECT_ROOT, "backend", "llm_server.txt")
 MODEL_FILE = os.environ.get("CM_MODEL_FILE") or os.path.join(PROJECT_ROOT, "backend", "data", "llm_model.txt")
 KEY_FILE = os.environ.get("CM_KEY_FILE") or os.path.join(PROJECT_ROOT, "backend", "data", "api_key.txt")
+BACKEND_URL = os.environ.get("CM_BACKEND_URL") or "http://127.0.0.1:5050"
+BRIDGE_SECRET_FILE = os.environ.get("CM_BRIDGE_SECRET_FILE") or os.path.join(
+    os.path.dirname(KEY_FILE), "memory_bridge.secret")
 # The user's pronouns, set in the app's Settings (2026-10-16; '' = not set).
 # Read once when the engine is built, so a change applies after a sidecar
 # restart; memories already stored are not rewritten.
@@ -534,6 +538,97 @@ class NonThinkingLLM(OpenAICompatibleLLM):
         return resp.choices[0].message.content or ""
 
 
+class _NoBridgeRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_bridge_http = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoBridgeRedirect())
+
+
+class PlanBridgeError(Exception):
+    def __init__(self, status_code, message):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _bridge_request(*, timeout, messages=None):
+    with open(BRIDGE_SECRET_FILE, encoding="ascii") as f:
+        secret = f.read().strip()
+    if not secret:
+        raise PlanBridgeError(None, "Memory bridge secret is unavailable.")
+    headers = {"X-Amadeus-Bridge": secret}
+    data = None
+    if messages is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps({"messages": messages}).encode("utf-8")
+    req = urllib.request.Request(BACKEND_URL.rstrip("/") + "/internal/memory-llm",
+                                 data=data, headers=headers)
+    try:
+        with _bridge_http.open(req, timeout=timeout) as response:
+            if response.status != 200:
+                raise PlanBridgeError(response.status, "Memory bridge refused the request.")
+            return json.load(response)
+    except HTTPError as exc:
+        with exc:
+            try:
+                message = json.load(exc).get("message")
+            except (AttributeError, OSError, ValueError, RecursionError):
+                message = None
+        if not isinstance(message, str) or not message:
+            message = "Memory bridge refused the request."
+        raise PlanBridgeError(exc.code, message) from None
+
+
+def _plan_route() -> bool:
+    try:
+        return _bridge_request(timeout=3).get("route") == "chatgpt"
+    except Exception:
+        return False
+
+
+class PlanBridgeLLM(NonThinkingLLM):
+    def __init__(self):
+        # Each extraction batch owns its client and its failure state.
+        self._failure = None
+        self._failure_lock = threading.Lock()
+
+    @property
+    def failure(self):
+        with self._failure_lock:
+            return self._failure
+
+    def _record_failure(self, kind):
+        with self._failure_lock:
+            self._failure = kind
+        log(f"ChatGPT memory bridge error ({kind})")
+
+    def chat(self, messages, *, temperature=None, max_tokens=None) -> str:
+        try:
+            text_messages = [{"role": item["role"], "content": str(item["content"])}
+                             for item in messages]
+            reply = _bridge_request(timeout=240, messages=text_messages)["text"]
+            if not isinstance(reply, str):
+                raise ValueError("invalid reply")
+            return reply
+        except PlanBridgeError as exc:
+            self._record_failure(f"HTTP {exc.status_code}" if exc.status_code else "unavailable")
+            raise
+        except Exception:
+            self._record_failure("request error")
+            raise PlanBridgeError(None, "Memory bridge request failed.") from None
+
+    def chat_structured(self, messages, schema, *, temperature=None):
+        try:
+            result = super().chat_structured(messages, schema, temperature=temperature)
+            if not isinstance(result, dict):
+                raise ValueError("invalid reply")
+            return result
+        except (ValueError, RecursionError):
+            self._record_failure("invalid reply")
+            raise PlanBridgeError(None, "Memory bridge sent an invalid structured reply.") from None
+
+
 _llm = None
 _llm_sig = None
 
@@ -577,6 +672,23 @@ def _extract_with_current_llm(collect):
         if updated[2] == key:
             raise
         return collect(get_llm(updated))
+
+
+def _extract_for_learning_job(collect):
+    if not _plan_route():
+        return _extract_with_current_llm(collect)
+
+    bridge = PlanBridgeLLM()
+    log("learning via ChatGPT plan (through the app)")
+    try:
+        return collect(bridge)
+    except PlanBridgeError as exc:
+        log(f"ChatGPT memory extraction failed ({bridge.failure or 'unavailable'})")
+        if exc.status_code in (403, 429):
+            # Leave the batch pending without using up its failure attempts
+            # while consent, mode, or plan availability is changing.
+            raise LearningUnavailable() from None
+        raise
 
 
 def _seed_index():
@@ -735,7 +847,6 @@ def _start_background_extract(chat_id: str) -> bool:
         _extract_condition.notify()
         return True
 
-
 def _run_learning_worker():
     initialized = False
     while True:
@@ -759,7 +870,7 @@ def _run_learning_worker():
                 with _extract_condition:
                     _extracting_chats.add(job["chat_id"])
                 try:
-                    _learning_jobs.run(job, agent, _extract_with_current_llm, log)
+                    _learning_jobs.run(job, agent, _extract_for_learning_job, log)
                 finally:
                     with _extract_condition:
                         _extracting_chats.discard(job["chat_id"])
@@ -871,8 +982,11 @@ def health():
         chats = 0
     with _queue_lock:
         queued = len(_pending_saves)
-    server, model, key = _read_app_llm()
-    ok, _loaded = llm_ready(server, model, key, timeout=3.0)
+    if _plan_route():
+        server, model, ok = "chatgpt-plan (via app)", "", True
+    else:
+        server, model, key = _read_app_llm()
+        ok, _loaded = llm_ready(server, model, key, timeout=3.0)
     return {"ok": True, "service": "amadeus-cm-sidecar", "character": "Amadeus",
             "port": PORT, "engine": _engine_state["status"],
             "engine_seconds": _engine_state["seconds"],

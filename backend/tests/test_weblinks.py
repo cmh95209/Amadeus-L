@@ -89,7 +89,7 @@ class RiskyLinkTests(unittest.TestCase):
     def test_download_reports_unsafe_redirect(self):
         with patch.object(webfetch._OPENER, "open", side_effect=webfetch._UnsafeRedirect("x")):
             self.assertEqual(webfetch._download("http://93.184.216.34/", 3)[0], "unsafe")
-        with patch.object(webfetch, "_download", return_value=("unsafe", "", "")):
+        with patch.object(webfetch, "_download", return_value=("unsafe", "", "", None, "primary")):
             page = webfetch.fetch_page("http://93.184.216.34/")
         self.assertEqual(page["status"], "unsafe")
         self.assertIn("private or local", page["reason"])
@@ -97,28 +97,30 @@ class RiskyLinkTests(unittest.TestCase):
 
 class FetchPageTests(unittest.TestCase):
     def test_not_a_web_page(self):
-        with patch.object(webfetch, "_download", return_value=(None, "%PDF-1.7 ...", "application/pdf")):
+        with patch.object(webfetch, "_download",
+                          return_value=(None, "%PDF-1.7 ...", "application/pdf", 200, "primary")):
             page = webfetch.fetch_page("http://93.184.216.34/a.pdf")
         self.assertEqual(page["status"], "unsupported")
         self.assertIn("application/pdf", page["reason"])
 
     def test_short_page_read_when_the_user_gave_it(self):
         html = "<html><body><main><p>" + "Short but real text. " * 20 + "</p></main></body></html>"
-        with patch.object(webfetch, "_download", return_value=(None, html, "text/html")):
+        with patch.object(webfetch, "_download", return_value=(None, html, "text/html", 200, "primary")):
             self.assertEqual(webfetch.fetch_page("http://93.184.216.34/")["status"], "empty")
             self.assertEqual(webfetch.fetch_page("http://93.184.216.34/", min_chars=200)["status"], "ok")
 
     def test_reasons(self):
-        for err, reason in [("http_401", "needs a login"), ("http_402", "is behind a paywall"),
-                            ("http_404", "was not found"), ("http_503", "had a server error"),
-                            ("TimeoutError('timed out')", "took too long")]:
-            with patch.object(webfetch, "_download", return_value=(err, "", "")):
+        for code, err, reason in [(401, "http_401", "needs a login"), (402, "http_402", "is behind a paywall"),
+                                  (404, "http_404", "was not found"), (503, "http_503", "had a server error"),
+                                  (None, "TimeoutError('timed out')", "took too long")]:
+            with patch.object(webfetch, "_download", return_value=(err, "", "", code, "primary")):
                 self.assertEqual(webfetch.fetch_page("http://93.184.216.34/")["reason"], reason, err)
 
     def test_final_url_after_redirects(self):
-        def fake(url, timeout, meta=None):
+        def fake(url, timeout, meta, identity):
             meta["final_url"] = "http://93.184.216.34/final"
-            return None, "<html><body><main><p>" + "x " * 1500 + "</p></main></body></html>", "text/html"
+            html = "<html><body><main><p>" + "x " * 1500 + "</p></main></body></html>"
+            return None, html, "text/html", 200, identity[0]
         with patch.object(webfetch, "_download", side_effect=fake):
             self.assertEqual(webfetch.fetch_page("http://93.184.216.34/s")["final_url"],
                              "http://93.184.216.34/final")
@@ -183,6 +185,30 @@ class KeenableBackupTests(unittest.TestCase):
         self.assertEqual(get.call_args[0][2], {"X-Keenable-Title": websearch.KEENABLE_APP})
         self.assertNotIn("https://z.com", page["text"])
         self.assertRegex(page["published"], r"^\d{4}-\d{2}-\d{2}$")
+
+    def test_keenable_article_with_captcha_mention_is_read(self):
+        url = "http://93.184.216.34/article"
+        answer = {"title": "Browser usability research",
+                  "content": ("The study found that the captcha made signing up harder. "
+                              + "Participants suggested a simpler form. " * 10)}
+        with patch.object(webfetch, "_download", return_value=("http_403", "", "", 403, "primary")), \
+             patch.object(weblinks, "_get_json", return_value=answer):
+            page = weblinks.fetch_link(url)
+        self.assertEqual((page["status"], page["via"], page["title"]),
+                         ("ok", "keenable", "Browser usability research"))
+        self.assertIn("captcha made signing up harder", page["text"])
+
+    def test_pasted_link_does_not_retry_identity(self):
+        url = "http://93.184.216.34/article"
+        denied = urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+        with patch.object(webfetch._OPENER, "open", side_effect=denied) as open_page, \
+             patch.object(weblinks, "_get_json", return_value={}) as keenable:
+            page = weblinks.fetch_link(url)
+        open_page.assert_called_once()
+        self.assertEqual(open_page.call_args.args[0].get_header("User-agent"), webfetch.PRIMARY[1])
+        self.assertEqual((page["status_code"], page["identity"], page["status"]),
+                         (403, "primary", "blocked"))
+        keenable.assert_called_once()
 
     def test_no_backup_for_login_or_paywall(self):
         for reason in ("needs a login", "is behind a paywall", "was not found"):

@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 import webfetch
 import websearch
 
+# --- TUNABLES ---------------------------------------------------------------
 MAX_LINKS = 3              # links opened per message
 MIN_LINK_CHARS = 200       # a page the user gave is read even when short
 LINK_TIMEOUT = 8           # seconds, one download (the reply's budget caps it)
@@ -202,7 +203,8 @@ def keenable_page(url, timeout=LINK_TIMEOUT) -> dict:
     if not isinstance(data, dict):
         return out
     text = _markdown_to_text(str(data.get("content") or ""))
-    if len(text) < MIN_LINK_CHARS or webfetch.looks_bot_walled(text):
+    title = str(data.get("title") or "").strip()
+    if len(text) < MIN_LINK_CHARS or webfetch.looks_bot_walled(text, title):
         return out
     published = data.get("published_at")
     if isinstance(published, (int, float)) and published > 0:
@@ -211,7 +213,7 @@ def keenable_page(url, timeout=LINK_TIMEOUT) -> dict:
         published = published[:10]
     else:
         published = ""
-    out.update(status="ok", text=text, title=str(data.get("title") or "").strip(),
+    out.update(status="ok", text=text, title=title,
                published=published, final_url=str(data.get("url") or url))
     return out
 

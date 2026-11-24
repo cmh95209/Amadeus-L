@@ -50,8 +50,10 @@ class ClockQueryTests(unittest.TestCase):
 class SourcesTests(unittest.TestCase):
     def test_parse_results(self):
         self.assertEqual(chat._parse_search_results(RESULTS), [
-            {"title": "Big news today", "url": "https://news.example/a"},
-            {"title": "Other story", "url": "https://news.example/b"}])
+            {"rank": 1, "title": "Big news today", "url": "https://news.example/a",
+             "snippet": "Something happened.", "date": ""},
+            {"rank": 2, "title": "Other story", "url": "https://news.example/b",
+             "snippet": "More text.", "date": ""}])
         self.assertEqual(chat._parse_search_results("No web results were found."), [])
 
     def test_a_search_is_recorded_with_the_page_read(self):
@@ -61,12 +63,14 @@ class SourcesTests(unittest.TestCase):
              patch.object(chat, "web_reading_plan", return_value=("quick", 0, None, True)), \
              patch.object(chat.store, "effective_context_budget", return_value=8000):
             chat._web_search_with_content("Genshin banner")
-        self.assertEqual(chat.take_turn_sources(), [{
+        source, = chat.take_turn_sources()
+        self.assertEqual([item["outcome"] for item in source.pop("outcomes")], ["read", "not_needed"])
+        self.assertEqual(source, {
             "kind": "search", "query": "Genshin banner",
             "results": [{"title": "Big news today", "url": "https://news.example/a"},
                         {"title": "Other story", "url": "https://news.example/b"}],
             "read": "https://news.example/a", "engine": None, "mode": "quick",
-            "used": ["https://news.example/a"]}])
+            "used": ["https://news.example/a"], "topups": 0, "topup_stop": None})
         self.assertEqual(chat.take_turn_sources(), [])   # handed over once
 
     def test_nothing_is_recorded_outside_a_reply(self):

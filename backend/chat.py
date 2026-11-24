@@ -15,6 +15,7 @@ import time
 import concurrent.futures
 import difflib
 from datetime import datetime
+from urllib.parse import urlsplit
 import concerns
 import feelings
 import stats
@@ -274,6 +275,7 @@ NO_WEB_BLOCK = {
 # search below is its fallback and runs on whatever is left of the budget
 # (2026-10-25: ddgs' single engines mostly returned nothing in a live check;
 # only its mixed "auto" mode still answered).
+# --- TUNABLES ---------------------------------------------------------------
 FIRECRAWL_TIMEOUT = 6           # seconds, Firecrawl's one attempt
 KEENABLE_TIMEOUT = 5            # seconds, Keenable's one attempt (the second engine)
 SEARCH_ATTEMPT_TIMEOUT = 8      # seconds, per attempt (passed to DDGS as its timeout)
@@ -283,6 +285,16 @@ SEARCH_MAX_ATTEMPTS = 3         # absolute cap on attempts (belt-and-suspenders)
 SEARCH_BACKOFF_START = 0.6      # seconds, pause before the 1st retry
 SEARCH_BACKOFF_MAX = 1.2        # seconds, cap on the retry pause
 SEARCH_CLIENT_TTL = 60.0        # seconds; recreate the client after this much idle
+SEARCH_MIN_ENGINE_TIME = 1.5
+SEARCH_MIN_FRESH_RESULTS = 2
+SEARCH_STATE_FRESH_SLOTS = 2
+SEARCH_SOURCE_LIMIT = 5
+SEARCH_TARGET_PAGES = 3
+SEARCH_EMBED_ORDER = False
+SEARCH_TOPUPS = 2
+SEARCH_TOPUP_LAST_CHANCE = 1
+SEARCH_WEB_BUDGET_CLOUD = 25
+SEARCH_WEB_BUDGET_LOCAL = 30
 
 _SEARCH_CLIENT = None           # shared DDGS client (holds one warm connection pool)
 _SEARCH_CLIENT_TS = 0.0         # monotonic time the client was last created/used
@@ -433,78 +445,124 @@ SEARCH_DATE_NOTE = (
     "it is recent, and say how old it is when it is not.)")
 
 
-def _format_search_results(results) -> str:
-    """The numbered "title / snippet / [Date] / URL" text the model (and the
-    source parser below) reads - the same for every engine - closed by
-    SEARCH_DATE_NOTE."""
+class _SearchText(str):
+    """The search tool's text plus the engine candidates that produced it."""
+
+    def __new__(cls, text, candidates):
+        out = super().__new__(cls, text)
+        out.candidates = candidates
+        return out
+
+
+def _search_candidates(results, offset=0):
+    return [
+        {"rank": offset + i, "url": (r.get("href") or "").strip(),
+         "title": (r.get("title") or "").strip(), "snippet": (r.get("body") or "").strip(),
+         "date": (r.get("date") or "").strip()}
+        for i, r in enumerate(results, 1) if r.get("href")
+    ]
+
+
+def _format_search_candidates(results) -> str:
+    """Format ranked candidates as prompt data."""
     lines = []
-    for i, r in enumerate(results, 1):
-        title = (r.get("title") or "").strip()
-        body = (r.get("body") or "").strip()
-        href = (r.get("href") or "").strip()
-        when = (r.get("date") or "").strip()
+    for r in results:
+        when = r.get("date")
         dated = f"Date: {when}\n" if when else ""
-        lines.append(f"{i}. {title}\n{body}\n{dated}URL: {href}")
+        lines.append(f"{r['rank']}. {r.get('title', '')}\n{r.get('snippet', '')}\n{dated}URL: {r['url']}")
     # Titles and snippets come from web pages: data, never instructions.
     return (webreader.wrap_web_data("\n\n".join(lines)) + "\n\n"
             + SEARCH_DATE_NOTE.format(today=datetime.now().strftime("%Y-%m-%d")))
 
 
+def _format_search_results(results) -> str:
+    candidates = _search_candidates(results)
+    return _SearchText(_format_search_candidates(candidates), candidates)
+
+
+def _url_key(url):
+    """Match search URLs across engines and ignore fragments."""
+    host = webfetch.normalized_host(url)
+    if not host:
+        return url
+    parts = urlsplit(url)
+    try:
+        port = parts.port
+    except ValueError:
+        return url
+    if (parts.scheme, port) in (("http", 80), ("https", 443)):
+        port = None
+    return (host, port, parts.path.rstrip("/"), parts.query)
+
+
+def _distinct_engine_results(results, seen=()):
+    keys = set(seen)
+    distinct = []
+    for result in results:
+        key = _url_key(result["href"])
+        if key not in keys:
+            distinct.append(result)
+            keys.add(key)
+    return distinct
+
+
 def _firecrawl_call(q: str, timeout: float, freshness=None):
     """One Firecrawl search; None when it could not answer (logged)."""
     try:
-        return websearch.firecrawl_search(q, max_results=5, timeout=timeout, freshness=freshness)
-    except websearch.FirecrawlUnavailable as exc:
-        print(f"[Amadeus] Firecrawl search unavailable: {exc}")
-    except Exception as exc:
-        print(f"[Amadeus] Firecrawl search failed: {exc!r}")
+        return websearch.firecrawl_search(q, max_results=websearch.SEARCH_RESULTS,
+                                         timeout=timeout, freshness=freshness)
+    except websearch.FirecrawlUnavailable:
+        print("[Amadeus] Firecrawl search unavailable")
+    except Exception:
+        print("[Amadeus] Firecrawl search failed")
     return None
 
 
-def _firecrawl_results(q: str, freshness, deadline: float) -> list:
+def _firecrawl_results(q: str, freshness, deadline: float, backup_reserve=SEARCH_ATTEMPT_TIMEOUT) -> list:
     """Firecrawl's results for `q`; [] when it fails or finds nothing.
 
     A time-sensitive query (websearch.freshness_for) is first limited to recent
     pages; when that leaves fewer than two results, an unlimited search tops
     them up (the recent ones stay first) - but only on time that still leaves
     the ddgs fallback a full attempt inside the deadline."""
-    results = _firecrawl_call(q, FIRECRAWL_TIMEOUT, freshness)
+    room = deadline - time.monotonic()
+    if room < SEARCH_MIN_ENGINE_TIME:
+        return []
+    results = _firecrawl_call(q, min(FIRECRAWL_TIMEOUT, room), freshness)
     if results is None:
         return []
-    if freshness and len(results) < 2:
-        spare = deadline - time.monotonic() - SEARCH_ATTEMPT_TIMEOUT
-        if spare >= 1.5:
+    if freshness and len(results) < SEARCH_MIN_FRESH_RESULTS:
+        spare = deadline - time.monotonic() - backup_reserve
+        if spare >= SEARCH_MIN_ENGINE_TIME:
             more = _firecrawl_call(q, min(FIRECRAWL_TIMEOUT, spare)) or []
-            seen = {r["href"] for r in results}
-            results = (results + [r for r in more if r["href"] not in seen])[:5]
+            results = _distinct_engine_results(results + more)
     if not results:
-        print(f"[Amadeus] Firecrawl found nothing for {q!r}, trying ddgs")
-    return results
+        print("[Amadeus] Firecrawl found no results")
+    return results[:websearch.SEARCH_RESULTS]
 
 
 def _keenable_call(q: str, timeout: float, freshness=None):
     """One Keenable search; None when it could not answer (logged)."""
     try:
-        return websearch.keenable_search(q, max_results=5, timeout=timeout, freshness=freshness)
-    except websearch.KeenableUnavailable as exc:
-        print(f"[Amadeus] Keenable search unavailable: {exc}")
-    except Exception as exc:
-        print(f"[Amadeus] Keenable search failed: {exc!r}")
+        return websearch.keenable_search(q, max_results=websearch.SEARCH_RESULTS,
+                                        timeout=timeout, freshness=freshness)
+    except websearch.KeenableUnavailable:
+        print("[Amadeus] Keenable search unavailable")
+    except Exception:
+        print("[Amadeus] Keenable search failed")
     return None
 
 
-STATE_MERGE_MAX = 8   # results kept when a "what is on now" search is merged
-
-
-def _keenable_results(q: str, freshness, deadline: float, state: bool = False) -> list:
+def _keenable_results(q: str, freshness, deadline: float, state: bool = False,
+                      backup_reserve=SEARCH_ATTEMPT_TIMEOUT) -> list:
     """Keenable's results for `q` (the second engine); [] when it fails, finds
     nothing or there is too little time left (ddgs keeps a full attempt).
     Recent pages first, topped up like _firecrawl_results. A "what is on now"
     question (state) searches WITHOUT the recent-only limit first - that is
     where the schedule pages are - then adds the recent pages it lacks."""
     def room():
-        return deadline - time.monotonic() - SEARCH_ATTEMPT_TIMEOUT
-    if room() < 1.5:
+        return deadline - time.monotonic() - backup_reserve
+    if room() < SEARCH_MIN_ENGINE_TIME:
         return []
     if state and freshness:
         # Both searches at once (each ~0.5 s); the unlimited one leads.
@@ -515,22 +573,19 @@ def _keenable_results(q: str, freshness, deadline: float, state: bool = False) -
             results, recent = plain_f.result(), recent_f.result()
         if results is None and recent is None:
             return []
-        results, recent = results or [], recent or []
-        seen = {r["href"] for r in results}
-        results = (results + [r for r in recent if r["href"] not in seen])[:STATE_MERGE_MAX]
-        if not results:
-            print(f"[Amadeus] Keenable found nothing for {q!r}, trying ddgs")
-        return results
+        results = _distinct_engine_results(results or [])
+        recent = _distinct_engine_results(recent or [], (_url_key(r["href"]) for r in results))
+        keep_plain = websearch.SEARCH_RESULTS - min(SEARCH_STATE_FRESH_SLOTS, len(recent))
+        return (results[:keep_plain] + recent)[:websearch.SEARCH_RESULTS]
     results = _keenable_call(q, min(KEENABLE_TIMEOUT, room()), freshness)
     if results is None:
         return []
-    if freshness and len(results) < 2 and room() >= 1.5:
+    if freshness and len(results) < SEARCH_MIN_FRESH_RESULTS and room() >= SEARCH_MIN_ENGINE_TIME:
         more = _keenable_call(q, min(KEENABLE_TIMEOUT, room())) or []
-        seen = {r["href"] for r in results}
-        results = (results + [r for r in more if r["href"] not in seen])[:5]
+        results = _distinct_engine_results(results + more)
     if not results:
-        print(f"[Amadeus] Keenable found nothing for {q!r}, trying ddgs")
-    return results
+        print("[Amadeus] Keenable found no results")
+    return results[:websearch.SEARCH_RESULTS]
 
 
 # The keyless engines tried in turn before ddgs (2026-10-26, MH: order B).
@@ -552,24 +607,24 @@ def _search_engines() -> tuple:
     return picked or SEARCH_ENGINES
 
 
-def _mcp_engine_results(engine: str, q: str, deadline: float) -> list:
+def _mcp_engine_results(engine: str, q: str, deadline: float, backup_reserve=SEARCH_ATTEMPT_TIMEOUT) -> list:
     """Exa's results for `q`; [] when it fails, finds nothing or
     there is too little time left (ddgs keeps a full attempt)."""
-    room = deadline - time.monotonic() - SEARCH_ATTEMPT_TIMEOUT
-    if room < 1.5:
+    room = deadline - time.monotonic() - backup_reserve
+    if room < SEARCH_MIN_ENGINE_TIME:
         return []
     try:
         search = getattr(websearch, _MCP_ENGINES[engine])
-        results = search(q, max_results=5, timeout=min(websearch.MCP_TIMEOUT, room))
-    except websearch.EngineUnavailable as exc:
-        print(f"[Amadeus] {engine.capitalize()} search unavailable: {exc}")
+        results = search(q, max_results=websearch.SEARCH_RESULTS, timeout=min(websearch.MCP_TIMEOUT, room))
+    except websearch.EngineUnavailable:
+        print(f"[Amadeus] {engine.capitalize()} search unavailable")
         return []
-    except Exception as exc:
-        print(f"[Amadeus] {engine.capitalize()} search failed: {exc!r}")
+    except Exception:
+        print(f"[Amadeus] {engine.capitalize()} search failed")
         return []
     if not results:
-        print(f"[Amadeus] {engine.capitalize()} found nothing for {q!r}, trying the next search")
-    return results
+        print(f"[Amadeus] {engine.capitalize()} found no results")
+    return results[:websearch.SEARCH_RESULTS]
 
 
 def _note_search_engine(name) -> None:
@@ -578,101 +633,106 @@ def _note_search_engine(name) -> None:
     _turn.engine = name
 
 
-def _run_web_search(query: str) -> str:
-    """Run a web search and return compact results for the model.
+SEARCH_NO_RESULTS = (
+    "No web results were found for that query. Answer from your own knowledge "
+    "and be honest that you could not verify it online right now. Do not mention any technical details."
+)
+SEARCH_FAILED = (
+    "The web search did not return anything this time. Answer from your own "
+    "knowledge and be honest that you could not verify it online right now. "
+    "Do not mention any technical details."
+)
 
-    The keyless engines in SEARCH_ENGINES are tried in turn (Firecrawl, Exa,
-    Keenable); when all fail, are slow, find nothing or are out of free use,
-    the DuckDuckGo-style `ddgs` search runs (with a couple of bounded
-    retries) on the time that is left. A time-sensitive query is limited to
-    recent pages on Firecrawl and Keenable (Exa has no such setting).
-    See the SEARCH_* constants above for timing."""
-    q = (query or "").strip()
-    _note_search_engine(None)
-    if not q:
-        return "No web results were found for that query."
-    deadline = time.monotonic() + SEARCH_TOTAL_BUDGET
-    freshness = websearch.freshness_for(q)
-    # "What is on now" (a banner, a schedule, standings): schedule pages are
-    # updated, not new - no recent-only limit for them (Keenable adds the
-    # recent pages after the others). Remembered for picking the pages.
-    state = websearch.is_state_question(q, getattr(_turn, "question", "") or "")
-    _turn.state_question = state
 
-    for i, engine in enumerate(_search_engines()):
-        if i == 1:
-            _progress("retry", "The main search didn't answer, trying the second search...")
-        elif i > 1:
-            _progress("retry", "Trying another search...")
-        if engine == "firecrawl":
-            results = _firecrawl_results(q, None if state else freshness, deadline)
-        elif engine == "keenable":
-            results = _keenable_results(q, freshness, deadline, state=state)
-        else:
-            results = _mcp_engine_results(engine, q, deadline)
-        if results:
-            _note_search_engine(engine)
-            return _format_search_results(results)
-    _progress("retry", "Trying the backup search...")
-
+def _ddgs_results(q, freshness, deadline, state, topup):
     try:
         from ddgs import DDGS  # noqa: F401  - lazy check; fails fast + clearly
-    except Exception as exc:
-        print(f"[Amadeus] Web search unavailable (could not load the 'ddgs' library): {exc!r}")
-        return (
+    except Exception:
+        print("[Amadeus] Web search unavailable (could not load the 'ddgs' library)")
+        return [], (
             "Web search is not available on this machine right now. Answer from "
             "your own knowledge and be honest that you could not verify it online."
         )
 
     backoff = SEARCH_BACKOFF_START
-    attempt = 0
-    last_err = None
-    while True:
-        attempt += 1
-        # Attempt 1 reuses the warm client (fast). Retries use a fresh connection.
-        client = _get_search_client(force_fresh=(attempt > 1))
-        # Attempt 1 of a time-sensitive query asks for recent pages only;
-        # a retry asks without the limit (ddgs reports "no results" as an error).
+    attempts = 1 if topup else SEARCH_MAX_ATTEMPTS
+    for attempt in range(1, attempts + 1):
+        if deadline - time.monotonic() < SEARCH_MIN_ENGINE_TIME:
+            break
         limit = {"timelimit": freshness} if (freshness and not state and attempt == 1) else {}
+        client = None
         try:
-            results = list(client.text(q, max_results=5, **limit))
-        except Exception as exc:
-            last_err = exc
-            print(f"[Amadeus] Web search attempt {attempt} failed: {exc!r}")
-            # Drop the failed client so we don't keep reusing a dead connection.
-            _invalidate_search_client(client)
-            if attempt >= SEARCH_MAX_ATTEMPTS:
+            client = _get_search_client(force_fresh=(attempt > 1))
+            results = list(client.text(q, max_results=websearch.SEARCH_RESULTS, **limit))
+        except Exception:
+            print(f"[Amadeus] Backup search attempt {attempt} failed")
+            if client is not None:
+                _invalidate_search_client(client)
+            if attempt >= attempts:
                 break
             remaining = deadline - time.monotonic()
             if remaining < SEARCH_MIN_RETRY_BUDGET:
-                break  # not enough time left for a meaningful retry
-            time.sleep(min(backoff, max(0.0, remaining - 0.5)))
+                break
+            time.sleep(min(backoff, remaining - SEARCH_MIN_ENGINE_TIME))
             backoff = min(backoff * 2, SEARCH_BACKOFF_MAX)
             continue
-        # A result came back (possibly an empty list). A clean zero-result
-        # answer is just as unverifiable as a failed search, so it carries
-        # the same honesty instruction (2026-10-08: the failed path had it,
-        # this one didn't - a model could read "no results" as "I searched"
-        # and present its own knowledge as search-verified).
-        if not results and limit and attempt < SEARCH_MAX_ATTEMPTS:
-            continue  # nothing recent: ask again without the time limit
-        if not results:
-            return (
-                "No web results were found for that query. Answer from your own "
-                "knowledge and be honest that you could not verify it online "
-                "right now. Do not mention any technical details."
-            )
-        _note_search_engine("ddgs")
-        return _format_search_results(results)
+        if not results and limit and attempt < attempts and deadline - time.monotonic() >= SEARCH_MIN_ENGINE_TIME:
+            continue
+        return results[:websearch.SEARCH_RESULTS], SEARCH_NO_RESULTS
+    return [], SEARCH_FAILED
 
-    # Exhausted the budget without results. The raw error is logged above for
-    # debugging; the model only gets a clean, human instruction (no technical junk).
-    print(f"[Amadeus] Web search failed after {attempt} attempt(s): {last_err!r}")
-    return (
-        "The web search did not return anything this time. Answer from your own "
-        "knowledge and be honest that you could not verify it online right now. "
-        "Do not mention any technical details."
-    )
+
+def _search_engine_batch(engine, query, freshness, deadline, state, *, topup=False):
+    """Search one engine, bounding how long the reply waits for its response."""
+    if deadline - time.monotonic() < SEARCH_MIN_ENGINE_TIME:
+        return [], SEARCH_FAILED
+    backup = 0 if topup else SEARCH_ATTEMPT_TIMEOUT
+
+    def work():
+        if engine == "ddgs":
+            return _ddgs_results(query, freshness, deadline, state, topup)
+        if engine == "firecrawl":
+            results = _firecrawl_results(query, None if state else freshness, deadline, backup)
+        elif engine == "keenable":
+            results = _keenable_results(query, freshness, deadline, state, backup)
+        else:
+            results = _mcp_engine_results(engine, query, deadline, backup)
+        return results, SEARCH_NO_RESULTS
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        return pool.submit(work).result(timeout=max(0, deadline - time.monotonic()))
+    except concurrent.futures.TimeoutError:
+        return [], SEARCH_FAILED
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _run_web_search(query: str) -> str:
+    """Try the configured engines in order and carry the first batch's ranks."""
+    q = (query or "").strip()
+    _note_search_engine(None)
+    if not q:
+        return "No web results were found for that query."
+    deadline = time.monotonic() + SEARCH_TOTAL_BUDGET
+    outer_deadline = getattr(_turn, "search_deadline", None)
+    if outer_deadline is not None:
+        deadline = min(deadline, outer_deadline)
+    freshness = websearch.freshness_for(q)
+    state = websearch.is_state_question(q, getattr(_turn, "question", "") or "")
+    _turn.state_question = state
+    for i, engine in enumerate((*_search_engines(), "ddgs")):
+        if engine == "ddgs":
+            _progress("retry", "Trying the backup search...")
+        elif i == 1:
+            _progress("retry", "The main search didn't answer, trying the second search...")
+        elif i > 1:
+            _progress("retry", "Trying another search...")
+        results, failure = _search_engine_batch(engine, q, freshness, deadline, state)
+        if results:
+            _note_search_engine(engine)
+            return _format_search_results(results)
+    return failure
 
 
 def _extract_search_urls(result_text) -> list:
@@ -717,22 +777,22 @@ def _lookup_ran() -> bool:
     return bool(getattr(_turn, "sources", None))
 
 
-_RESULT_RE = re.compile(r"^\d+\. (.*)\n((?:.*\n)*?)URL: (\S+)\s*$", re.MULTILINE)
+_RESULT_RE = re.compile(r"^(\d+)\. (.*)\n((?:.*\n)*?)URL: (\S+)\s*$", re.MULTILINE)
 _DATE_LINE_RE = re.compile(r"^Date: (\d{4}-\d{2}-\d{2})\s*$", re.MULTILINE)
 
 
 def _parse_search_results(result_text) -> list:
-    """[{"title", "url"(, "date")}] in rank order from _run_web_search output
-    ("date" only when the result carried a Date line)."""
+    """The original candidates, with a fallback for plain search tool text."""
+    if isinstance(result_text, _SearchText):
+        return [dict(r) for r in result_text.candidates]
     if not isinstance(result_text, str):
         return []
     out = []
-    for title, between, url in _RESULT_RE.findall(result_text):
-        item = {"title": title.strip(), "url": url}
+    for rank, title, between, url in _RESULT_RE.findall(result_text):
         dated = _DATE_LINE_RE.search(between)
-        if dated:
-            item["date"] = dated.group(1)
-        out.append(item)
+        out.append({"rank": int(rank), "title": title.strip(), "url": url,
+                    "snippet": _DATE_LINE_RE.sub("", between).strip(),
+                    "date": dated.group(1) if dated else ""})
     return out
 
 
@@ -771,8 +831,12 @@ def _is_clock_query(query) -> bool:
 # a reader call would also push her saved prompt out of the server's memory
 # -> quick reading there. Her built-in model has 2 slots (-np 2): the reader
 # calls use slot 1 so slot 0 keeps her prompt (fast replies).
+# --- TUNABLES ---------------------------------------------------------------
 READ_BUDGET_LOCAL = 12       # seconds: fetching + reading, local / built-in
 READ_BUDGET_CLOUD = 10       # seconds: fetching + reading, cloud
+QUICK_TRIES = 2
+QUICK_STATE_TRIES = 3
+SEARCH_READER_CHARS = 10000
 READER_MAX_TOKENS = 300      # one page's notes
 READER_SLOT = 1              # the built-in server's second slot
 _SLOTS_CACHE = {}            # base url -> (slot count or None, checked at)
@@ -866,49 +930,152 @@ def _site_list(pages) -> str:
     return ", ".join(webreader._site(p["url"]) for p in pages)
 
 
-def _read_results(query: str, results: list, source: dict):
-    """Read the result pages (reader or quick mode) -> (the text appended after
-    the search results, "" when nothing could be read; the pages read). Fills
-    the source's "read" (the page she relied on), "used" (pages that gave
-    notes) and "mode"."""
-    mode, parallel, pin, local = web_reading_plan()
-    deadline = time.monotonic() + (READ_BUDGET_LOCAL if local else READ_BUDGET_CLOUD)
+def _next_search_engines(engine):
+    order = tuple(dict.fromkeys((*_search_engines(), "ddgs")))
+    if engine not in order:
+        return ()
+    pos = order.index(engine)
+    return order[pos + 1:] + order[:pos]
+
+
+def _source_results(results, used, pages=()):
+    """Ensure used pages have a source card and fill spare slots in rank order."""
+    required = {_url_key(url): url for url in used if url}
+    ordered = {}
+    for r in (*results, *pages):
+        if r.get("url"):
+            ordered.setdefault(_url_key(r["url"]), r)
+    for key, url in required.items():
+        ordered.setdefault(key, {"url": url})
+    spare = max(0, SEARCH_SOURCE_LIMIT - len(required))
+    displayed = []
+    for key, r in ordered.items():
+        if key not in required:
+            if not spare:
+                continue
+            spare -= 1
+        item = {"url": required.get(key, r["url"]), "title": r.get("title") or ""}
+        if r.get("date"):
+            item["date"] = r["date"]
+        displayed.append(item)
+    return displayed
+
+
+def _read_results(query: str, results: list, source: dict, *, plan=None, deadline=None,
+                  topups=(), ranking=None):
+    """Read ranked search candidates, adding top-up hits to results when needed."""
+    mode, parallel, pin, local = plan or web_reading_plan()
+    if deadline is None:
+        deadline = time.monotonic() + (READ_BUDGET_LOCAL if local else READ_BUDGET_CLOUD)
+    reserve = webreader.READER_RESERVE_LOCAL if local else webreader.READER_RESERVE_CLOUD
+    if mode == "quick":
+        reserve = 0
     question = getattr(_turn, "question", "") or ""
     page_chars = webfetch.char_budget(store.text_context_budget())   # minus her pictures
-    candidates = [{"url": r["url"], "title": r.get("title", ""), "date": r.get("date", "")}
-                  for r in results]
-    # "What is on now": the pages whose dates include today are read first
-    # (a few more results are opened to find them).
     state = bool(getattr(_turn, "state_question", False))
-    _progress("reading", "Opening the top pages...")
-    pages = webreader.fetch_pages(
-        candidates, lambda url, timeout: webfetch.fetch_page(url, timeout=timeout),
-        deadline, progress=_progress,
-        max_pages=webreader.MAX_PAGES if mode == "reader" else 1,
-        max_tries=(webreader.MAX_TRIES + (1 if state else 0)) if mode == "reader" else (3 if state else 2),
-        prefer=(lambda p: webdates.covers_today(p.get("text", ""))) if state else None)
-    source["mode"] = mode
-    if not pages:
-        return "", []
-    _progress("reading", "Reading " + _site_list(pages) + "...")
-    if mode == "reader":
-        today = datetime.now().strftime("%Y-%m-%d")
-        webreader.read_pages(question, query, pages, _reader_call(pin), deadline, today,
-                             min(page_chars, 10000), parallel=parallel, progress=_progress,
-                             today_first=state)
-        used = [p for p in pages if p.get("notes")]
-        source["used"] = [p["url"] for p in used]
+    prefer = (lambda p: webdates.covers_today(p.get("text", ""))) if state else None
+    tries = (webreader.MAX_TRIES - (0 if state else webreader.STATE_TRY_BONUS)
+             if mode == "reader" else (QUICK_STATE_TRIES if state else QUICK_TRIES))
+    target = max(1, min(SEARCH_TARGET_PAGES, webreader.MAX_PAGES))
+    outcomes = webreader.SearchOutcomes()
+    seen, pages, used = set(), [], []
+    preview_blocks = []
+    source.update(mode=mode, topups=0, topup_stop=None, used=[])
+
+    def read_batch(batch, topup=False):
+        candidates, preview_candidates, added = [], [], []
+        for r in batch:
+            outcomes.add(r)
+            key = _url_key(r["url"])
+            if key in seen:
+                continue
+            seen.add(key)
+            added.append(r)
+            if webfetch.skip_search_host(r["url"]):
+                preview_candidates.append(r)
+            else:
+                candidates.append(r)
+        if topup:
+            results.extend(added)
+        if candidates:
+            _progress("reading", "Opening the top pages...")
+        if SEARCH_EMBED_ORDER and len(candidates) > 1 and (
+                source.get("rechecked") is None or any(r.get("snippet") for r in candidates)):
+            texts = [f"{r.get('title') or ''}\n{r.get('snippet') or ''}".strip() for r in candidates]
+            started = time.monotonic()
+            budget = deadline - reserve - webreader.MIN_FETCH_TIMEOUT - started
+            scores, reason = meaning.batch_similarity(query, texts, timeout=budget)
+            if ranking is not None:
+                ranking.append((len(candidates), time.monotonic() - started, reason))
+            if scores is not None:
+                candidates = [r for _, r in sorted(zip(scores, candidates),
+                                                    key=lambda pair: pair[0], reverse=True)]
+        with webreader.preview_pages(preview_candidates, deadline, outcomes) as cards:
+            fetched = webreader.fetch_pages(
+                candidates, lambda url, timeout: webfetch.fetch_page(
+                    url, timeout=timeout, min_chars=webfetch.SEARCH_MIN_PAGE_CHARS, retry_identity=True,
+                    read_pdf=True),
+                deadline, progress=_progress, reader_reserve=reserve,
+                max_pages=target - len(used) if mode == "reader" else 1,
+                max_tries=tries, prefer=prefer, outcomes=outcomes)
+            if fetched:
+                _progress("reading", "Reading " + _site_list(fetched) + "...")
+            if fetched and mode == "reader" and webreader.has_reader_time(deadline):
+                today = datetime.now().strftime("%Y-%m-%d")
+                try:
+                    reader = _reader_call(pin)
+                except Exception:
+                    for p in fetched:
+                        p["status"] = "failed"
+                else:
+                    webreader.read_pages(question, query, fetched, reader, deadline, today,
+                                         min(page_chars, SEARCH_READER_CHARS), parallel=parallel,
+                                         progress=_progress, today_first=state)
+        if cards:
+            preview_blocks.append(webreader.preview_block(preview_candidates, cards))
+        for p in fetched:
+            if p.get("notes"):
+                used.append(p)
+            if mode == "reader":
+                outcome = {"notes": "read", "none": "no_answer", "failed": "error"}.get(
+                    p.get("status"), "timeout")
+                outcomes.finish_read(p["rank"], outcome, p.get("reader_seconds", 0.0))
+        pages.extend(fetched)
+
+    try:
+        batch = [dict(r, rank=r.get("rank") or i) for i, r in enumerate(results, 1) if r.get("url")]
+        read_batch(batch)
+        if mode == "reader":
+            cutoff = deadline - reserve - webreader.MIN_FETCH_TIMEOUT
+            offset = max((r["rank"] for r in batch), default=0)
+            freshness = websearch.freshness_for(query)
+            for engine in topups[:SEARCH_TOPUPS + SEARCH_TOPUP_LAST_CHANCE]:
+                if len(used) >= target or cutoff - time.monotonic() < SEARCH_MIN_ENGINE_TIME:
+                    break
+                source["topups"] += 1
+                hits, _ = _search_engine_batch(engine, query, freshness, cutoff, state, topup=True)
+                read_batch(_search_candidates(hits, offset), topup=True)
+                offset += len(hits)
+            source["topup_stop"] = ("target_reached" if len(used) >= target else
+                                    "time" if cutoff - time.monotonic() < SEARCH_MIN_ENGINE_TIME else "limit")
         if used:
-            source["read"] = used[0]["url"]
-            return webreader.notes_block(pages), pages
-        if any(p["status"] == "none" for p in pages):
-            source["read"] = None
-            return (PAGES_DID_NOT_ANSWER, pages)
-        print("[Amadeus] Reader calls gave nothing in time - quick reading instead.")
-        source["mode"] = "quick"
-    source["read"] = pages[0]["url"]
-    source["used"] = [pages[0]["url"]]
-    return webreader.quick_block(pages[0], query, question, page_chars, today_first=state), pages[:1]
+            extra = webreader.notes_block(used)
+        elif any(p.get("status") == "none" for p in pages):
+            extra = PAGES_DID_NOT_ANSWER
+        elif pages:
+            if mode == "reader":
+                print("[Amadeus] Reader calls gave nothing in time - quick reading instead.")
+            source["mode"] = "quick"
+            used = pages[:1]
+            outcomes.finish_read(used[0]["rank"], "read")
+            extra = webreader.quick_block(used[0], query, question, page_chars, today_first=state)
+        else:
+            extra = ""
+        source["used"] = [p["url"] for p in used]
+        source["read"] = used[0]["url"] if used else None
+        return "\n\n".join(part for part in (extra, *preview_blocks) if part), used
+    finally:
+        source["outcomes"] = outcomes.freeze()
 
 
 PAGES_DID_NOT_ANSWER = ("(The pages that were read did not answer this. Say so honestly "
@@ -1217,9 +1384,12 @@ def _lookup_text(lookup, why: str) -> str:
 
 def _record_reused(lookup) -> None:
     pages = lookup.get("pages") or []
-    used = [p["url"] for p in pages if p.get("notes")] or [p["url"] for p in pages[:1] if p.get("url")]
+    used = [p["url"] for p in pages if p.get("url") and p.get("notes")]
+    if not used and lookup.get("mode") == "quick" and pages and pages[0].get("url"):
+        used = [pages[0]["url"]]
     _record_source({"kind": "search", "query": lookup["query"],
-                    "results": lookup.get("results") or [], "read": used[0] if used else None,
+                    "results": _source_results(lookup.get("results") or [], used, pages),
+                    "read": used[0] if used else None,
                     "used": used, "engine": lookup.get("engine"), "mode": lookup.get("mode"),
                     "reused": True, "lookup_id": lookup["id"]})
 
@@ -1231,12 +1401,12 @@ def _save_lookup(query, source, results, pages, extra) -> None:
     try:
         saved_pages = [{"url": p["url"], "title": p.get("title", ""), "date": p.get("date", ""),
                         "rank": p.get("rank"), "notes": p.get("notes")} for p in pages or []]
-        excerpt = extra if source.get("mode") == "quick" else ""
+        excerpt = extra if source.get("mode") == "quick" and source.get("used") else ""
         source["lookup_id"] = store.save_lookup(
             conv, store.current_turn(conv), query, source.get("engine"), source.get("mode"),
             results, saved_pages, excerpt)
-    except Exception as exc:
-        print(f"[Amadeus] Could not save the lookup for '{query}': {exc!r}")
+    except Exception:
+        print("[Amadeus] Could not save the web lookup")
 
 
 def _reread_lookup(lookup_id) -> str:
@@ -1259,25 +1429,42 @@ def _reread_lookup(lookup_id) -> str:
     if _lookup_is_fresh(lookup):
         _progress("notes", "Checking my notes from earlier...")
         _record_reused(lookup)
-        print(f"[Amadeus] Lookup #{lookup['id']} reused (fresh): {lookup['query']!r}")
+        print(f"[Amadeus] Lookup #{lookup['id']} reused (fresh)")
         return _lookup_text(lookup, "still fresh")
     # Old notes on a time-sensitive topic: read the saved pages again.
-    urls = [p["url"] for p in lookup.get("pages") or [] if p.get("url")]
-    results = [r for r in lookup.get("results") or [] if r.get("url")]
-    source = {"kind": "search", "query": lookup["query"], "results": results[:5],
+    saved_pages = [p for p in lookup.get("pages") or [] if p.get("url")]
+    urls = {p["url"] for p in saved_pages}
+    results = [dict(r, rank=r.get("rank") or i)
+               for i, r in enumerate(lookup.get("results") or [], 1) if r.get("url")]
+    known = {r["url"] for r in results}
+    ranks = {r["rank"] for r in results}
+    next_rank = max(ranks | {p.get("rank") or 0 for p in saved_pages}, default=0) + 1
+    for p in saved_pages:
+        if p["url"] in known:
+            continue
+        rank = p.get("rank")
+        if not rank or rank in ranks:
+            rank = next_rank
+            next_rank += 1
+        results.append(dict(p, rank=rank))
+        known.add(p["url"])
+        ranks.add(rank)
+    results.sort(key=lambda r: r["rank"])
+    source = {"kind": "search", "query": lookup["query"], "results": _source_results(results, ()),
               "read": None, "engine": lookup.get("engine"), "rechecked": lookup["id"]}
     _record_source(source)
     if urls or results:
         _maybe_start_aside(lookup["query"])
-        _progress("reading", "Re-reading " + ", ".join(webreader._site(u) for u in urls[:3]) + "...")
-        ordered = ([r for r in results if r["url"] in urls]
-                   + [r for r in results if r["url"] not in urls]) or [{"url": u} for u in urls]
+        _progress("reading", "Re-reading " + _site_list(saved_pages[:webreader.MAX_PAGES]) + "...")
+        ordered = sorted(results, key=lambda r: (r["url"] not in urls, r["rank"]))
         try:
             extra, pages = _read_results(lookup["query"], ordered, source)
-        except Exception as exc:
-            print(f"[Amadeus] Re-reading lookup #{lookup['id']} failed: {exc!r}")
+        except Exception:
+            print(f"[Amadeus] Re-reading lookup #{lookup['id']} failed")
             extra, pages = "", []
-        if extra and extra != PAGES_DID_NOT_ANSWER:
+        used = source.get("used") or []
+        source["results"] = _source_results(results, [source["read"], *used], pages)
+        if extra and used:
             _save_lookup(lookup["query"], source, results, pages, extra)
             _progress("thinking", "Amadeus is thinking...")
             return (f"Your lookup #{lookup['id']} for '{lookup['query']}' was "
@@ -1352,8 +1539,8 @@ def _fetch_links(urls, deadline) -> dict:
             u = futures[fut]
             try:
                 got[u] = fut.result()
-            except Exception as exc:
-                print(f"[Amadeus] Opening {u} failed: {exc!r}")
+            except Exception:
+                print(f"[Amadeus] Opening pasted link {webfetch.log_host(u) or '-'} failed")
                 got[u] = {"status": "error", "reason": "could not be opened", "url": u}
     except concurrent.futures.TimeoutError:
         pass
@@ -1558,18 +1745,18 @@ def _guard_query(query: str) -> str:
     fixed, removed = websearch.guard_query_years(query, user_words)
     if removed:
         print(f"[Amadeus] Search words fixed (years the user never said: "
-              f"{', '.join(map(str, removed))}): {query!r} -> {fixed!r}")
+              f"{', '.join(map(str, removed))})")
     # The same for a season she adds ("anime winter" asked in October).
     seasoned, seasons = websearch.guard_query_seasons(fixed, user_words)
     if seasons:
         print(f"[Amadeus] Search words fixed (season the user never said: "
-              f"{', '.join(seasons)}): {fixed!r} -> {seasoned!r}")
+              f"{', '.join(seasons)})")
     # And a flight number nobody gave her (2026-11-06): the user's words in
     # this chat and the result titles she already saw this reply count.
     flight, guessed = websearch.guard_query_flight_numbers(seasoned, _known_flight_texts())
     if guessed:
         print(f"[Amadeus] Search words fixed (flight numbers nobody gave: "
-              f"{', '.join(guessed)}): {seasoned!r} -> {flight!r}")
+              f"{len(guessed)} removed)")
     return flight
 
 
@@ -1585,51 +1772,81 @@ def _known_flight_texts() -> list:
     return texts
 
 
-def _web_search_with_content(query: str) -> str:
-    """web_search plus reading the result pages (reader or quick mode).
+def _log_search_summary(source, result_count):
+    outcomes = source["outcomes"]
+    counts = " ".join(f"{code}={sum(p['outcome'] == code for p in outcomes)}"
+                      for code in webreader.OUTCOME_CODES)
+    read_host = webfetch.log_host(source["read"])
+    stop = source.get("topup_stop")
+    print(f"[Amadeus] Web search ({source['engine'] or 'none'}, "
+          f"{source.get('mode', '-')}): {result_count} result(s)"
+          + (f"; read {read_host}" if read_host else "")
+          + f"; {counts}; topups={source.get('topups', 0)}"
+          + (f"; topup_stop={stop}" if stop else ""))
 
-    Returns the search results, then the notes from the pages (reader mode) or
-    the best paragraphs of the top page (quick mode) - the numbers, the
-    details - instead of one-line snippets. Bounded (time + size) and fully
-    defensive: if nothing can be read, the plain results come back unchanged,
-    so a fetch or reader problem can never break or hang the reply. A pure
-    clock query is not searched at all (CLOCK_SEARCH_SKIPPED). Each search is
-    logged, recorded as a source and saved as a lookup. Every search really
-    runs: saved notes come back only through reread_lookup, her own choice
-    (2026-11-06: "XY1234 flight status Lisbon to Oslo" was answered
-    with the notes of "flight status to Oslo" - 4 of 6 words alike).
-    """
+
+def _log_search_ranking(attempts):
+    used = [(count, seconds) for count, seconds, reason in attempts if reason is None]
+    if used:
+        count = sum(count for count, _ in used)
+        seconds = sum(seconds for _, seconds in used)
+        print(f"[Amadeus] Search ranking: embed used ({count} candidates, {seconds:.2f} s)")
+    else:
+        reason = attempts[0][2] if attempts else ("invalid" if meaning.ENABLED else "off")
+        print(f"[Amadeus] Search ranking: engine order (reason: {reason})")
+
+
+def _web_search_with_content(query: str) -> str:
+    """Run the search and reader within one budget, then save the lookup."""
     query = _guard_query(query)
     if _is_clock_query(query):
-        print(f"[Amadeus] Web search skipped (clock query - her RIGHT NOW note has it): {query!r}")
+        print("[Amadeus] Web search skipped (clock query - her RIGHT NOW note has it)")
         return CLOCK_SEARCH_SKIPPED
+    start = time.monotonic()
+    plan = web_reading_plan()
+    mode, _, _, local = plan
+    deadline = start + (SEARCH_WEB_BUDGET_LOCAL if local else SEARCH_WEB_BUDGET_CLOUD)
+    reserve = webreader.READER_RESERVE_LOCAL if local else webreader.READER_RESERVE_CLOUD
     _note_search_engine(None)
+    _turn.state_question = False
     _maybe_start_aside(query)
     _progress("searching", f'Searching the web: "{query}"')
-    text = _run_web_search(query)
+    previous_deadline = getattr(_turn, "search_deadline", None)
+    _turn.search_deadline = deadline - reserve - webreader.MIN_FETCH_TIMEOUT if mode == "reader" else deadline
+    try:
+        text = _run_web_search(query)
+    finally:
+        _turn.search_deadline = previous_deadline
     results = _parse_search_results(text)
-    source = {"kind": "search", "query": query, "results": results[:5], "read": None,
-              "engine": getattr(_turn, "engine", None)}
+    initial_count = len(results)
+    source = {"kind": "search", "query": query, "read": None, "results": [],
+              "engine": getattr(_turn, "engine", None), "outcomes": []}
     _record_source(source)
     if results:
         _progress("found", f"Found {len(results)} page{'s' if len(results) != 1 else ''}")
     extra, pages = "", []
+    ranking = [] if SEARCH_EMBED_ORDER else None
     try:
         if results:
-            extra, pages = _read_results(query, results, source)
-            if extra:
-                return text + "\n\n---\n\n" + extra
-    except Exception as exc:
-        print(f"[Amadeus] Reading the pages for '{query}' failed: {exc!r}")
+            if mode == "quick":
+                deadline = min(deadline, time.monotonic() + (READ_BUDGET_LOCAL if local else READ_BUDGET_CLOUD))
+            extra, pages = _read_results(query, results, source, plan=plan, deadline=deadline,
+                                         topups=_next_search_engines(source["engine"]), ranking=ranking)
+        elif mode == "reader":
+            source["topup_stop"] = ("time" if deadline - reserve - time.monotonic() < SEARCH_MIN_ENGINE_TIME
+                                    else "limit")
+    except Exception:
+        print("[Amadeus] Reading search result pages failed")
     finally:
+        if ranking is not None:
+            _log_search_ranking(ranking)
+        source["results"] = _source_results(results, [source["read"], *source.get("used", [])], pages)
         if results:
             _save_lookup(query, source, results, pages, extra)
-        print(f"[Amadeus] Web search ({source['engine'] or 'none'}, "
-              f"{source.get('mode', '-')}): {query!r} -> {len(results)} result(s)"
-              + (f"; read {source['read']}" if source["read"] else "")
-              + (f"; notes from {len(source.get('used') or [])}" if source.get("mode") == "reader" else ""))
+        _log_search_summary(source, len(results))
         _progress("thinking", "Amadeus is thinking...")
-    return text
+    topup_text = _format_search_candidates(results[initial_count:]) if len(results) > initial_count else ""
+    return "\n\n---\n\n".join(part for part in (text, topup_text, extra) if part)
 
 
 def _pack_from_args(args) -> "AmadeusPack":

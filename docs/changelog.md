@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.3.0 — ChatGPT sign-in and chat improvements — November 2026
+
+**Re-run the installers (or double-click Update Amadeus.bat) to update your app.**
+
+- **NEW: Sign in with ChatGPT** from Settings or choose it during installation.
+- **NEW: Emoji, GIF and sticker picker.** Open it next to Send and drag its handle to make it taller or shorter. You can still type while it’s open.
+- **Fixes:** Settings are easier to scan, with shorter help and display and voice languages grouped together. Choose Google or device emoji under Preferences and see how they look before sending.
+- **Fixes:** More reliable recall within a long chat and improved reading of web pages.
+
 ## v3.2.1 — Brazilian and European Portuguese — November 2026
 
 **Re-run the installers (or double-click Update Amadeus.bat) to update your app.**

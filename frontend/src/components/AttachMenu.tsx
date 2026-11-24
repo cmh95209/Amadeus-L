@@ -62,7 +62,10 @@ export function AttachMenu({ caps, disabled, onFiles, onOpen, onNote }: Props) {
       <button type="button" className="attach-button" disabled={disabled}
         aria-haspopup="menu" aria-expanded={open} aria-label="Add pictures, videos or files"
         onClick={toggle}>
-        +
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          strokeLinecap="round" aria-hidden="true">
+          <path d="M12 6v12M6 12h12" />
+        </svg>
       </button>
       {!open && <span className="attach-hint" role="tooltip">Add pictures, videos or files</span>}
       {open && (

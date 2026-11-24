@@ -8,10 +8,6 @@ export const FIRST_PAGE = 1;
 export const CATEGORY_SCROLL_TOLERANCE = 1;
 
 export const PHONE_WIDTH = 640;
-export const PANEL_WIDTH = 416;
-export const PANEL_HEIGHT = 448;
-export const PHONE_PANEL_HEIGHT = 55; // Percent of the visible screen.
-export const PANEL_GAP = 8;
 export const EMOJI_CELL = 42;
 export const MEDIA_CELL = 92;
 export const STICKER_CELL = 76;

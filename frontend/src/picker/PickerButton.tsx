@@ -9,8 +9,8 @@ import { PICKER_TABS, readTab, saveTab, useOnlineSetting } from "./preferences";
 import type { PickerTab } from "./preferences";
 import { StickerTab } from "./StickerTab";
 import {
-  CATEGORY_ICON_SIZE, CATEGORY_SIZE, EMOJI_CELL, MEDIA_CELL, PANEL_GAP, PANEL_HEIGHT,
-  PANEL_WIDTH, PHONE_PANEL_HEIGHT, PHONE_WIDTH, SEARCH_HEIGHT, STICKER_CELL, TAB_HEIGHT, TILE_ACTION_SIZE,
+  CATEGORY_ICON_SIZE, CATEGORY_SIZE, EMOJI_CELL, MEDIA_CELL,
+  PHONE_WIDTH, SEARCH_HEIGHT, STICKER_CELL, TAB_HEIGHT, TILE_ACTION_SIZE,
 } from "./tunables";
 import { usePickerState } from "./usePickerState";
 
@@ -32,7 +32,10 @@ type Actions = {
   onMedia: (item: Selection) => Promise<void>;
 };
 
-export function PickerButton({ disabled, ...actions }: Actions & { disabled: boolean }) {
+export function PickerButton({ disabled, dock, ...actions }: Actions & {
+  disabled: boolean;
+  dock: HTMLDivElement | null;
+}) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const id = useId();
@@ -53,15 +56,20 @@ export function PickerButton({ disabled, ...actions }: Actions & { disabled: boo
               document.activeElement !== trigger.current) document.activeElement.blur();
           setOpen(true);
         }}>
-        <span aria-hidden="true">☺</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"
+          strokeLinecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="8.5" />
+          <path d="M8.5 13.5a4 4 0 0 0 7 0" />
+          <path d="M9 9.5h.01m5.99 0h.01" strokeWidth="2.5" />
+        </svg>
       </button>
-      {open && createPortal(<PickerPanel id={id} trigger={trigger} close={close} {...actions} />, document.body)}
+      {open && dock && createPortal(<PickerPanel id={id} dock={dock} trigger={trigger} close={close} {...actions} />, dock)}
     </>
   );
 }
 
-function PickerPanel({ id, trigger, close, onEmoji, onMedia, mediaBlocked }: Actions & {
-  id: string; trigger: RefObject<HTMLButtonElement | null>; close: (restoreFocus?: boolean) => void;
+function PickerPanel({ id, dock, trigger, close, onEmoji, onMedia, mediaBlocked }: Actions & {
+  id: string; dock: HTMLDivElement; trigger: RefObject<HTMLButtonElement | null>; close: (restoreFocus?: boolean) => void;
 }) {
   const [tab, setTab] = useState<PickerTab>(readTab);
   const [problem, setProblem] = useState("");
@@ -75,50 +83,14 @@ function PickerPanel({ id, trigger, close, onEmoji, onMedia, mediaBlocked }: Act
   const picker = usePickerState();
 
   useLayoutEffect(() => {
-    const root = panel.current;
-    if (!root) return;
-    const mobile = phoneMedia();
-    function place() {
-      const anchor = trigger.current?.getBoundingClientRect();
-      const viewport = document.documentElement;
-      if (!root || !anchor) return;
-      const phone = mobile.matches;
-      root.classList.toggle("picker-phone", phone);
-      if (phone) {
-        const keyboard = window.visualViewport;
-        const usableHeight = keyboard?.height ?? viewport.clientHeight;
-        root.style.bottom = `${Math.max(0, viewport.clientHeight - usableHeight - (keyboard?.offsetTop ?? 0))}px`;
-        root.style.left = "0";
-        root.style.width = "100%";
-        root.style.height = `${Math.round(usableHeight * PHONE_PANEL_HEIGHT / 100)}px`;
-      } else {
-        const width = Math.min(PANEL_WIDTH, viewport.clientWidth - PANEL_GAP * 2);
-        root.style.left = `${Math.max(PANEL_GAP, Math.min(anchor.left, viewport.clientWidth - width - PANEL_GAP))}px`;
-        root.style.bottom = `${viewport.clientHeight - anchor.top + PANEL_GAP}px`;
-        root.style.width = `${width}px`;
-        root.style.height = `${Math.min(PANEL_HEIGHT, Math.max(0, anchor.top - PANEL_GAP * 2))}px`;
-      }
-    }
-    place();
-    root.querySelector<HTMLElement>('[aria-selected="true"]')?.focus({ preventScroll: true });
-    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
-    const composer = trigger.current?.closest(".composer");
-    if (composer) resize?.observe(composer);
-    window.addEventListener("resize", place);
-    window.visualViewport?.addEventListener("resize", place);
-    window.visualViewport?.addEventListener("scroll", place);
-    return () => {
-      resize?.disconnect();
-      window.removeEventListener("resize", place);
-      window.visualViewport?.removeEventListener("resize", place);
-      window.visualViewport?.removeEventListener("scroll", place);
-    };
-  }, [trigger]);
+    panel.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus({ preventScroll: true });
+  }, []);
 
   useEffect(() => {
     active.current = true;
+    const composer = trigger.current?.closest(".composer");
     function outside(event: PointerEvent) {
-      if (event.target instanceof Node && !panel.current?.contains(event.target) && !trigger.current?.contains(event.target)) {
+      if (event.target instanceof Node && !panel.current?.contains(event.target) && !composer?.contains(event.target)) {
         closeRef.current();
       }
     }
@@ -171,11 +143,17 @@ function PickerPanel({ id, trigger, close, onEmoji, onMedia, mediaBlocked }: Act
     onPick: (item: Selection) => void pickMedia(item), onFavourite: (item: Selection) => void picker.favourite(item) };
   return (
     <div ref={panel} id={id} className="picker-panel" style={dimensions} role="dialog" aria-label="Emoji, GIF and sticker picker">
-      <div className="picker-tabs" role="tablist" aria-label="Picker tabs" onKeyDown={tabKeys}>
-        {PICKER_TABS.map(({ id: key, label }) => (
-          <button type="button" role="tab" key={key} id={`${id}-${key}`} aria-selected={tab === key}
-            aria-controls={`${id}-content`} tabIndex={tab === key ? 0 : -1} onClick={() => select(key)}>{label}</button>
-        ))}
+      <div className="picker-header">
+        <PickerResizeHandle dock={dock} />
+        <div className="picker-tabs" role="tablist" aria-label="Picker tabs" onKeyDown={tabKeys}>
+          {PICKER_TABS.map(({ id: key, label }) => (
+            <button type="button" role="tab" key={key} id={`${id}-${key}`} aria-selected={tab === key}
+              aria-controls={`${id}-content`} tabIndex={tab === key ? 0 : -1} onClick={() => select(key)}>{label}</button>
+          ))}
+        </div>
+        <button className="picker-close" type="button" aria-label="Close" title="Close" onClick={() => close(true)}>
+          <span aria-hidden="true">×</span>
+        </button>
       </div>
       <div className="picker-content" role="tabpanel" id={`${id}-content`} aria-labelledby={`${id}-${tab}`}>
         {tab === "emoji" && <EmojiTab lang={lang} recent={picker.recentEmoji} onPick={(emoji) => {
@@ -189,6 +167,66 @@ function PickerPanel({ id, trigger, close, onEmoji, onMedia, mediaBlocked }: Act
       {(problem || picker.problem || preparing) && (
         <p className="picker-feedback" role="status">{problem || picker.problem || "Attaching…"}</p>
       )}
+    </div>
+  );
+}
+
+const minPickerPercent = 20;
+const maxPickerPercent = 80;
+const clampPickerPercent = (percent: number) =>
+  Math.round(Math.min(maxPickerPercent, Math.max(minPickerPercent, percent)));
+
+function PickerResizeHandle({ dock }: { dock: HTMLDivElement }) {
+  const [size, setSize] = useState(44);
+  const handle = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const bar = handle.current;
+    if (!bar) return;
+    const room = dock.parentElement?.clientHeight;
+    if (room) setSize(clampPickerPercent(100 * dock.clientHeight / room));
+    let drag: { pointerId: number; y: number; height: number; room: number } | null = null;
+    function start(event: PointerEvent) {
+      const available = dock.parentElement?.clientHeight;
+      if (drag || event.button !== 0 || !available) return;
+      event.preventDefault();
+      drag = { pointerId: event.pointerId, y: event.clientY, height: dock.clientHeight, room: available };
+      bar!.setPointerCapture(event.pointerId);
+    }
+    function move(event: PointerEvent) {
+      if (drag?.pointerId !== event.pointerId) return;
+      const next = clampPickerPercent(100 * (drag.height + drag.y - event.clientY) / drag.room);
+      dock.style.setProperty("--picker-height", `${next}cqh`);
+      setSize(next);
+    }
+    function stop() { drag = null; }
+    bar.addEventListener("pointerdown", start);
+    bar.addEventListener("pointermove", move);
+    bar.addEventListener("lostpointercapture", stop);
+    return () => {
+      bar.removeEventListener("pointerdown", start);
+      bar.removeEventListener("pointermove", move);
+      bar.removeEventListener("lostpointercapture", stop);
+      dock.style.removeProperty("--picker-height");
+    };
+  }, [dock]);
+
+  function key(event: KeyboardEvent<HTMLDivElement>) {
+    const room = dock.parentElement?.clientHeight;
+    const current = room ? 100 * dock.clientHeight / room : size;
+    const next = { ArrowUp: current + 5, ArrowDown: current - 5, PageUp: current + 15,
+      PageDown: current - 15, Home: minPickerPercent, End: maxPickerPercent }[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    const percent = clampPickerPercent(next);
+    dock.style.setProperty("--picker-height", `${percent}cqh`);
+    setSize(percent);
+  }
+
+  return (
+    <div ref={handle} className="picker-resize" role="slider" tabIndex={0}
+      aria-label="Resize picker" aria-orientation="vertical"
+      aria-valuemin={minPickerPercent} aria-valuemax={maxPickerPercent} aria-valuenow={size} onKeyDown={key}>
+      <span aria-hidden="true" />
     </div>
   );
 }

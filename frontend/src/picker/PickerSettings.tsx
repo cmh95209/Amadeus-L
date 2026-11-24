@@ -34,13 +34,18 @@ export function PickerSettings() {
         <InfoIcon>Searches go to KLIPY and GIPHY.</InfoIcon>
       </div>
       {failed && <p className="settings-error" role="alert">Could not save the picker setting.</p>}
-      <label>
-        Emoji style
-        <select value={style} onChange={(event) => choose(event.currentTarget.value as EmojiStyle)}>
-          <option value="noto">Noto</option>
-          <option value="system">System</option>
+      <div className="settings-field">
+        <label className="settings-label" htmlFor="emoji-appearance">Emoji appearance</label>
+        <select id="emoji-appearance" value={style} aria-describedby="emoji-appearance-help"
+          onChange={(event) => choose(event.currentTarget.value as EmojiStyle)}>
+          <option value="noto">Google emoji</option>
+          <option value="system">Device emoji</option>
         </select>
-      </label>
+        <p id="emoji-appearance-help" className="settings-help">
+          {style === "noto" ? "Same look across devices." : "Matches the emoji style on this device."}
+        </p>
+        <span className="picker-emoji-font picker-style-preview" aria-hidden="true">😊 ❤️ 👍</span>
+      </div>
     </div>
   );
 }

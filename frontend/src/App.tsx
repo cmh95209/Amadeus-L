@@ -511,6 +511,7 @@ export default function App() {
   }
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [pickerDock, setPickerDock] = useState<HTMLDivElement | null>(null);
   // Long chats: only the newest MESSAGE_WINDOW messages are drawn (a 560-
   // message chat made every update of the page slow, 2026-11-09); "Show
   // earlier messages" adds more. A newly opened chat starts at the newest.
@@ -2802,13 +2803,11 @@ export default function App() {
       {/* Character Panel */}
       <section className="character-panel">
         <header className="brand">
-          <div className="brand-mark">
-            A
-          </div>
+          <img className="brand-mark" src="/icons/amadeus-logo.png" width={490} height={336} alt="" />
 
           <div>
             <h1>AMADEUS</h1>
-            <p>Personal AI Companion</p>
+            <p>Memory-Driven Cognitive AI</p>
           </div>
         </header>
 
@@ -3047,11 +3046,6 @@ export default function App() {
               <h3>
                 Start a conversation.
               </h3>
-
-              <p>
-                Your existing Flask backend and memory system
-                are still doing the actual work.
-              </p>
             </div>
           )}
 
@@ -3310,17 +3304,13 @@ export default function App() {
           className={`composer${dropGlow ? " drop-glow" : ""}`}
           onSubmit={submit}
         >
-          <div className="composer-tools">
-            <AttachMenu
-              caps={pictures.caps}
-              disabled={ceremonyPending}
-              onFiles={addPictureFiles}
-              onOpen={() => void pictures.refreshCaps()}
-              onNote={setAttachNote}
-            />
-            <PickerButton disabled={ceremonyPending} mediaBlocked={loading || pickerSend.busy}
-              onEmoji={(emoji) => composerRef.current?.insert(emoji)} onMedia={pickerSend.pick} />
-          </div>
+          <AttachMenu
+            caps={pictures.caps}
+            disabled={ceremonyPending}
+            onFiles={addPictureFiles}
+            onOpen={() => void pictures.refreshCaps()}
+            onNote={setAttachNote}
+          />
           <ComposerBox
             ref={composerRef}
             chatgptMode={chatgptMode}
@@ -3359,8 +3349,13 @@ export default function App() {
                 : "Web access is OFF — she only uses her own knowledge"
             }
           >
-            <span className="web-toggle-globe" aria-hidden="true">🌐</span>
-            <span>{webAccess ? "Web on" : "Web off"}</span>
+            <svg className="web-toggle-globe" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <ellipse cx="12" cy="12" rx="4" ry="9" />
+              <path d="M3 12h18" />
+            </svg>
+            <span className="web-toggle-label">{webAccess ? "Web on" : "Web off"}</span>
           </button>
 
           <button
@@ -3375,6 +3370,8 @@ export default function App() {
             <span className="poke-label" aria-hidden="true">Poke</span>
           </button>
 
+          <PickerButton dock={pickerDock} disabled={ceremonyPending} mediaBlocked={loading || pickerSend.busy}
+            onEmoji={(emoji) => composerRef.current?.insert(emoji)} onMedia={pickerSend.pick} />
           <button
             type="submit"
             disabled={!canSend(hasText ? "x" : "", pictures.cards) || loading || ceremonyPending || pickerSend.busy}
@@ -3384,6 +3381,7 @@ export default function App() {
             Send
           </button>
         </form>
+        <div className="picker-dock" ref={setPickerDock} />
         {viewerPicture && (isDocument(viewerPicture)
           ? <DocumentViewer doc={viewerPicture} onClose={() => setViewerPicture(null)} />
           : isVideo(viewerPicture) && viewerPicture.media_type !== "sticker"

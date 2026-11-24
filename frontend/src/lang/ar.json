@@ -526,6 +526,7 @@
   "Saving edit - rewriting her Japanese line...": "جارٍ حفظ التعديل - إعادة كتابة سطرها الياباني...",
   "Saving...": "جارٍ الحفظ...",
   "Search old chats": "البحث في المحادثات القديمة",
+  "Searches earlier messages in this chat and other chats for related topics as you write.": "تبحث في الرسائل السابقة في هذه المحادثة والمحادثات الأخرى عن مواضيع ذات صلة أثناء كتابتك.",
   "Searched": "تم البحث",
   "Searched the web": "بحثت في الويب",
   "Send": "إرسال",
@@ -785,6 +786,7 @@
   "…I’m starting to feel kind of sleepy.": "…بدأت أشعر بقليل من النعاس."
  },
  "codes": {
+  "error.contextTooLarge": "يتجاوز هذا الطلب سعة السياق المتاحة. اختصر الرسالة أو مرفقاتها، أو ارفع الحد الأقصى للموجّه في الإعدادات.",
   "error.status": "خطأ {status} ({label}) من {who}: {what}{said}",
   "error.said": " الرسالة: \"{reason}\".",
   "error.this_model": "هذا النموذج",

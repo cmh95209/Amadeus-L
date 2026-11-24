@@ -986,6 +986,8 @@ class CapabilityTests(TempStore):
 class FakeLLM:
     """Records every prompt; structured calls answer a pack."""
 
+    max_tokens = 256
+
     def __init__(self, fail_first=None):
         self.prompts = []
         self.fail_first = fail_first
@@ -1036,7 +1038,6 @@ class ReplyFlowTests(TempStore):
                 patch.object(store, "load_default_personality_messages",
                              return_value=[{"role": "system", "content": "PERSONA"}]),
                 patch.object(store, "load_web_access", return_value=False),
-                patch.object(store, "maybe_roll_summary", lambda *a: None),
                 patch.object(cm_bridge, "fetch_memory_block", lambda *a: None),
                 patch.object(cm_bridge, "save_turn", lambda conv, role, text: self.saved.append((role, text))),
                 patch.object(attachments, "can_see_pictures", return_value=True)]

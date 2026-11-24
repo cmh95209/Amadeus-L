@@ -1602,7 +1602,7 @@ class CharacterAgent:
         ]
         ids = [int(r["id"]) for r in rows]
         result = self.character.extract(
-            turns, user_id=user_id, participants=participants, chat_id=chat_id
+            turns, user_id=user_id, llm=self.llm, participants=participants, chat_id=chat_id
         )
         if result is not None:
             added = result.pop("__added__", {})
@@ -1626,8 +1626,7 @@ class CharacterAgent:
             self.persist_structured()
         elif events_changed:
             self.persist_structured()
-        # Mark extracted whether or not the extractor returned data: a None
-        # return means no participating memories, so there is nothing to learn.
+        # A successful empty response or no participating memories is complete.
         assert self.store is not None
         qs = ", ".join("?" for _ in ids)
         self.store.execute(

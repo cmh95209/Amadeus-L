@@ -526,6 +526,7 @@
   "Saving edit - rewriting her Japanese line...": "Guardando la edición - reescribiendo su línea en japonés...",
   "Saving...": "Guardando...",
   "Search old chats": "Buscar en chats antiguos",
+  "Searches earlier messages in this chat and other chats for related topics as you write.": "Mientras escribes, busca temas relacionados en mensajes anteriores de este chat y de otros chats.",
   "Searched": "Buscado",
   "Searched the web": "Buscó en la web",
   "Send": "Enviar",
@@ -785,6 +786,7 @@
   "…I’m starting to feel kind of sleepy.": "…Empiezo a tener un poco de sueño."
  },
  "codes": {
+  "error.contextTooLarge": "Esta solicitud supera el contexto disponible. Acorta el mensaje o sus archivos adjuntos, o aumenta el límite del prompt en la configuración.",
   "error.status": "Error {status} ({label}) de {who}: {what}{said}",
   "error.said": " Dice: \"{reason}\".",
   "error.this_model": "este modelo",

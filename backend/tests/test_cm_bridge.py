@@ -137,6 +137,7 @@ def _expected_messages(memory_block=None):
         + [_VOICE]
         + [chat._PACK_RULES]
         + [chat.NO_WEB_BLOCK]
+        + [{"role": "system", "content": chat.cross_tab.RECALL_INSTRUCTION}]
         + [_CLOSENESS]
         + []
         + ([memory_block] if memory_block else [])

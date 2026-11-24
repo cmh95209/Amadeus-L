@@ -526,6 +526,7 @@
   "Saving edit - rewriting her Japanese line...": "बदलाव सहेजा जा रहा है - उसकी जापानी पंक्ति फिर से लिखी जा रही है...",
   "Saving...": "सहेजा जा रहा है...",
   "Search old chats": "पुरानी चैट में खोजें",
+  "Searches earlier messages in this chat and other chats for related topics as you write.": "जब आप लिखते हैं, तो वह इस चैट और दूसरी चैट के पुराने संदेशों में मिलते-जुलते विषय खोजती है।",
   "Searched": "खोजा",
   "Searched the web": "वेब पर खोजा",
   "Send": "भेजें",
@@ -785,6 +786,7 @@
   "…I’m starting to feel kind of sleepy.": "…मुझे थोड़ी नींद आने लगी है।"
  },
  "codes": {
+  "error.contextTooLarge": "यह अनुरोध उपलब्ध संदर्भ सीमा से बड़ा है। संदेश या उसके अटैचमेंट छोटे करें, या सेटिंग्स में प्रॉम्प्ट सीमा बढ़ाएँ।",
   "error.status": "त्रुटि {status} ({label}), {who} से: {what}{said}",
   "error.said": " संदेश: \"{reason}\"।",
   "error.this_model": "यह मॉडल",

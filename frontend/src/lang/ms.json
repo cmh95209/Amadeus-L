@@ -526,6 +526,7 @@
   "Saving edit - rewriting her Japanese line...": "Menyimpan suntingan - menulis semula baris Jepunnya...",
   "Saving...": "Menyimpan...",
   "Search old chats": "Cari sembang lama",
+  "Searches earlier messages in this chat and other chats for related topics as you write.": "Semasa anda menulis, dia mencari topik berkaitan dalam mesej terdahulu dalam sembang ini dan sembang lain.",
   "Searched": "Dicari",
   "Searched the web": "Mencari di web",
   "Send": "Hantar",
@@ -785,6 +786,7 @@
   "…I’m starting to feel kind of sleepy.": "…Saya mula rasa mengantuk sikit."
  },
  "codes": {
+  "error.contextTooLarge": "Permintaan ini melebihi konteks yang tersedia. Pendekkan mesej atau lampirannya, atau tingkatkan had prom dalam Tetapan.",
   "error.status": "Ralat {status} ({label}) daripada {who}: {what}{said}",
   "error.said": " Mesejnya: \"{reason}\".",
   "error.this_model": "model ini",

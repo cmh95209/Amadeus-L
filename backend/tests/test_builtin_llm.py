@@ -107,6 +107,28 @@ class ConfigTests(_TempBackendDir):
         self.assertEqual(self.b.model_name(), "amadeus-builtin")   # one fixed name
         self.assertFalse(self.b.model_missing())
 
+    def test_prompt_limit_uses_launched_shared_window(self):
+        import builtin_server
+        _write(self.cfg_path, _config(self.tmp, context=49152))
+        with patch.object(builtin_server, "status", return_value={
+                "state": "loaded", "context_window": 32768}):
+            self.assertEqual(self.b.context_window(), 32768)
+            self.assertEqual(self.b.total_budget_info(), (None, 32768))
+        with patch.object(builtin_server, "status", return_value={"state": "unloaded"}):
+            self.assertEqual(self.b.context_window(), 49152)
+
+    def test_legacy_history_override_converts_once_then_stores_total(self):
+        import builtin_server
+        _write(self.cfg_path, _config(self.tmp, context=49152,
+                                      history_default=16000, history_budget=8192))
+        with patch.object(builtin_server, "status", return_value={"state": "unloaded"}):
+            self.assertEqual(self.b.total_budget_info(), (18288, 26096))
+            self.assertEqual(self.b.total_budget_info(), (18288, 26096))
+            self.assertEqual(self.b.save_total_budget(120000), 120000)
+            self.assertEqual(self.b.total_budget_info(), (120000, 26096))
+            self.assertIsNone(self.b.save_total_budget(None))
+            self.assertEqual(self.b.total_budget_info(), (None, 26096))
+
     def test_unreadable_file_means_off(self):
         _write(self.cfg_path, "{not json")
         self.assertFalse(self.b.active())

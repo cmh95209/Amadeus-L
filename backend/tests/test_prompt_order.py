@@ -20,6 +20,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +29,7 @@ sys.path.insert(0, str(ROOT))
 import attachments
 import cm_bridge
 import chat
+import context_window as window
 import memory as store
 import stats
 import ja_voice
@@ -148,7 +150,8 @@ class PromptOrderTests(unittest.TestCase):
             for p in _voice_patches():
                 stack.enter_context(p)
             return "\n\n".join(["PERSONALITY", ja_voice.build_voice_rules()["content"],
-                                rules["content"], chat.NO_WEB_BLOCK["content"]])
+                                rules["content"], chat.NO_WEB_BLOCK["content"],
+                                chat.cross_tab.RECALL_INSTRUCTION])
 
     def _check(self, fn, rules):
         one, two = self._two_turns(fn)
@@ -311,19 +314,79 @@ class NoteAsUserMessageTests(unittest.TestCase):
         self.assertEqual(self._sent_types("http://127.0.0.1:8090/v1")[-1], "system")
 
 
-class SummaryBatchTests(unittest.TestCase):
-    def _batches_for(self, url, builtin=False):
-        import llm
-        with mock.patch.object(store, "_builtin_active", lambda: builtin), \
-                mock.patch.object(llm, "_configured_server_url", lambda: url):
-            return store._fold_in_batches()
+class RetryHistoryTests(unittest.TestCase):
+    def test_reply_reports_only_ids_sent_to_the_successful_retry(self):
+        captured = []
 
-    def test_cloud_and_built_in_fold_in_batches(self):
-        self.assertTrue(self._batches_for("https://openrouter.ai/api/v1"))
-        self.assertTrue(self._batches_for("http://127.0.0.1:8090/v1", builtin=True))
+        class FirstCall:
+            max_tokens = 256
 
-    def test_own_local_server_folds_turn_by_turn(self):
-        self.assertFalse(self._batches_for("http://localhost:8080/v1"))
+            def with_structured_output(self, schema, method):
+                return self
+
+            def invoke(self, messages):
+                captured.append(messages)
+                raise RuntimeError("first call failed")
+
+        class FinalCall:
+            max_tokens = 256
+
+            def bind_tools(self, tools, tool_choice):
+                return SimpleNamespace(bound=self, kwargs={"tools": tools},
+                                       invoke=self.invoke)
+
+            def invoke(self, messages):
+                captured.append(messages)
+                return SimpleNamespace(tool_calls=[{"name": "AmadeusPack", "args": {
+                    "assistant_reply_JPS": "そうね。",
+                    "assistant_reply_ENG": "That's right.",
+                }}])
+
+        first, final = FirstCall(), FinalCall()
+        with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:
+            for target, name, value in [
+                (store, "PATH_TO_MEMORY", str(Path(folder) / "history.sqlite")),
+                (store, "load_context_budget", lambda: None),
+                (store, "load_default_personality_messages", lambda: [_PERSONALITY]),
+                (store, "load_character_book_messages", lambda *a: []),
+                (store, "load_web_access", lambda: False),
+                (chat, "_is_local", lambda *a: False),
+                (chat, "_right_now_note", lambda: True),
+                (chat, "reset_llm", lambda: None),
+                (chat, "maybe_strip_rejected_params", lambda *a: False),
+                (chat, "_degenerate_pack", lambda *a: None),
+                (chat, "_finalize", lambda pack, *a: pack),
+                (chat, "_web_off_honesty_net", lambda pack: pack),
+                (chat._llm_module, "context_limits",
+                 lambda client, options: window.ModelLimits(16000 if client is first else 6400)),
+                (ja_voice, "build_voice_rules", lambda: {"role": "system", "content": "VOICE"}),
+                (ja_voice, "build_closeness_context", lambda _: {"role": "system", "content": "CLOSE"}),
+                (stats, "load_stat", lambda _: 50),
+                (chat.feelings, "feelings_line", lambda **_: ""),
+                (chat.concerns, "prompt_line", lambda *a, **k: ""),
+                (chat.cross_tab, "catch_up_block", lambda *a: None),
+                (chat.cross_tab, "search_block", lambda *a: None),
+                (cm_bridge, "fetch_memory_block", lambda *a: None),
+                (attachments, "picture_index_message", lambda *a: None),
+                (attachments, "with_pictures", lambda messages, *a: messages),
+            ]:
+                stack.enter_context(mock.patch.object(target, name, value))
+            stack.enter_context(mock.patch.object(chat, "_reply_llm", side_effect=[first, final]))
+            stack.enter_context(mock.patch.object(store._SummarySnapshot, "_schedule"))
+            store.append_message("user", "Old memory " + "x" * 4200, conversation_id=1)
+            store.append_message("assistant", "Old answer", conversation_id=1)
+            user = store.append_message("user", "Recent memory", conversation_id=1)
+            aside = store.append_message("assistant", "待って。", conversation_id=1, aside=True)
+            reply = store.append_message("assistant", "分かった。", conversation_id=1)
+            current = store.append_message("user", "Can you repeat that?", conversation_id=1)
+            draft = store.build_prompt_messages(conversation_id=1, answering_id=current)
+            pack = chat.getResponsePacked(
+                draft, internal_context={"role": "system", "content": "TIMING"})
+        self.assertTrue(any("Old memory" in m["content"] for m in captured[0]))
+        self.assertFalse(any("Old memory" in m["content"] for m in captured[1]))
+        self.assertEqual(pack.verbatim_message_ids, (user, aside, reply, current))
+        self.assertEqual(draft.last_history.messages, captured[1])
+        self.assertTrue(all(set(m) == {"role", "content"} for m in captured[1]))
 
 
 if __name__ == "__main__":

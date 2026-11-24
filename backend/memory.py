@@ -1,14 +1,15 @@
-import collections
 import os
 import json
 import math
 import threading
-import time
 from typing import List, Dict, Callable
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from dataclasses import dataclass
+
+import context_window as window
 
 DATA_DIR = "data"
 
@@ -1954,6 +1955,34 @@ def _ensure_conversations(c: sqlite3.Cursor) -> None:
     # window overflows for the first time.
     _add_column(c, "conversations", "rolling_summary", "TEXT NOT NULL DEFAULT ''")
     _add_column(c, "conversations", "summary_covers", "INTEGER NOT NULL DEFAULT 0")
+    _add_column(c, "conversations", "history_revision", "INTEGER NOT NULL DEFAULT 0")
+    if _add_column(c, "conversations", "summary_budget", "INTEGER NOT NULL DEFAULT 0"):
+        # Old summaries used a different coverage rule and did not track edits.
+        c.execute("UPDATE conversations SET rolling_summary = '', summary_covers = 0")
+
+
+def _ensure_history_revision(c):
+    invalidate = """
+        UPDATE conversations SET history_revision = history_revision + 1,
+            rolling_summary = CASE WHEN OLD.id <= summary_covers THEN '' ELSE rolling_summary END,
+            summary_budget = CASE WHEN OLD.id <= summary_covers THEN 0 ELSE summary_budget END,
+            summary_covers = CASE WHEN OLD.id <= summary_covers THEN 0 ELSE summary_covers END
+        WHERE id = OLD.conversation_id;
+    """
+    c.execute("""
+        CREATE TRIGGER IF NOT EXISTS history_message_deleted AFTER DELETE ON messages
+        WHEN OLD.role = 'user' OR OLD.active = 1 BEGIN
+    """ + invalidate + " END")
+    c.execute("""
+        CREATE TRIGGER IF NOT EXISTS history_message_updated
+        AFTER UPDATE OF content, japanese, active, greeting, aside ON messages
+        WHEN (OLD.role = 'user' OR OLD.active = 1 OR NEW.active = 1) AND (
+            COALESCE(NULLIF(OLD.japanese, ''), OLD.content)
+                IS NOT COALESCE(NULLIF(NEW.japanese, ''), NEW.content)
+            OR OLD.active IS NOT NEW.active OR OLD.greeting IS NOT NEW.greeting
+            OR OLD.aside IS NOT NEW.aside)
+        BEGIN
+    """ + invalidate + " END")
 
 
 def _backfill_turns(c: sqlite3.Cursor) -> None:
@@ -2098,6 +2127,7 @@ def _ensure_messages_table(c: sqlite3.Cursor) -> None:
     # references (lookups) go with their message. Existing chats are numbered once.
     if _add_column(c, "messages", "turn", "INTEGER"):
         _backfill_turns(c)
+    _ensure_history_revision(c)
     # Commit the migration work explicitly. Before this, whether the upgrade
     # stuck depended on WHICH caller happened to run it: paths that commit
     # (load_active_conversation) kept it, paths that close without committing
@@ -2111,78 +2141,45 @@ def _ensure_messages_table(c: sqlite3.Cursor) -> None:
 
 
 # ---------- CONTEXT BUDGET ----------
-#
-# How far back Amadeus looks into one chat before a reply, in *estimated tokens*.
-# This caps HISTORY only: the fixed prompt parts (personality, voice block, output
-# rules, tool definitions) are always sent on top of it, so keep the budget
-# comfortably below the model's context window minus ~6k tokens.
-#
-# The default is 40000, but it is USER-CONFIGURABLE (Settings -> Connection) via
-# data/context_budget.txt: small local models (7B-class, tight VRAM) want a lower
-# number; big-context models can raise it. Bigger = remembers more, slower
-# replies, more tokens per message.
-DEFAULT_CONTEXT_BUDGET = 40000
-# Sanity clamps: below ~500 the budget is meaningless (the fixed prompt parts
-# alone cost ~4k tokens); above 1M it is almost certainly a typo.
-MIN_CONTEXT_BUDGET = 500
-MAX_CONTEXT_BUDGET = 1000000
+MIN_CONTEXT_BUDGET = window.MIN_TOTAL_CAP
+MAX_CONTEXT_BUDGET = window.MAX_TOTAL_CAP
+_CONTEXT_CAP_PREFIX = "total:"
+_context_cap_lock = threading.Lock()
 
 
-def load_context_budget() -> int:
-    """The user's history token budget (estimated tokens), clamped to a sane range."""
-    _ensure_file(PATH_TO_CONTEXT_BUDGET, default_text=str(DEFAULT_CONTEXT_BUDGET))
-    with open(PATH_TO_CONTEXT_BUDGET, "r", encoding="utf-8") as f:
-        raw = f.read().strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        return DEFAULT_CONTEXT_BUDGET
-    return max(MIN_CONTEXT_BUDGET, min(MAX_CONTEXT_BUDGET, value))
+def load_context_budget() -> int | None:
+    """Read the custom total cap, or None for the provider's default."""
+    with _context_cap_lock:
+        path = Path(PATH_TO_CONTEXT_BUDGET)
+        try:
+            raw = path.read_text(encoding="utf-8").strip()
+            if raw.startswith(_CONTEXT_CAP_PREFIX):
+                value = raw.removeprefix(_CONTEXT_CAP_PREFIX).strip()
+                return window.total_cap(value) if value else None
+            return window.migrate_total_cap(int(raw), automatic=window.LEGACY_AUTO_CAP)
+        except (FileNotFoundError, ValueError):
+            return None
+
+
+def save_context_budget(budget: int | None) -> int | None:
+    """Persist the total cap with a format marker, including explicit 40000."""
+    value = None if budget is None else window.total_cap(budget)
+    with _context_cap_lock:
+        path = Path(PATH_TO_CONTEXT_BUDGET)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(_CONTEXT_CAP_PREFIX + (str(value) if value else ""),
+                             encoding="utf-8")
+        temporary.replace(path)
+    return value
 
 
 def effective_context_budget() -> int:
-    """The history budget a prompt actually uses: the custom model's setting
-    (data/context_budget.txt), or on the built-in model its own number,
-    which never exceeds what its context window can hold."""
-    try:
-        import builtin_llm   # late import: builtin_llm imports this module
-        own = builtin_llm.history_budget()
-    except Exception:
-        own = None
-    return own if own else load_context_budget()
+    """Rough planning room for attachment previews before a reply is assembled."""
+    import builtin_llm
+    own = builtin_llm.history_budget()
+    return own if own is not None else (load_context_budget() or window.DEFAULT_TOTAL_CAP_LOCAL)
 
-
-def _builtin_active() -> bool:
-    try:
-        import builtin_llm   # late import: builtin_llm imports this module
-        return bool(builtin_llm.active())
-    except Exception:
-        return False
-
-
-def _fold_in_batches() -> bool:
-    """Prompt order B (her built-in model, or a cloud provider): the rolling
-    summary folds SUMMARY_BATCH_TURNS turns at a time. The summary sits in
-    the instruction block, and a cloud provider's prompt-cache discount needs
-    that block unchanged between replies (2026-11-12) - a fold every reply
-    would make every prompt new. A user's own local / LAN server folds turn
-    by turn as before."""
-    if _builtin_active():
-        return True
-    try:
-        import llm   # late import: llm imports this module
-        return not llm._is_local_host(llm._configured_server_url())
-    except Exception:
-        return False
-
-
-def save_context_budget(budget: int) -> int:
-    """Persist the history token budget, clamped to [MIN_CONTEXT_BUDGET, MAX_CONTEXT_BUDGET]."""
-    value = max(MIN_CONTEXT_BUDGET, min(MAX_CONTEXT_BUDGET, int(budget or 0)))
-    _ensure_file(PATH_TO_CONTEXT_BUDGET, default_text=str(DEFAULT_CONTEXT_BUDGET))
-    with open(PATH_TO_CONTEXT_BUDGET, "w", encoding="utf-8") as f:
-        f.write(str(value))
-    return value
 
 # ---------- SAMPLING (per-parameter generation settings) ----------
 # The user's optional per-request overrides for the model server (temperature,
@@ -2273,11 +2270,6 @@ def save_sampling(settings: Dict[str, Dict]) -> Dict[str, Dict]:
     return saved
 
 
-# Always keep at least this many of the newest messages, even if the budget is
-# tight (guards against a long stretch of tiny messages being over-trimmed).
-MIN_RECENT_MESSAGES = 8
-
-
 def estimate_tokens(text: str) -> int:
     """Rough, deliberately conservative token estimate (Qwen-style BPE).
 
@@ -2295,82 +2287,39 @@ def estimate_tokens(text: str) -> int:
     return int(cjk / 1.5 + other / 3.5) + (1 if (cjk or other) else 0)
 
 
-# pre: token_budget is the max estimated tokens of history to keep; None (the
-#      default) reads the user-configurable budget from data/context_budget.txt
-# post: returns model-facing messages (role/content only), chronological, for the ACTIVE session.
-#       Assistant lines use their Japanese voice line when one exists. Newest-first packing:
-#       walks from the latest message backwards until the budget is used up, and always
-#       keeps at least MIN_RECENT_MESSAGES of the newest lines.
-# ---------- ROLLING SUMMARY (two-tier memory, tier 1; 2026-10-05) ----------
-#
-# The prompt keeps the last SUMMARY_WINDOW_TURNS reply turns VERBATIM and
-# folds everything older into a capped per-conversation rolling summary, so
-# prompt size stays flat no matter how long a chat runs (no more hard cliff
-# at the context budget) and every fact appears in the prompt exactly once -
-# in the summary OR verbatim, never both. The fold runs on a background
-# worker (never blocks a reply): when the model answers, one short merge call
-# rewrites the summary; when it does not, a plain text fold takes over, so
-# the window always closes. A merge in flight does not advance
-# summary_covers, so the turn being folded is still shown VERBATIM until the
-# summary lands (still exactly-once, just briefly larger).
-
-SUMMARY_WINDOW_TURNS = 12      # reply turns kept verbatim (a turn = user line + its reply run; a greeting is its own turn)
-# Prompt order B (2026-10-22 built-in model; 2026-11-12 also cloud providers,
-# see _fold_in_batches): fold in batches - the
-# window grows to WINDOW + BATCH turns, then BATCH turns fold in ONE merge
-# call. Her model reuses the prompt only up to the first changed byte, and a
-# fold changes the summary at the top of the chat; one fold per BATCH replies
-# keeps the chat's start stable in between.
-SUMMARY_BATCH_TURNS = 6
-SUMMARY_MAX_CHARS = 2200       # hard cap on the stored summary text
-
+# ---------- ROLLING SUMMARY ----------
 _SUMMARY_HEADER = (
     "EARLIER IN THIS CONVERSATION (a running summary of the messages before the "
     "recent ones below - those messages are no longer in your prompt, so treat "
     "this summary as your memory of them):\n"
 )
+_summary_merger: Callable[[str, str, int], str] | None = None
+_roll_lock = threading.Lock()
+_roll_queue = {}
+_roll_latest = {}
+_roll_worker = None
 
-# chat.py registers the model-based merger here; None = deterministic fold only.
-_summary_merger: Callable[[str, str], str] | None = None
 
-
-def set_summary_merger(fn: Callable[[str, str], str] | None) -> None:
-    """Register the (current_summary, new_exchange) -> merged_text function
-    used by the rolling-summary worker (chat.py provides the LLM-based one)."""
+def set_summary_merger(fn: Callable[[str, str, int], str] | None) -> None:
     global _summary_merger
     _summary_merger = fn
 
 
+def _read_summary(c, conversation_id):
+    return c.execute(
+        "SELECT rolling_summary, summary_covers, history_revision, summary_budget "
+        "FROM conversations WHERE id = ?", (conversation_id,),
+    ).fetchone() or ("", 0, -1, 0)
+
+
 def _rolling_summary_state(conversation_id=None) -> tuple:
-    """(summary_text, last covered message id) for one conversation (active
-    when None). ("", 0) when the conversation is unknown or unsummarized."""
-    conv = _active_conv_id(None) if conversation_id is None else int(conversation_id)
+    conv = _active_conv_id(conversation_id)
     conn = _connect_db()
     c = conn.cursor()
     _ensure_messages_table(c)
-    _ensure_conversations(c)
-    row = c.execute(
-        "SELECT rolling_summary, summary_covers FROM conversations WHERE id = ?",
-        (conv,),
-    ).fetchone()
+    state = _read_summary(c, conv)
     conn.close()
-    if row is None:
-        return "", 0
-    return (row[0] or ""), int(row[1] or 0)
-
-
-def _set_rolling_summary(conversation_id: int, text: str, covers_id: int) -> None:
-    conn = _connect_db()
-    c = conn.cursor()
-    _ensure_messages_table(c)
-    _ensure_conversations(c)
-    c.execute(
-        "UPDATE conversations SET rolling_summary = ?, summary_covers = ? "
-        "WHERE id = ?",
-        (text, int(covers_id), int(conversation_id)),
-    )
-    conn.commit()
-    conn.close()
+    return state[:2]
 
 
 def _group_exchange_turns(rows) -> List[List[int]]:
@@ -2399,235 +2348,196 @@ def _group_exchange_turns(rows) -> List[List[int]]:
     return groups
 
 
-def _conversation_turns(conversation_id=None) -> List[Dict[str, object]]:
-    """The conversation's reply turns, oldest first, as {"last_id", "text"}.
-
-    The text is the form the summary merger reads: "user: …" / "Amadeus: …"
-    lines, one per stored line of the turn (the Japanese column for assistant
-    lines - the same rule her prompt history uses; a greeting is its own
-    turn). Only ACTIVE versions count, exactly like the prompt.
-    """
-    conv = _active_conv_id(None) if conversation_id is None else int(conversation_id)
-    conn = _connect_db()
-    c = conn.cursor()
-    _ensure_messages_table(c)
-    rows = c.execute(
-        "SELECT id, role, content, japanese, greeting FROM messages "
-        "WHERE conversation_id = ? AND (role = 'user' OR active = 1) "
-        "ORDER BY id ASC",
-        (conv,),
-    ).fetchall()
-    conn.close()
-    by_id = {r[0]: r for r in rows}
-    turns: List[Dict[str, object]] = []
-    for group in _group_exchange_turns([(r[0], r[1], r[4] or 0) for r in rows]):
-        lines = []
-        for mid in group:
-            _id, role, content, japanese, _greeting = by_id[mid]
-            if role == "user":
-                text = (content or "").strip()
-                if text:
-                    lines.append("user: " + text)
-            else:
-                text = (japanese or content or "").strip()
-                if text:
-                    lines.append("Amadeus: " + text)
-        if not lines:
-            continue
-        turns.append({"last_id": max(group), "text": "\n".join(lines)})
-    return turns
+@dataclass(frozen=True)
+class _SummaryJob:
+    revision: int
+    cutoff: int
+    cap: int
+    budget: int
+    seed: str
+    exchanges: tuple[str, ...]
 
 
-def _fold_summary_text(current: str, new_text: str) -> str:
-    """Deterministic fallback merge (model down / merger failed): keep the
-    newest material under the cap, cutting from the OLDEST end on a line
-    boundary. Crude on purpose - the model merge is the normal path; this one
-    just guarantees the window closes."""
-    combined = ((current + "\n" + new_text).strip() if current else new_text.strip())
-    if len(combined) <= SUMMARY_MAX_CHARS:
-        return combined
-    tail = combined[-SUMMARY_MAX_CHARS:]
-    cut = tail.find("\n")
-    if 0 <= cut < 400:
-        tail = tail[cut + 1:]
-    return tail
+class _SummarySnapshot:
+    def __init__(self, conversation_id, state, texts, exclude_ids):
+        self.key = (PATH_TO_MEMORY, conversation_id)
+        self.text, self.covers, self.revision, self.budget = state
+        self.texts = texts
+        self.exclude_ids = exclude_ids or ()
 
+    def batch_cutoff(self, targets, cutoff, headroom_cutoff, budget):
+        with _roll_lock:
+            pending = _roll_latest.get(self.key)
+        if pending is not None and pending.revision == self.revision:
+            covers, previous_budget = pending.cutoff, pending.budget
+        else:
+            covers, previous_budget = self.covers, self.budget
+        if covers not in targets:
+            return headroom_cutoff
+        previous = targets.index(covers) + 1
+        if cutoff < previous and budget > previous_budget:
+            return cutoff
+        return previous if cutoff <= previous <= headroom_cutoff else headroom_cutoff
 
-def _merge_summary_text(current: str, new_text: str) -> str:
-    merged = ""
-    if _summary_merger is not None:
+    def select(self, omitted, cap, encoding, budget):
+        cutoff = omitted[-1] if omitted else 0
+        if (cutoff or self.covers) and not self._still_current():
+            return ""
+        valid = self.covers in omitted and not any(mid <= self.covers for mid in self.exclude_ids)
+        rendered = _SUMMARY_HEADER + self.text if valid and self.text else ""
+        if window.count_text(rendered, encoding) + 2 > cap:
+            rendered = ""
+
+        # An old greeting version excluded for a particular reply cannot be
+        # used to publish a different version of the conversation's summary.
+        if not any(mid <= cutoff for mid in self.exclude_ids):
+            self._schedule(omitted, cutoff, cap, rendered, budget)
+        return rendered
+
+    def _still_current(self):
+        if self.key[0] != PATH_TO_MEMORY:
+            return False
+        conn = _connect_db()
         try:
-            merged = (_summary_merger(current, new_text) or "").strip()
-        except Exception as e:
-            print("[Amadeus] rolling summary: model merge failed, folding text:",
-                  repr(e))
-            merged = ""
-    if not merged:
-        merged = _fold_summary_text(current, new_text)
-    return merged[:SUMMARY_MAX_CHARS]
+            row = conn.execute("SELECT history_revision FROM conversations WHERE id = ?",
+                               (self.key[1],)).fetchone()
+            return bool(row and row[0] == self.revision)
+        finally:
+            conn.close()
+
+    def _schedule(self, omitted, cutoff, cap, rendered, budget):
+        key = self.key
+        text_cap = max(0, cap - window.byte_tokens(_SUMMARY_HEADER) - 2)
+        start = omitted.index(self.covers) + 1 if rendered else 0
+        # A tokenizer may fit a summary that is larger in bytes. A worker
+        # always has a bounded, provider-independent input and output.
+        if rendered and window.byte_tokens(self.text) > text_cap:
+            start = 0
+        job = _SummaryJob(
+            self.revision, cutoff, text_cap, budget,
+            self.text if start else "",
+            tuple(self.texts[mid] for mid in omitted[start:]),
+        )
+        with _roll_lock:
+            previous = _roll_latest.get(key)
+            if previous is not None and previous.revision > job.revision:
+                return
+            if previous is not None and (previous.revision, previous.cutoff, previous.cap) == (
+                    job.revision, job.cutoff, job.cap):
+                return
+            needs_summary = cutoff > 0 and text_cap > 0
+            if (needs_summary and not (cutoff == self.covers and rendered)) or (
+                    self.covers and (not needs_summary or cutoff < self.covers)):
+                _enqueue_roll(key, job)
+            else:
+                _roll_latest.pop(key, None)
+                _roll_queue.pop(key, None)
 
 
-# One background worker for every conversation: turns fold in stored order
-# (covers advances monotonically), so a prompt built mid-drain never shows a
-# fact twice.
-_roll_lock = threading.Lock()
-_roll_queue: "dict[int, 'collections.deque']" = {}
-_roll_queued_ids: "dict[int, set]" = {}
-_roll_worker: "threading.Thread | None" = None
-
-
-def _start_roll_worker() -> None:
+def _enqueue_roll(key, job):
     global _roll_worker
-    with _roll_lock:
-        if _roll_worker is not None and _roll_worker.is_alive():
-            return
+    _roll_latest[key] = job
+    _roll_queue[key] = job
+    if _roll_worker is None:
         _roll_worker = threading.Thread(
             target=_roll_worker_loop, daemon=True, name="rolling-summary")
         _roll_worker.start()
 
 
-def _roll_worker_loop() -> None:
-    while True:
-        conv = None
-        turn = None
-        with _roll_lock:
-            for conv_id in list(_roll_queue):
-                q = _roll_queue[conv_id]
-                if q:
-                    turn = q.popleft()
-                    _roll_queued_ids[conv_id].discard(turn["last_id"])
-                    # A fold queued against one store must never land in a
-                    # different store (tests rotate store paths; the guard is
-                    # a no-op in production, where there is one store).
-                    if turn.get("db", PATH_TO_MEMORY) != PATH_TO_MEMORY:
-                        continue
-                    conv = conv_id
-                    break
-            else:
-                # Grace: another turn may be queued in the same instant this
-                # loop empties (a reply landing while the last fold stores).
-                # Re-check once after a short sleep so no item is orphaned
-                # with no live worker.
-                time.sleep(0.2)
-                if any(_roll_queue.values()):
-                    continue
-                return
+def _summary_chunks(exchanges):
+    """Pack chronological text in bounded UTF-8 chunks, even for a huge row."""
+    chunk = []
+    size = 0
+    for exchange in exchanges:
+        for char in exchange + "\n":
+            cost = window.byte_tokens(char)
+            if size + cost > window.SUMMARY_CHUNK_TOKENS:
+                yield "".join(chunk).strip()
+                chunk, size = [], 0
+            chunk.append(char)
+            size += cost
+    if chunk:
+        yield "".join(chunk).strip()
+
+
+def _clip_summary(text, cap, *, tail=False):
+    if cap <= 0:
+        return ""
+    data = text.encode("utf-8")
+    if len(data) <= cap:
+        return text
+    data = data[-cap:] if tail else data[:cap]
+    return data.decode("utf-8", errors="ignore").strip()
+
+
+def _merge_summary_text(current, chunk, cap):
+    merger = _summary_merger
+    if merger is not None and chunk:
         try:
-            # Voice on the processor: not while she is speaking (voice_gate).
-            import voice_gate
-            voice_gate.wait_quiet()
-            _fold_one_turn(conv, turn)
-        except Exception as e:
-            # Even a DB failure must not strand the turn: re-queue it once at
-            # the front so the window still closes.
-            print("[Amadeus] rolling summary: fold failed:", repr(e))
-            with _roll_lock:
-                q = _roll_queue.setdefault(conv, collections.deque())
-                q.appendleft(turn)
-                _roll_queued_ids[conv].add(turn["last_id"])
+            merged = (merger(current, chunk, cap) or "").strip()
+            if merged:
+                return _clip_summary(merged, cap)
+        except Exception as exc:
+            print("[Amadeus] Rolling summary merge failed:", type(exc).__name__)
+    return _clip_summary((current + "\n" + chunk).strip(), cap, tail=True)
 
 
-def _fold_one_turn(conv: int, turn: Dict[str, object]) -> None:
-    summary, covers = _rolling_summary_state(conv)
-    # The turn may already be covered (queued twice before a crash, or the
-    # queue replayed after a restart): never move covers backwards.
-    if int(turn["last_id"]) <= covers:
-        return
-    text = str(turn.get("text") or "")
-    if turn.get("parts"):
-        # A batch (built-in model): merge only the turns the summary does not
-        # cover yet, so a batch queued twice never adds a turn twice.
-        text = "\n".join(str(p["text"]) for p in turn["parts"]
-                         if int(p["last_id"]) > covers)
-    merged = _merge_summary_text(summary, text)
-    _set_rolling_summary(conv, merged, int(turn["last_id"]))
+def _job_is_current(key, job):
+    return _roll_latest.get(key) is job and key[0] == PATH_TO_MEMORY
 
 
-def maybe_roll_summary(conversation_id=None) -> None:
-    """After a NEW reply turn is stored: if the verbatim window (the reply
-    turns newer than the stored summary) holds more than
-    SUMMARY_WINDOW_TURNS turns, fold the oldest overflow turns into the
-    per-conversation rolling summary - on the background worker, never
-    blocking the reply. Safe to call unconditionally (no-op below the
-    window; re-queueing already-pending turns is filtered)."""
-    conv = _active_conv_id(None) if conversation_id is None else int(conversation_id)
+def _publish_summary(key, job, text):
+    # Use the captured path. Two requests can supersede each other while the
+    # model works, and SQLite's revision guard covers edits in other threads.
+    conn = sqlite3.connect(key[0], timeout=30.0)
     try:
-        turns = _conversation_turns(conv)
-    except Exception as e:
-        print("[Amadeus] rolling summary: could not read turns:", repr(e))
-        return
-    if not turns:
-        return
-    _summary_text, covers = _rolling_summary_state(conv)
-    verbatim = [t for t in turns if int(t["last_id"]) > covers]
-    overflow = len(verbatim) - SUMMARY_WINDOW_TURNS
-    if overflow <= 0:
-        return
-    if _fold_in_batches():
-        if overflow < SUMMARY_BATCH_TURNS:
-            return
-        batch = {"last_id": verbatim[overflow - 1]["last_id"], "parts": verbatim[:overflow]}
+        conn.execute("BEGIN IMMEDIATE")
         with _roll_lock:
-            q = _roll_queue.setdefault(conv, collections.deque())
-            known = _roll_queued_ids.setdefault(conv, set())
-            if q or batch["last_id"] in known:
-                return  # a batch is already waiting; it folds these turns
-            q.append({**batch, "db": PATH_TO_MEMORY})
-            known.add(batch["last_id"])
-        _start_roll_worker()
-        return
-    with _roll_lock:
-        q = _roll_queue.setdefault(conv, collections.deque())
-        known = _roll_queued_ids.setdefault(conv, set())
-        added = False
-        for t in verbatim[:overflow]:
-            if t["last_id"] in known:
-                continue
-            q.append({**t, "db": PATH_TO_MEMORY})
-            known.add(t["last_id"])
-            added = True
-    if added:
-        _start_roll_worker()
+            if _job_is_current(key, job):
+                conn.execute(
+                    "UPDATE conversations SET rolling_summary = ?, summary_covers = ?, "
+                    "summary_budget = ? WHERE id = ? AND history_revision = ?",
+                    (text, job.cutoff if text else 0, job.budget, key[1], job.revision),
+                )
+                conn.commit()
+    finally:
+        conn.close()
 
 
-# conversation_id: None = the active tab (every reply); a greeting passes the
-# tab it is written for, so a tab switch mid-generation cannot swap the
-# history under it.
-def build_prompt_messages(token_budget: int | None = None, exclude_ids=None,
-                          conversation_id=None, now=None) -> List[Dict[str, str]]:
-    # now: the moment the reply is written at (a regenerated reply: the time
-    # of the message it re-answers); None = the real current time.
-    if token_budget is None:
-        # Pictures she will see take room too (none -> the usual budget).
-        token_budget = text_context_budget(conversation_id)
-    messages = load_memory_for_prompt(conversation_id=conversation_id,
-                                      exclude_ids=exclude_ids, now=now)
-    # Rolling summary: drop the rows the stored summary already covers and
-    # hand the summary over as a leading system message (it merges into the
-    # one system message the chat template requires). No summary yet -> the
-    # prompt is byte-identical to the pre-feature behaviour.
-    summary_text, covers = _rolling_summary_state(conversation_id)
-    if (summary_text or "").strip() and covers > 0:
-        messages = [m for m in messages if (m.get("id") or 0) > covers]
-        messages = [{"role": "system",
-                     "content": _SUMMARY_HEADER + summary_text.strip()}] + messages
-    # The "id" key is internal (the summary drop above); the prompt shape the
-    # rest of the app sees must stay exactly {role, content}.
-    messages = [{"role": m["role"], "content": m["content"]} for m in messages]
-    if len(messages) <= MIN_RECENT_MESSAGES:
-        return messages
-    kept: List[Dict[str, str]] = []
-    total = 0
-    forced = min(MIN_RECENT_MESSAGES, len(messages))
-    for i, m in enumerate(reversed(messages)):
-        cost = estimate_tokens(m.get("content") or "")
-        if i < forced or total + cost <= token_budget:
-            kept.append(m)
-            total += cost
-        else:
-            break
-    kept.reverse()
-    return kept
+def _roll_worker_loop():
+    global _roll_worker
+    while True:
+        with _roll_lock:
+            if not _roll_queue:
+                _roll_worker = None
+                return
+            key = next(iter(_roll_queue))
+            job = _roll_queue.pop(key)
+        try:
+            text = job.seed
+            if job.cap and job.cutoff:
+                import voice_gate
+                for chunk in _summary_chunks(job.exchanges):
+                    with _roll_lock:
+                        if not _job_is_current(key, job):
+                            break
+                    if _summary_merger is not None:
+                        voice_gate.wait_quiet()
+                    text = _merge_summary_text(text, chunk, job.cap)
+            _publish_summary(key, job, text)
+        except Exception as exc:
+            print("[Amadeus] Rolling summary failed:", type(exc).__name__)
+        finally:
+            with _roll_lock:
+                if _roll_latest.get(key) is job:
+                    _roll_latest.pop(key)
+
+
+def build_prompt_messages(exclude_ids=None, conversation_id=None, now=None,
+                          answering_id=None, proactive=False):
+    """Snapshot the pinned conversation for later per-call prompt planning."""
+    return _prompt_snapshot(conversation_id, exclude_ids, now,
+                            answering_id=answering_id, proactive=proactive)
 
 
 # pre: created_at / prev_created_at are the stored "YYYY-MM-DD HH:MM" strings
@@ -4131,83 +4041,81 @@ def delete_conversation(conversation_id: int) -> bool:
 #       after a gap of 2+ hours carry a short bracketed time note (her prompt
 #       otherwise has no dates); the latest user message stays clean.
 def _merge_asides(rows):
-    """Her "hold on, let me check" line joins the answer after it, so her
-    prompt history still alternates user / her (chat templates expect that)
-    and she remembers saying it. An aside with no answer after it (the answer
-    failed, or is being written again) is left out."""
+    """Join a hold-on line to its answer and preserve both stored IDs."""
     out = []
     pending = None
-    for row in rows:
-        mid, role, content, japanese, created_at, aside = row
+    for mid, role, content, japanese, created_at, aside, greeting in rows:
         if role == "assistant" and aside:
-            pending = row
+            pending = (mid, content, japanese)
             continue
-        if pending is not None and role == "assistant":
-            _, _, a_content, a_japanese, _, _ = pending
+        ids = (mid,)
+        if pending is not None and role == "assistant" and not greeting:
+            aside_id, a_content, a_japanese = pending
+            base = japanese or content or ""
             content = ((a_content or "").strip() + " " + (content or "")).strip()
             if japanese or a_japanese:
-                japanese = ((a_japanese or a_content or "").strip()
-                            + (japanese or content or "")).strip()
-            row = (mid, role, content, japanese, created_at, aside)
+                japanese = ((a_japanese or a_content or "").strip() + base).strip()
+            ids = (aside_id, mid)
         pending = None
-        out.append(row)
+        out.append((mid, role, content, japanese, created_at, greeting, ids))
     return out
 
 
-def load_memory_for_prompt(conversation_id=None, exclude_ids=None,
-                           now=None) -> List[Dict[str, str]]:
-    conv = _active_conv_id(None) if conversation_id is None else int(conversation_id)
+def load_memory_for_prompt(conversation_id=None, exclude_ids=None, now=None):
+    return [{"id": m["_window_ids"][-1], "role": m["role"], "content": m["content"]}
+            for m in _prompt_snapshot(conversation_id, exclude_ids, now)]
+
+
+def _prompt_snapshot(conversation_id, exclude_ids, now, *, answering_id=None,
+                     proactive=False):
+    conv = _active_conv_id(conversation_id)
     conn = _connect_db()
     c = conn.cursor()
     _ensure_messages_table(c)
-    # The model only ever sees the ACTIVE version of each reply, so her context
-    # automatically follows whichever version the user is currently viewing.
-    if exclude_ids:
-        ph = ",".join("?" * len(exclude_ids))
-        rows = c.execute(
-            "SELECT id, role, content, japanese, created_at, aside FROM messages "
-            "WHERE conversation_id = ? AND (role = 'user' OR active = 1) "
-            "AND id NOT IN (" + ph + ") ORDER BY id ASC",
-            [conv, *exclude_ids],
-        ).fetchall()
-    else:
-        rows = c.execute(
-            "SELECT id, role, content, japanese, created_at, aside FROM messages "
-            "WHERE conversation_id = ? AND (role = 'user' OR active = 1) "
-            "ORDER BY id ASC", (conv,)
-        ).fetchall()
+    _ensure_attachments_table(c)
+    conn.commit()
+    c.execute("BEGIN")
+    state = _read_summary(c, conv)
+    rows = c.execute(
+        "SELECT id, role, content, japanese, created_at, aside, greeting FROM messages "
+        "WHERE conversation_id = ? AND (role = 'user' OR active = 1) "
+        "AND (? IS NULL OR id <= ?) ORDER BY id ASC",
+        (conv, answering_id, answering_id),
+    ).fetchall()
+    excluded = set(exclude_ids or ())
+    rows = _merge_asides([row for row in rows if row[0] not in excluded])
     shown = _attachments_by_message(c, [r[0] for r in rows if r[1] == "user"])
     conn.close()
-    rows = _merge_asides(rows)
+
+    groups = _group_exchange_turns([(r[0], r[1], r[5]) for r in rows])
+    exchange_of = {mid: group[-1] for group in groups for mid in group}
+    texts = {group[-1]: [] for group in groups}
+    last_user = next((r[0] for r in reversed(rows) if r[1] == "user"), None)
+    mandatory = None if proactive else exchange_of.get(last_user)
+    now_local = (now or datetime.now().astimezone()).astimezone()
     out = []
     prev_created_at = None
-    # The latest user message is the one being answered right now: its timing
-    # is already covered by the internal timing context, and downstream
-    # helpers (search-topic extraction, character-book check) read that exact
-    # message - so it stays clean. Older messages after real gaps get the note.
-    # ("id" rides along so build_prompt_messages can drop the rows a stored
-    # rolling summary already covers - rolling-summary feature, 2026-10-05.)
-    last_user_index = max(
-        (i for i, row in enumerate(rows) if row[1] == "user"), default=-1
-    )
-    now_local = (now or datetime.now().astimezone()).astimezone()  # one "now" for every note
-    for i, (mid, role, content, japanese, created_at, _aside) in enumerate(rows):
-        base = japanese if (role == "assistant" and japanese) else content
-        if shown.get(mid) and i != last_user_index:
-            # Her earlier pictures as text labels (the newest message's own
-            # pictures are added for real by attachments.with_pictures).
-            # On her desk she sees the picture itself: its label stays exactly
-            # as it was when it was sent (no caption), so this message never
-            # changes while it is there (her built-in model keeps reusing it).
-            labels = " ".join(attachment_label({**a, "caption": None} if a.get("on_desk") else a)
-                              for a in shown[mid])
-            base = ((base or "").strip() + " " + labels).strip()
-        note = (None if i == last_user_index
-                else _time_note(created_at, prev_created_at, now_local))
-        out.append({"id": mid, "role": role,
-                    "content": note + " " + base if note else base})
+    for mid, role, content, japanese, created_at, _greeting, ids in rows:
+        base = (japanese if role == "assistant" and japanese else content) or ""
+        exchange = exchange_of[mid]
+        texts[exchange].append(("user: " if role == "user" else "Amadeus: ") + base)
+        if shown.get(mid) and mid != last_user:
+            labels = " ".join(
+                attachment_label({**a, "caption": None} if a.get("on_desk") else a)
+                for a in shown[mid]
+            )
+            base = (base.strip() + " " + labels).strip()
+        note = None if mid == last_user else _time_note(created_at, prev_created_at, now_local)
+        message = {"role": role, "content": note + " " + base if note else base,
+                   "_window_ids": ids}
+        if exchange != mandatory:
+            message["_window_exchange"] = exchange
+        out.append(message)
         prev_created_at = created_at
-    return out
+    summary = _SummarySnapshot(conv, state, {k: "\n".join(v) for k, v in texts.items()},
+                               excluded)
+    return window.HistoryDraft(conv, out, summary, recall_excluded_ids=excluded,
+                               proactive=proactive, now=now_local)
 
 
 # pre: message_id exists; japanese_text is the line she actually spoke

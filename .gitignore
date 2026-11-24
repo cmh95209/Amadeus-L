@@ -41,6 +41,7 @@ backend/data/llm_provider.txt
 
 # Persistent / generated runtime data
 backend/data/memory.db
+backend/data/transcript_vectors.sqlite3*
 backend/data/memory.json
 backend/data/stats.db
 backend/data/active_conversation.txt

@@ -88,6 +88,8 @@ import {
   getVoiceRetention,
   setVoiceRetention,
   getContextBudgetInfo,
+  DEFAULT_PROMPT_CAP,
+  type ContextBudgetInfo,
   getBrainMode,
   setBrainMode,
   getProviders,
@@ -255,7 +257,7 @@ export default function App() {
   const japaneseShown = showJapanese || voiceEarly;
   const [editSaving, setEditSaving] = useState(false);
   const [voiceRetention, setVoiceRetentionState] = useState<number>(100);
-  const [contextBudget, setContextBudgetState] = useState<number>(40000);
+  const [contextBudget, setContextBudgetState] = useState<number | null>(null);
   const [serverAddress, setServerAddressState] = useState<string>("");
   const [userName, setUserName] = useState("");
   const [userNameReading, setUserNameReading] = useState("");
@@ -287,8 +289,7 @@ export default function App() {
   // graphics card) - Settings words it that way.
   const onMac = brain?.shared_memory === true;
   // The built-in model's cap on the history budget (null = no cap).
-  const [builtinBudgetCap, setBuiltinBudgetCap] = useState<number | null>(null);
-  const [defaultBudget, setDefaultBudget] = useState<number>(40000);
+  const [contextBudgetInfo, setContextBudgetInfo] = useState<ContextBudgetInfo | null>(null);
   const [connTesting, setConnTesting] = useState(false);
   const [loading, setLoading] = useState(false);
   // Web ON: what her reply is doing right now ("Searching the web: ...",
@@ -1646,7 +1647,7 @@ export default function App() {
           getReasoning().catch(() => null),
           listConversations().catch(() => null),
           getVoiceRetention().catch(() => 100),
-          getContextBudgetInfo().catch(() => ({ budget: 40000, builtinCap: null, defaultBudget: 40000 })),
+          getContextBudgetInfo().catch(() => null),
           getLLMServer().catch(() => ""),
           getUsername().catch(() => ({ name: "", reading: "" })),
           getUserProfile().catch(() => ({ pronouns: "", address: "auto", town: "" })),
@@ -1661,9 +1662,8 @@ export default function App() {
       setWebAccessState(webOn);
       setReasoningState(reasoningInfo);
       setVoiceRetentionState(voiceCap);
-      setContextBudgetState(budgetInfo.budget);
-      setBuiltinBudgetCap(budgetInfo.builtinCap);
-      setDefaultBudget(budgetInfo.defaultBudget);
+      setContextBudgetState(budgetInfo?.budget ?? null);
+      setContextBudgetInfo(budgetInfo);
       setBrain(brainInfo);
       setServerAddressState(serverAddr);
       setUserName(savedName.name);
@@ -2080,6 +2080,7 @@ export default function App() {
       const savedName = await setUsername(userName, userNameReading);
       await setVoiceRetention(voiceRetention);
       setContextBudgetState(await setContextBudget(contextBudget));
+      void getContextBudgetInfo().then(setContextBudgetInfo).catch(() => {});
       // Saved last and never fatal: a backend older than this WebUI has no
       // /setUserProfile yet, and that must not undo the settings above.
       let profileSaved = true;
@@ -2159,8 +2160,7 @@ export default function App() {
       // Each mode keeps its own conversation number: show the new mode's.
       const budget = await getContextBudgetInfo().catch(() => null);
       if (budget) {
-        setBuiltinBudgetCap(budget.builtinCap);
-        setDefaultBudget(budget.defaultBudget);
+        setContextBudgetInfo(budget);
         setContextBudgetState(budget.budget);
       }
       setSettingsNotice(
@@ -3978,41 +3978,41 @@ export default function App() {
               )}
 
               <label>
-                Conversation memory (tokens)
+                Total prompt cap (tokens)
                 <input
                   type="number"
                   min={500}
-                  max={builtinBudgetCap ?? 1000000}
-                  step={500}
-                  value={contextBudget}
+                  max={1000000}
+                  value={contextBudget ?? ""}
+                  placeholder="Automatic"
                   disabled={settingsBusy}
                   aria-describedby="context-budget-help"
                   onChange={(event) => {
-                    const value = Number(event.target.value);
-                    setContextBudgetState(
-                      Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0
-                    );
+                    const input = event.target;
+                    setContextBudgetState(input.value ? Math.floor(input.valueAsNumber) : null);
                   }}
                 />
               </label>
               <p className="settings-help" id="context-budget-help">
-                How much of your recent conversation she keeps in mind.
-                Amadeus also reserves about 10,000 tokens for her character
-                and her reply. We recommend at least 12,000.
-                {builtinBudgetCap !== null ? (
-                  <>
-                    {" "}Default on this {onMac ? "Mac" : "PC"}: {defaultBudget.toLocaleString("en-US")}{" "}
-                    ({onMac ? "lower on Macs with less memory" : "lower if your graphics card has less memory"}). Her built-in
-                    model has room for up to {builtinBudgetCap.toLocaleString("en-US")}.
-                  </>
-                ) : (
-                  <>
-                    {" "}Default: {defaultBudget.toLocaleString("en-US")}. Your
-                    model's context window must hold this number plus about
-                    10,000.
-                  </>
-                )}
+                The cap includes instructions, history, attachments, and room for her reply.
+                Clear the field to use the automatic cap.
               </p>
+              <p className="settings-help">
+                {`Automatic cap: ${(contextBudgetInfo?.defaultBudget ?? DEFAULT_PROMPT_CAP).toLocaleString()} tokens.`}
+              </p>
+              {contextBudgetInfo?.modelLimit != null && (
+                <p className="settings-help">
+                  {contextBudgetInfo.estimated
+                    ? `Estimated model context limit: ${contextBudgetInfo.modelLimit.toLocaleString()} tokens.`
+                    : `Model context limit: ${contextBudgetInfo.modelLimit.toLocaleString()} tokens.`}
+                </p>
+              )}
+              {contextBudgetInfo?.modelInputLimit != null &&
+               contextBudgetInfo.modelInputLimit !== contextBudgetInfo.modelLimit && (
+                <p className="settings-help">
+                  {`Model input limit: ${contextBudgetInfo.modelInputLimit.toLocaleString()} tokens.`}
+                </p>
+              )}
 
               <div className="settings-reasoning" aria-label="Reasoning">
                 <label>
@@ -4369,9 +4369,7 @@ export default function App() {
                   <div className="settings-toggle-text">
                     <span className="settings-toggle-title">Search old chats</span>
                     <span className="settings-toggle-desc">
-                      Each time you write, she looks through all your other chats
-                      for the same topic and remembers the best matches. Works in
-                      any language; no extra cost.
+                      Searches earlier messages in this chat and other chats for related topics as you write.
                     </span>
                   </div>
                   <button

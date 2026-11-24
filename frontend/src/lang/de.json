@@ -526,6 +526,7 @@
   "Saving edit - rewriting her Japanese line...": "Bearbeitung wird gespeichert - ihre japanische Zeile wird neu geschrieben...",
   "Saving...": "Speichert...",
   "Search old chats": "Alte Chats durchsuchen",
+  "Searches earlier messages in this chat and other chats for related topics as you write.": "Sie sucht beim Schreiben in früheren Nachrichten in diesem und anderen Chats nach verwandten Themen.",
   "Searched": "Gesucht",
   "Searched the web": "Im Web gesucht",
   "Send": "Senden",
@@ -785,6 +786,7 @@
   "…I’m starting to feel kind of sleepy.": "…Ich werde langsam ein bisschen müde."
  },
  "codes": {
+  "error.contextTooLarge": "Diese Anfrage überschreitet das verfügbare Kontextfenster. Kürze die Nachricht oder ihre Anhänge oder erhöhe das Prompt-Limit in den Einstellungen.",
   "error.status": "Fehler {status} ({label}) von {who}: {what}{said}",
   "error.said": " Meldung: „{reason}“.",
   "error.this_model": "dieses Modell",

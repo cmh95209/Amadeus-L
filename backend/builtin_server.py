@@ -178,7 +178,7 @@ def server_command(cfg: dict, model_file: str, safe: bool = False,
         "--host", "127.0.0.1",
         "--port", str(cfg.get("port") or builtin_llm.PORT),
         "--alias", builtin_llm.ALIAS,
-        "-c", str(int(cfg.get("context") or 16384)),
+        "-c", str(int(cfg.get("context") or builtin_llm.DEFAULT_CONTEXT)),
         "--jinja",
         "--temp", "1.0", "--top-p", "0.95", "--top-k", "64",
         # Thoughts (Settings -> Reasoning above Off) come back in their own
@@ -403,7 +403,8 @@ def load(file: str | None = None) -> dict:
             _set("failed", target, f"could not start llama-server: {e}" + _help_footer())
             return dict(_state)
         _set("loading", target)
-        _state.update({"pictures": bool(vision_path),
+        _state.update({"context_window": int(cfg.get("context") or builtin_llm.DEFAULT_CONTEXT),
+                       "pictures": bool(vision_path),
                        "pictures_where": ("card" if on_card else "processor") if vision_path else "",
                        "pictures_file": os.path.basename(vision_path) if vision_path else "",
                        "pictures_note": "" if vision_path else _no_pictures_note(cfg)})

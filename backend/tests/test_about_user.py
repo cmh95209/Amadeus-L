@@ -191,13 +191,14 @@ class PromptHintTests(_FreshAppTests):
 
     def test_summary_prompt_carries_pronouns_only_when_set(self):
         seen = []
-        fake = SimpleNamespace(invoke=lambda messages: seen.extend(messages)
-                               or SimpleNamespace(content="summary"))
+        bound = SimpleNamespace(invoke=lambda messages: seen.extend(messages)
+                                or SimpleNamespace(content="summary"))
+        fake = SimpleNamespace(bind=lambda *, max_tokens: bound)
         with patch.object(self.chat, "get_llm", return_value=fake):
-            self.chat._merge_summary_llm("", "USER: hi")
+            self.chat._merge_summary_llm("", "USER: hi", 4096)
             self.assertNotIn("pronouns", seen[-1]["content"])
             self.memory.save_pronouns("she/her")
-            self.chat._merge_summary_llm("", "USER: hi")
+            self.chat._merge_summary_llm("", "USER: hi", 4096)
         self.assertIn("The user uses she/her pronouns. Use them when the summary",
                       seen[-1]["content"])
 

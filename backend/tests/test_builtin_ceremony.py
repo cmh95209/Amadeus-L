@@ -269,32 +269,27 @@ class WakeWordingTests(_BuiltinApp):
 
 
 class SettingsTests(_BuiltinApp):
-    def test_builtin_model_has_its_own_conversation_number(self):
-        # No tier default in the file (an older install): all the context holds.
-        self.assertEqual(self.memory.effective_context_budget(), 16384 - 6000 - 4096)
-        self.assertEqual(self.client.get("/getContextBudget").json,
-                         {"budget": 6288, "builtin_cap": 6288, "default": 6288, "mode": "builtin"})
-        # The tier's default is where it starts.
+    def test_builtin_model_has_its_own_total_prompt_cap(self):
+        self.memory.save_context_budget(120000)
         _write(self.cfg_path, _config(self.base, context=49152, history_default=32000, n=1))
-        self.assertEqual(self.memory.effective_context_budget(), 32000)
-        info = self.client.get("/getContextBudget").json
-        self.assertEqual((info["budget"], info["builtin_cap"], info["default"]), (32000, 39056, 32000))
-        # Settings saves the built-in number - clamped to what the context holds -
-        # and leaves the custom model's number alone.
-        out = self.client.post("/setContextBudget", json={"budget": 99999}).json
-        self.assertEqual(out["budget"], 39056)
-        self.assertEqual(self.client.post("/setContextBudget", json={"budget": 12000}).json["budget"], 12000)
-        self.assertEqual(self.memory.effective_context_budget(), 12000)
-        self.assertEqual(self.memory.load_context_budget(), 40000)
-        # Custom mode: the custom number, untouched; switching back keeps 12000.
+        self.assertEqual(self.api.builtin_llm.total_budget_info(), (None, 42096))
+        self.assertEqual(self.client.post("/setContextBudget", json={"budget": 99999}).json["budget"], 99999)
+        self.assertEqual(self.api.builtin_llm.total_budget_info(), (99999, 42096))
+        self.assertEqual(self.memory.load_context_budget(), 120000)
+        client = SimpleNamespace(_amadeus_builtin=True)
+        limits = self.api.context_window.ModelLimits(49152)
+        with patch.object(self.chat, "_reply_llm", return_value=client), patch.object(
+                self.api.llm, "context_budget_info", return_value=(99999, 42096, limits),
+                create=True):
+            info = self.client.get("/getContextBudget").json
+            self.assertEqual((info["budget"], info["default"], info["model_limit"]),
+                             (99999, 42096, 49152))
+
         self.client.post("/setBrainMode", json={"mode": "custom"})
-        self.assertEqual(self.memory.effective_context_budget(), 40000)
-        self.assertEqual(self.client.get("/getContextBudget").json,
-                         {"budget": 40000, "builtin_cap": None, "default": 40000, "mode": "custom"})
-        self.client.post("/setContextBudget", json={"budget": 50000})
+        self.assertEqual(self.client.post("/setContextBudget", json={"budget": None}).json["budget"], None)
         self.client.post("/setBrainMode", json={"mode": "builtin"})
-        self.assertEqual(self.memory.effective_context_budget(), 12000)
-        self.assertEqual(self.memory.load_context_budget(), 50000)
+        self.assertIsNone(self.memory.load_context_budget())
+        self.assertEqual(self.api.builtin_llm.total_budget_info(), (99999, 42096))
 
     def test_brain_mode_routes(self):
         info = self.client.get("/brainMode").json

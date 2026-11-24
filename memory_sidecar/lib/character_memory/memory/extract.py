@@ -24,7 +24,8 @@ contexts (the default) are bit-for-bit identical to the legacy single-user path.
 """
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+from math import isfinite
 from typing import Any, Optional
 
 from ..llm.base import LLMClient
@@ -240,6 +241,35 @@ def build_extraction(
     return schema, instruction
 
 
+class MalformedExtraction(ValueError):
+    """The model returned data that cannot be applied as an extraction."""
+
+
+def _matches_schema_shape(value: Any, schema: dict[str, Any]) -> bool:
+    kind = schema.get("type")
+    if kind == "object":
+        return isinstance(value, dict) and all(
+            field in value for field in schema.get("required", [])
+        ) and all(
+            _matches_schema_shape(value[field], prop)
+            for field, prop in schema.get("properties", {}).items()
+            if field in value
+        )
+    if kind == "array":
+        return isinstance(value, list) and all(
+            _matches_schema_shape(item, schema.get("items", {})) for item in value
+        )
+    if kind == "string":
+        return isinstance(value, str)
+    if kind == "number":
+        return type(value) in (int, float) and isfinite(value)
+    if kind == "integer":
+        return type(value) is int
+    if kind == "boolean":
+        return type(value) is bool
+    return True
+
+
 class Extractor:
     """Turns recent exchanges into structured-memory updates."""
 
@@ -289,7 +319,7 @@ class Extractor:
             if t.get("message_id") is not None:
                 annotations.append(f"message_id={int(t['message_id'])}")
             if t.get("occurred_at") is not None:
-                timestamp = datetime.fromtimestamp(float(t["occurred_at"]), tz=UTC)
+                timestamp = datetime.fromtimestamp(float(t["occurred_at"]), tz=timezone.utc)
                 annotations.append(f"occurred_at={timestamp.isoformat()}")
             prefix = f"[{' | '.join(annotations)}] " if annotations else ""
             lines.append(prefix + label)
@@ -302,10 +332,15 @@ class Extractor:
             {"role": "system", "content": instruction},
             {"role": "user", "content": transcript},
         ]
-        try:
-            result = self.llm.chat_structured(messages, schema)
-        except Exception as exc:  # pragma: no cover - network/model errors
-            return {**empty, "error": str(exc)}
+        result = self.llm.chat_structured(messages, schema)
+        if (
+            not isinstance(result, dict)
+            or ("error" in result and "error" not in fields)
+            or not _matches_schema_shape(result, schema)
+        ):
+            raise MalformedExtraction("Invalid extraction response")
+        # Keep only fields that were requested.
+        result = {f: result.get(f, default) for f, default in empty.items()}
         valid_message_ids = {
             int(turn["message_id"])
             for turn in turns
@@ -328,6 +363,4 @@ class Extractor:
                     and not isinstance(message_id, bool)
                     and int(message_id) in valid_message_ids
                 ]
-        for f, default in empty.items():
-            result.setdefault(f, default)
         return result

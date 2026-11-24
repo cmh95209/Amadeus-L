@@ -46,6 +46,8 @@ class _FreshAppTests(unittest.TestCase):
     def setUp(self):
         if BACKEND not in sys.path:
             sys.path.insert(0, BACKEND)
+        from context_window import ModelLimits
+
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.previous_cwd = os.getcwd()
@@ -65,6 +67,7 @@ class _FreshAppTests(unittest.TestCase):
                                              "error": "stub"},
                 client_for=_stub_client_for,
                 _server_url=lambda: "http://127.0.0.1:9",
+                context_limits=lambda *a, **k: ModelLimits(16384),
             ),
             'tts': SimpleNamespace(
                 streamVoiceChunks=lambda text, save_path=None: iter(()),

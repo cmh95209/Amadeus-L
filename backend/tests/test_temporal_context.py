@@ -53,16 +53,27 @@ class TemporalContextTests(unittest.TestCase):
     def test_capture_precedes_insert_and_does_not_enter_memory(self):
         # Run the real orchestration function against a temporary SQLite store.
         tree = ast.parse((ROOT / 'chat.py').read_text())
-        function = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
-                        and n.name == 'getOutputPacked')
+        functions = [n for n in tree.body if isinstance(n, ast.FunctionDef)
+                     and n.name in {'getOutputPacked', '_invoke_prompt'}]
         now = datetime(2026, 9, 6, 18, 42).astimezone()
         captures = []
         reply = SimpleNamespace(assistant_reply_ENG='Welcome back.',
                                 assistant_reply_JPS='おかえり。')
+
+        def invoke(messages):
+            self.assertFalse(any(key.startswith('_window') for message in messages for key in message))
+            self.assertEqual(messages[-1], {'role': 'user', 'content': 'Hello again'})
+            return reply
+
         def respond(context, internal_context):
             captures.append(internal_context['content'])
-            self.assertEqual(context[-1], {'role': 'user', 'content': 'Hello again'})
-            return reply
+            latest = {key: value for key, value in context[-1].items()
+                      if not key.startswith('_window')}
+            self.assertEqual(latest, {'role': 'user', 'content': 'Hello again'})
+            messages = [{**internal_context, '_window_owner': context}, *context]
+            with patch.object(store, 'load_context_budget', return_value=None):
+                return scope['_invoke_prompt'](SimpleNamespace(invoke=invoke), messages)
+
         with tempfile.TemporaryDirectory() as directory, patch.object(
                 store, 'PATH_TO_MEMORY', str(Path(directory) / 'memory.db')):
             store.append_message('user', 'Earlier message')
@@ -85,6 +96,8 @@ class TemporalContextTests(unittest.TestCase):
             # must not fire a real HTTP save, and a live sidecar on a dev
             # machine must not ingest test turns.
             scope = {'store': store, 'AmadeusPack': object, 'getResponsePacked': respond,
+                     'context_window': store.window, '_llm_module': SimpleNamespace(),
+                     '_is_local': lambda client: False,
                      'maybe_schedule_trust_rescore': lambda: None,
                      '_note_reply_feelings': lambda: None,
                      'take_turn_sources': lambda: [],   # this reply searched nothing
@@ -95,13 +108,14 @@ class TemporalContextTests(unittest.TestCase):
                                                     take_turn_reads=lambda: ""),
                      '_after_picture_turn': lambda *a: None,
                      'cm_bridge': SimpleNamespace(save_turn=lambda *a, **k: None)}
-            exec(compile(ast.Module(body=[function], type_ignores=[]), 'chat.py', 'exec'), scope)
-            with patch.object(store, 'load_internal_context', side_effect=lambda: original_context(now)):
+            exec(compile(ast.Module(body=functions, type_ignores=[]), 'chat.py', 'exec'), scope)
+            with patch.object(store, 'load_internal_context', side_effect=lambda **k: original_context(now, **k)):
                 scope['getOutputPacked']('Hello again')
             self.assertIn('4 hours, 32 minutes', captures[0])
-            self.assertEqual([row['role'] for row in store.load_memory_raw()],
-                             ['user', 'user', 'assistant'])
-            self.assertNotIn('Private timing context', str(store.load_memory_raw()))
+            rows = store.load_memory_raw()
+            self.assertEqual([row['role'] for row in rows], ['user', 'user', 'assistant'])
+            self.assertNotIn('Private timing context', str(rows))
+            self.assertNotIn('_window', str(rows))
 
 
 class PreviousContactLineTests(unittest.TestCase):

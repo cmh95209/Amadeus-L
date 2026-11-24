@@ -874,29 +874,33 @@ export async function setVoiceRetention(limit: number): Promise<number> {
   return typeof data.limit === "number" ? data.limit : limit;
 }
 
+export const DEFAULT_PROMPT_CAP = 16384;
+
 export async function getContextBudget(): Promise<number> {
-  return (await getContextBudgetInfo()).budget;
+  const info = await getContextBudgetInfo();
+  return info.budget ?? info.defaultBudget;
 }
 
 export type ContextBudgetInfo = {
-  /** The number Settings shows: the built-in model's own, or the custom model's. */
-  budget: number;
-  /** The most the built-in model's context holds (null = custom mode, no cap). */
-  builtinCap: number | null;
-  /** What a fresh install starts with (the built-in model: this PC's tier). */
+  budget: number | null;
   defaultBudget: number;
+  modelLimit: number | null;
+  modelInputLimit: number | null;
+  estimated: boolean;
 };
 
 export async function getContextBudgetInfo(): Promise<ContextBudgetInfo> {
   const data = await parseResponse(await fetch(`${API_BASE}/getContextBudget`, { cache: "no-store" }));
   return {
-    budget: typeof data.budget === "number" ? data.budget : 40000,
-    builtinCap: typeof data.builtin_cap === "number" ? data.builtin_cap : null,
-    defaultBudget: typeof data.default === "number" ? data.default : 40000,
+    budget: typeof data.budget === "number" ? data.budget : null,
+    defaultBudget: typeof data.default === "number" ? data.default : DEFAULT_PROMPT_CAP,
+    modelLimit: typeof data.model_limit === "number" ? data.model_limit : null,
+    modelInputLimit: typeof data.model_input_limit === "number" ? data.model_input_limit : null,
+    estimated: data.estimated === true,
   };
 }
 
-export async function setContextBudget(budget: number): Promise<number> {
+export async function setContextBudget(budget: number | null): Promise<number | null> {
   const data = await parseResponse(
     await fetch(`${API_BASE}/setContextBudget`, {
       method: "POST",
@@ -904,7 +908,7 @@ export async function setContextBudget(budget: number): Promise<number> {
       body: JSON.stringify({ budget }),
     })
   );
-  return typeof data.budget === "number" ? data.budget : budget;
+  return typeof data.budget === "number" ? data.budget : null;
 }
 
 // ---- Voice language (Settings -> Preferences, 2026-11-21) -------------------

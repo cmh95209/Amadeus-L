@@ -282,6 +282,7 @@ The longer sections of this README live in the [docs/ folder](docs/).
 | [Architecture](docs/architecture.md) | The five components and how they talk to each other |
 | [Project Structure](docs/architecture.md#project-structure) | What lives in each folder |
 | [Technology](docs/architecture.md#technology) | The stack behind each component |
+| [Code map](ARCHITECTURE.md) | For contributors: what each code file owns and where to start a change |
 | [Manual Installation](docs/manual-installation.md) | The hand-install, step by step |
 | [Configuration](docs/using-amadeus.md#configuration) | Model server, API key, built-in model, reasoning, remote access, web access |
 | [Launching Amadeus](docs/using-amadeus.md#launching-amadeus) | What the launcher starts, and how |

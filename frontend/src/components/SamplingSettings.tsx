@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { InfoIcon } from "./InfoIcon";
 import {
   getSampling,
   setSampling,
@@ -82,11 +83,8 @@ function ParamRow({ name, spec, entry, isLocalOnly, isRejected, disabled, onChan
             onChange={(event) => onChange({ ...entry, enabled: event.target.checked })}
           />
           <span>{label}</span>
-          <span className="info-tip" tabIndex={0} aria-label={tooltip}>
-            ?
-            <span className="info-tip-text" role="tooltip">{tooltip}</span>
-          </span>
         </label>
+        <InfoIcon>{tooltip}</InfoIcon>
         <input
           className="sampling-value"
           type="number"
@@ -221,7 +219,7 @@ export default function SamplingSettings({ busy }: { busy: boolean }) {
 
   return (
     <>
-      <p className="settings-intro">
+      <p className="settings-help">
         Fine-tune how her model generates replies. Leave a setting off to use your model
         server's own default (Unsloth, Ollama, LM Studio, or the cloud API). Changes apply
         to the next message - no restart needed.

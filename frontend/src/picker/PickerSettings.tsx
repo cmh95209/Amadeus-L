@@ -1,4 +1,5 @@
-import { useId, useState } from "react";
+import { useState } from "react";
+import { InfoIcon } from "../components/InfoIcon";
 import { changeOnlineSetting, emojiStyle, saveEmojiStyle, useOnlineSetting } from "./preferences";
 import type { EmojiStyle } from "./preferences";
 
@@ -7,7 +8,6 @@ export function PickerSettings() {
   const [style, setStyle] = useState(emojiStyle);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
-  const helpId = useId();
 
   async function toggle(enabled: boolean) {
     setSaving(true);
@@ -23,14 +23,17 @@ export function PickerSettings() {
   }
 
   return (
-    <div className="conn-section">
-      <label className="picker-setting-switch">
-        <input type="checkbox" role="switch" checked={online} disabled={saving}
-          aria-describedby={helpId} onChange={(event) => void toggle(event.currentTarget.checked)} />
-        <span>Online GIF and sticker search</span>
-      </label>
-      <p className="settings-help" id={helpId}>Searches are sent to KLIPY and GIPHY.</p>
-      {failed && <p className="settings-help" role="alert">Could not save the picker setting.</p>}
+    <div className="settings-section">
+      <h4 className="settings-section-title">Emoji, GIFs & stickers</h4>
+      <div className="settings-label-line">
+        <label className="picker-setting-switch">
+          <input type="checkbox" role="switch" checked={online} disabled={saving}
+            onChange={(event) => void toggle(event.currentTarget.checked)} />
+          <span>Online GIF and sticker search</span>
+        </label>
+        <InfoIcon>Searches go to KLIPY and GIPHY.</InfoIcon>
+      </div>
+      {failed && <p className="settings-error" role="alert">Could not save the picker setting.</p>}
       <label>
         Emoji style
         <select value={style} onChange={(event) => choose(event.currentTarget.value as EmojiStyle)}>

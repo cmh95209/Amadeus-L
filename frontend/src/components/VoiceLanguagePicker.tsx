@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { getVoiceLanguage, setVoiceLanguage, type VoiceLanguageInfo } from "../api";
 import { currentLanguage, subscribe } from "../i18n";
+import { SettingsLabel } from "./InfoIcon";
 
 // Settings -> Preferences -> Voice language (2026-11-21): the language her
 // VOICE speaks; the text on the screen is unchanged. Saved at once
@@ -58,27 +59,19 @@ export function VoiceLanguagePicker() {
   }
 
   return (
-    <div className="conn-section">
-      <span className="conn-section-title">Voice language</span>
-      <label>
-        Language
-        <select value={info.code} disabled={busy} onChange={(e) => void choose(e.target.value)}
-          aria-describedby="voice-language-help">
-          {info.choices.map((c) => (
-            // Re-translated on a language change (pageLang re-renders it).
-            <option key={c.code} value={c.code} translate="no">
-              {optionName(c.code, c.name)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <p className="settings-help" id="voice-language-help">
-        The language her voice speaks. The text on the screen is unchanged.
-      </p>
-      {info.extra_translation && (
-        <p className="settings-help">Uses an extra translation per reply.</p>
-      )}
-      {error && <p className="settings-help" role="alert">{error}</p>}
+    <div className="settings-field">
+      <SettingsLabel htmlFor="voice-language" tip={info.extra_translation
+        ? "Uses an extra translation per reply."
+        : "The language she speaks."}>Voice Language</SettingsLabel>
+      <select id="voice-language" value={info.code} disabled={busy} onChange={(e) => void choose(e.target.value)}>
+        {info.choices.map((c) => (
+          // Re-translated on a language change (pageLang re-renders it).
+          <option key={c.code} value={c.code} translate="no">
+            {optionName(c.code, c.name)}
+          </option>
+        ))}
+      </select>
+      {error && <p className="settings-error" role="alert">{error}</p>}
     </div>
   );
 }

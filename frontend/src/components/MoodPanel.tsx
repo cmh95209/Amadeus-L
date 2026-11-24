@@ -74,32 +74,32 @@ export default function MoodPanel({ active, stats }: { active: boolean; stats: S
 
   return (
     <div className="mood-panel">
-      <details className="mood-guide" open>
-        <summary>How she works</summary>
-        <p>
+      <details className="settings-section mood-guide" open>
+        <summary className="settings-section-title">How she works</summary>
+        <p className="settings-help">
           <strong>Amadeus</strong> is an AI assistant built on Makise Kurisu's memories and
           personality — not Kurisu herself. She thinks and speaks in Japanese; you read the
           English translation. She remembers your past conversations and what you tell her.
         </p>
-        <p>
+        <p className="settings-help">
           <strong>Closeness</strong> grows slowly over many messages: warm chats raise it a
           few points, tense or rude ones lower it. She opens up as it grows — at the early
           levels she is a professional assistant with a strong will of her own; her warmer
           feelings only show from Close.
         </p>
-        <p>
+        <p className="settings-help">
           <strong>Her mood</strong> moves quickly and fades back by itself within hours. At
           every level rudeness irritates her and an unanswered greeting annoys her (she says
           so once and moves on). Missing you and worrying about you come with closeness. She
           lets her mood colour her tone rather than announcing it.
         </p>
-        <p>
+        <p className="settings-help">
           <strong>Things you told her</strong> (an exam, an interview, feeling ill) are kept
           until settled. Below Close she only uses them when you bring them up; from Close
           she may ask how it went. Delete anything you don't want her to keep.
         </p>
         <details className="mood-levels">
-          <summary>The closeness levels</summary>
+          <summary className="settings-label">The closeness levels</summary>
           <ul>
             {LEVELS.map((l) => (
               <li key={l.name} className={l.name === currentLevel ? "mood-level-current" : undefined}>
@@ -110,7 +110,7 @@ export default function MoodPanel({ active, stats }: { active: boolean; stats: S
             ))}
           </ul>
         </details>
-        <p>
+        <p className="settings-help">
           Closeness, mood and the list are plain text files in <code>backend/data</code>{" "}
           (<code>trust.txt</code>, <code>feelings.txt</code>, <code>concerns.txt</code>) that you
           can also edit by hand.
@@ -118,11 +118,11 @@ export default function MoodPanel({ active, stats }: { active: boolean; stats: S
       </details>
 
       {stats.length > 0 && (
-        <div className="stats-block" aria-label="Closeness">
+        <div className="settings-section" aria-label="Closeness">
           {stats.map((s) => (
             <div key={s.key} className="stat-row">
               <div className="stat-line">
-                <span className="stat-label">{s.key === "trust" ? "Closeness" : s.label}</span>
+                <span className="settings-section-title">{s.key === "trust" ? "Closeness" : s.label}</span>
                 <span className="stat-value">
                   {Math.round(s.value)}/{s.scale ?? s.max}{s.tier ? ` — ${s.tier}` : ""}
                 </span>
@@ -132,15 +132,15 @@ export default function MoodPanel({ active, stats }: { active: boolean; stats: S
         </div>
       )}
 
-      <div className="stats-block" aria-label="Her mood right now">
-        <span className="stat-label">Her mood right now</span>
+      <div className="settings-section" aria-label="Her mood right now">
+        <h4 className="settings-section-title">Her mood right now</h4>
         {!mood ? <p className="settings-help">Loading…</p> :
-          mood.feelings.length === 0 ? <p className="mood-calm">Calm — nothing out of the ordinary.</p> :
+          mood.feelings.length === 0 ? <p className="settings-help">Calm — nothing out of the ordinary.</p> :
           <ul className="mood-list">{mood.feelings.map((f) => <li key={f}>{f}</li>)}</ul>}
       </div>
 
-      <div className="stats-block" aria-label="Things on her mind">
-        <span className="stat-label">Things on her mind about you</span>
+      <div className="settings-section" aria-label="Things on her mind">
+        <h4 className="settings-section-title">Things on her mind about you</h4>
         {mood && live.length === 0 && <p className="settings-help">Nothing right now.</p>}
         {live.map((c) => (
           <div key={`${c.index}-${c.text}`} className="concern-row">

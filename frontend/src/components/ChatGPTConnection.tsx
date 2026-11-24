@@ -14,6 +14,7 @@ import {
   startChatGPTSignIn,
 } from "../api";
 import type { ChatGPTModel, ChatGPTReasoningLevel, ChatGPTStatus } from "../api";
+import { InfoIcon, SettingsLabel } from "./InfoIcon";
 
 // Sign-in must happen on the PC (OpenAI sends the browser back to 127.0.0.1).
 // Any *.localhost name is this PC too (test copies use one to reach their own
@@ -32,6 +33,7 @@ export const CHATGPT_REASONING_LABELS: Record<ChatGPTReasoningLevel, string> = {
   xhigh: "Extra high",
   max: "Max",
 };
+export const REASONING_HELP = "Lets her think before she answers: Better quality, but slower replies.";
 
 function privacySeen() {
   try { return localStorage.getItem(PRIVACY_KEY) === "1"; } catch { return false; }
@@ -279,7 +281,7 @@ export default function ChatGPTConnection({ active, disabled, connection, onSele
       </div>
       {waiting && <p className="settings-help" role="status">Waiting for ChatGPT sign-in...</p>}
       {active && (
-        <div className="chatgpt-connection">
+        <div className="settings-field chatgpt-connection">
           {!signedIn && !waiting && (
             <button type="button" className="primary-button chatgpt-sign-in" disabled={choiceDisabled} onClick={select}>
               Sign in
@@ -297,9 +299,10 @@ export default function ChatGPTConnection({ active, disabled, connection, onSele
                 Model
                 <ChatGPTModelSelect connection={connection} disabled={disabled} />
               </label>
-              <label>
-                Reasoning
-                <select value={connection.reasoning.level} disabled={disabled || connection.reasoning.disabled}
+              <div className="settings-field">
+                <SettingsLabel htmlFor="chatgpt-reasoning" tip={REASONING_HELP}>Reasoning</SettingsLabel>
+                <select id="chatgpt-reasoning" value={connection.reasoning.level}
+                  disabled={disabled || connection.reasoning.disabled}
                   onChange={(event) => connection.reasoning.choose(event.target.value as ChatGPTReasoningLevel)}>
                   {connection.reasoning.levels.length === 0 && (
                     <option value={connection.reasoning.level}>Reasoning unavailable</option>
@@ -308,9 +311,12 @@ export default function ChatGPTConnection({ active, disabled, connection, onSele
                     <option key={level} value={level}>{CHATGPT_REASONING_LABELS[level]}</option>
                   ))}
                 </select>
-              </label>
-              <div className="settings-help chatgpt-background">
-                <span>{status.background_use_allowed ? "All features are on." : "Some features are off (greetings, picture reactions, memory learning)."}</span>
+              </div>
+              <div className="chatgpt-background">
+                <div className="settings-label-line">
+                  <span className="settings-label">{status.background_use_allowed ? "All features are on." : "Some features are off."}</span>
+                  <InfoIcon>Includes greetings, picture reactions, and memory learning.</InfoIcon>
+                </div>
                 <button type="button" className={status.background_use_allowed ? "chatgpt-turn-off" : "ghost-button"}
                   disabled={busy || disabled}
                   onClick={() => void update(() => setChatGPTBackground(!status.background_use_allowed))}>

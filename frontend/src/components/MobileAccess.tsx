@@ -167,19 +167,18 @@ export default function MobileAccess({ active, busy }: { active: boolean; busy: 
 
   return (
     <>
-      <p className="settings-intro">
-        Open her on your phone, tablet or another PC, through Tailscale (free for personal use).
-        She still runs on this PC; your devices only show her page.
-      </p>
-
-      <div className="conn-section">
-        <span className="conn-section-title">Remote access (phone, tablet, other PCs)</span>
+      <div className="settings-section">
+        <h4 className="settings-section-title">Remote access (phone, tablet, other PCs)</h4>
+        <p className="settings-help">
+          Open her on your phone, tablet or another PC, through Tailscale (free for personal use).
+          She still runs on this PC; your devices only show her page.
+        </p>
         <Status remote={remote} error={remoteError} />
         <FunnelWarning on={Boolean(remote?.funnel)} />
       </div>
 
-      <div className="conn-section">
-        <span className="conn-section-title">How to set it up</span>
+      <div className="settings-section">
+        <h4 className="settings-section-title">How to set it up</h4>
         <Steps>
           <li>
             <strong>Install Tailscale on this PC and on your phone</strong> (from tailscale.com, or the

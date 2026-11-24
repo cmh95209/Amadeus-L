@@ -13,15 +13,12 @@
 
 .composer-tools {
   display: flex;
-  gap: 4px;
+  gap: var(--composer-gap);
 }
 
-.composer-tools .attach-button {
-  min-height: 46px;
-}
-
-.composer .picker-trigger {
-  width: 36px;
+.composer .composer-tools .attach-button {
+  width: var(--composer-control-size);
+  min-height: var(--composer-control-size);
 }
 
 .composer .picker-trigger[aria-expanded="true"] {
@@ -31,15 +28,6 @@
 }
 
 @container (max-width: 420px) {
-  .composer:has(> .composer-tools) {
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
-  }
-
-  .composer-tools .attach-button {
-    min-height: 40px;
-    width: 34px;
-  }
-
   .composer-tools ~ .web-toggle {
     min-width: 0;
     max-width: 100%;

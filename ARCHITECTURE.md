@@ -169,6 +169,7 @@ memory data in an issue, log paste or test fixture.
 | `sources.ts`, `components/SourcesBar.tsx` | the "where this came from" chips |
 | `providers.ts`, `components/ModelPicker.tsx` | Settings: model provider and model |
 | `components/ChatGPTConnection.tsx`, `components/ChatGPTComposerPicker.tsx` | ChatGPT sign-in, consent, model and reasoning controls |
+| `components/InfoIcon.tsx` | shared Settings info tooltips and labels |
 | `picker/` | emoji, GIF and sticker picker, preferences and inline chat media |
 | `scripts/build_emoji_data.mjs` (under `frontend/`) | builds the picker's Unicode emoji data and localized search names |
 | `i18n.ts`, `lang/*.json` | page text in every display language |

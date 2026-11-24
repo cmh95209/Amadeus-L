@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { NameEntry } from "../api";
+import { InfoIcon } from "./InfoIcon";
 
 // Settings -> Preferences -> About you -> Names she knows: rows of
 // "name as typed" + "how she writes it in Japanese" (katakana). Save in the
@@ -57,8 +58,11 @@ export function NameListEditor({ rows, onChange, disabled, suggest }: Props) {
   }
 
   return (
-    <div className="name-list" role="group" aria-label="Names she knows" aria-describedby="names-help">
-      <span className="name-list-title">Names she knows</span>
+    <div className="name-list" role="group" aria-label="Names she knows">
+      <div className="settings-label-line">
+        <span className="settings-label">Names she knows</span>
+        <InfoIcon>Names and their readings.</InfoIcon>
+      </div>
       {rows.map((row, i) => (
         <div className="name-row" key={i}>
           <input

@@ -16,9 +16,9 @@ export function SystemPanel({ sys }: { sys: SystemStatusHook }) {
   const canRestart = !!sys.status?.launcher && !sys.restarting && !sys.unreachable;
 
   return (
-    <div className="system-panel">
+    <div className="settings-section">
       <div className="system-heading">
-        <span className="brain-choice-label">Live status</span>
+        <h4 className="settings-section-title">Live status</h4>
         {sys.restarting && (
           <span className="system-progress" role="status">
             <span className="system-spinner" aria-hidden="true" />
@@ -53,15 +53,15 @@ export function SystemPanel({ sys }: { sys: SystemStatusHook }) {
       </ul>
 
       {sys.gaveUp && (
-        <p className="system-note bad">
+        <p className="settings-error">
           She has not come back after several minutes. Amadeus needs to be
           started again on the PC (the launcher window says why).
         </p>
       )}
       {sys.status?.restart?.state === "partial" && !sys.restarting && (
-        <p className="system-note">{sys.status.restart.message}</p>
+        <p className="settings-help">{sys.status.restart.message}</p>
       )}
-      {sys.error && <p className="system-note bad">{sys.error}</p>}
+      {sys.error && <p className="settings-error">{sys.error}</p>}
 
       <div className="system-restart">
         {!confirming ? (
@@ -99,7 +99,7 @@ export function SystemPanel({ sys }: { sys: SystemStatusHook }) {
           </div>
         )}
         {!sys.status?.launcher && sys.status && (
-          <p className="system-note">
+          <p className="settings-help">
             Restart works only when Amadeus was started with its launcher (the
             Amadeus shortcut).
           </p>

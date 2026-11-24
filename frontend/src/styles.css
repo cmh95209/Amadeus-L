@@ -317,9 +317,6 @@ button {
   .voice-preparing-fill { transition: none; }
 }
 
-.settings-help { color: #99a5b7; font-size: 12px; line-height: 1.5; margin: 8px 0 20px; }
-.settings-error { color: #e3b5b5; font-size: 13px; }
-
 .chat-panel {
   min-width: 0;
   min-height: 0;
@@ -852,11 +849,14 @@ button {
 }
 
 .composer {
+  /* Control sizing is shared with the attachment and emoji buttons. */
+  --composer-control-size: 44px;
+  --composer-gap: 6px;
   margin: 0 clamp(18px, 3vw, 48px) 12px;
   padding: 8px;
   display: grid;
-  grid-template-columns: auto 1fr auto auto auto;
-  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  gap: var(--composer-gap);
   /* The box grows taller as she is typed to; the buttons stay their own
      size, lined up along its bottom edge. */
   align-items: end;
@@ -868,7 +868,7 @@ button {
 
 .composer > button,
 .composer > .attach {
-  min-height: 46px;
+  min-height: var(--composer-control-size);
 }
 
 /* Grows with the text (App.tsx sets the height) up to about 6 lines, or a
@@ -876,8 +876,8 @@ button {
    then scrolls. */
 .composer textarea {
   width: 100%;
-  min-height: 46px;
-  max-height: max(46px, min(calc(8.4em + 24px), 25dvh));
+  min-height: var(--composer-control-size);
+  max-height: max(var(--composer-control-size), min(calc(8.4em + 24px), 25dvh));
   resize: none;
   scrollbar-width: thin;
   padding: 12px 13px;
@@ -898,7 +898,7 @@ button {
   grid-row: 2;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--composer-gap);
   min-width: 0;
   padding-inline: 4px;
   color: #99a5b7;
@@ -924,7 +924,9 @@ button {
   display: flex;
   align-items: center;
   max-width: 100%;
-  padding: 4px 8px;
+  min-height: 34px;
+  padding: 4px 10px;
+  font-size: inherit;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 7px;
   background: #0b1017;
@@ -1060,22 +1062,12 @@ button {
 }
 
 /* Settings -> System: live status + Restart (2026-11-01) */
-.system-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
 .system-heading {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-}
-
-.system-heading .brain-choice-label {
-  margin: 0;
 }
 
 .system-progress {
@@ -1356,11 +1348,6 @@ button {
   gap: 9px;
 }
 
-.modal .name-list-title {
-  color: #99a5b7;
-  font-size: 12px;
-}
-
 .modal .name-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
@@ -1418,24 +1405,44 @@ button {
 }
 
 .settings-modal {
+  /* Settings typography and spacing. */
+  --settings-inset: 16px;
+  --settings-gap: 12px;
+  --settings-field-gap: 6px;
+  --settings-border: rgba(168, 194, 228, 0.13);
+  --settings-radius: 10px;
+  --settings-label-size: 14px;
+  --settings-help-size: 13px;
+  --info-hit-size: 28px;
   width: min(680px, 100%);
+}
+
+.settings-modal > .modal-heading {
+  gap: var(--settings-gap);
+  margin-bottom: 18px;
+}
+
+.settings-modal #settings-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 650;
 }
 
 .settings-sections {
   display: flex;
-  flex-wrap: wrap;   /* a phone gets two rows instead of a sideways scroll */
-  gap: 6px;
-  margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: var(--settings-field-gap);
+  margin-bottom: var(--settings-gap);
   padding: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 9px;
+  border: 1px solid var(--settings-border);
+  border-radius: var(--settings-radius);
   background: #0b1017;
 }
 
 .settings-sections button {
   flex: 1 1 auto;
   min-height: 38px;
-  padding: 0 10px;
+  padding: 5px 10px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -1449,8 +1456,6 @@ button {
 
 /* Settings -> Connection: "Built-in" / "Custom Model" (same look as the
    section buttons above). */
-.brain-choice { margin-bottom: 20px; }
-.brain-choice-label { display: block; margin-bottom: 8px; color: #c9d2df; font-size: 13px; }
 .brain-choice-buttons {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1478,10 +1483,9 @@ button {
   gap: 8px;
 }
 .chatgpt-brain-choice img { flex: none; }
-.chatgpt-connection { margin-top: 16px; color: #c9d2df; font-size: 13px; }
-.chatgpt-connection .chatgpt-sign-in { display: block; }
-.chatgpt-connection label + label { margin-top: 12px; }
-.chatgpt-account { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.chatgpt-connection { color: #c9d2df; font-size: var(--settings-label-size); }
+.chatgpt-connection .chatgpt-sign-in { justify-self: start; }
+.chatgpt-account { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .chatgpt-account span { overflow-wrap: anywhere; }
 .chatgpt-background { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .chatgpt-background .ghost-button { padding: 3px 8px; }
@@ -1507,19 +1511,11 @@ button {
   vertical-align: middle;
 }
 
-.personality-intro {
-  margin: 0 0 20px;
-  color: #aab7c9;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
 .personality-text {
   display: block;
   width: 100%;
   min-height: 180px;
   height: clamp(200px, 36dvh, 400px);
-  margin-top: 10px;
   padding: 16px;
   resize: vertical;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -1540,22 +1536,21 @@ button {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 10px;
-  color: #8fa0b8;
-  font-size: 11px;
+  color: #a0aec2;
+  font-size: var(--settings-help-size);
 }
 
 .settings-help {
-  margin: 10px 0 20px;
-  color: #8fa0b8;
-  font-size: 12px;
-  line-height: 1.6;
+  margin: 0;
+  color: #a0aec2;
+  font-size: var(--settings-help-size, 13px);
+  line-height: 1.5;
 }
 
 .settings-error,
 .settings-success {
-  margin: 16px 0 0;
-  font-size: 13px;
+  margin: 0;
+  font-size: var(--settings-help-size, 13px);
   line-height: 1.5;
 }
 
@@ -1580,7 +1575,15 @@ button {
 }
 
 @media (max-width: 480px) {
-  .settings-modal { padding: 18px; }
+  .settings-backdrop { padding: 12px; }
+  .settings-modal {
+    --settings-inset: 12px;
+    max-height: calc(100dvh - 24px);
+    padding: 14px;
+  }
+  .settings-modal > .modal-heading { flex-wrap: wrap; }
+  .settings-modal > .modal-heading .close-button { margin-inline-start: auto; }
+  .settings-modal .modal-actions { flex-wrap: wrap; }
   .personality-text { font-size: 16px; }
   .personality-actions { flex-direction: column-reverse; }
   .personality-actions button { width: 100%; min-height: 42px; }
@@ -1671,17 +1674,6 @@ button {
 }
 
 /* ---- Model connection status (Settings) ---- */
-.settings-intro {
-  color: #b7c2d2;
-  font-size: 12.5px;
-  line-height: 1.55;
-  margin: 0 0 16px;
-  padding: 10px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
-}
-
 .conn-status {
   display: flex;
   align-items: center;
@@ -1718,30 +1710,71 @@ button {
 .conn-status.fail { border-color: rgba(224, 86, 79, 0.5); }
 .conn-status.fail .conn-dot { background: #e0564f; box-shadow: 0 0 7px rgba(224, 86, 79, 0.55); }
 
-/* Settings -> Connection: Server / Model / Status rows (both modes) */
-.conn-section {
+/* Shared boxes, headings and labels across Settings. */
+.settings-section {
+  position: relative;
   display: grid;
-  gap: 10px;
-  margin: 0 0 18px;
-  padding: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.015);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--settings-gap);
+  margin: 0 0 var(--settings-gap);
+  padding: var(--settings-inset);
+  border: 1px solid var(--settings-border);
+  border-radius: var(--settings-radius);
+  background: #151d29;
+  overflow-wrap: anywhere;
 }
-.conn-section-title {
-  color: #c9d2df;
-  font-size: 13px;
-  letter-spacing: 0.04em;
+.settings-section[hidden] { display: none; }
+.settings-section-title,
+.settings-modal .settings-section-title > label {
+  margin: 0;
+  color: #edf1f7;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.3;
 }
-.conn-section .settings-help,
-.conn-section .settings-intro { margin: 0; }
-.conn-section .conn-status { margin: 0; }
-.conn-row { display: flex; gap: 8px; align-items: center; }
+.settings-modal label,
+.settings-label {
+  gap: var(--settings-field-gap);
+  color: #d1dbe9;
+  font-size: var(--settings-label-size);
+  font-weight: 550;
+  line-height: 1.4;
+}
+.settings-modal :is(input:not([type="checkbox"], [type="range"], [type="file"]), select) {
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 10px;
+  font-weight: 400;
+}
+.settings-field,
+.settings-language-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--settings-field-gap);
+}
+.settings-language-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--settings-gap);
+}
+.settings-label-line {
+  display: flex;
+  align-items: center;
+  gap: var(--settings-field-gap);
+  min-width: 0;
+}
+.settings-section .conn-status { margin: 0; }
+.settings-section > .modal-actions { margin-top: 0; }
+.conn-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .conn-row .model-picker { flex: 1; min-width: 0; }
+
+@media (max-width: 480px) {
+  .settings-language-fields { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* Settings -> Connection: the key box's show/hide eye, at the box's right */
 .key-field { position: relative; display: block; }
-.key-field input { padding-right: 40px; }
+.settings-modal .key-field input { padding-right: 40px; }
 .key-visibility {
   position: absolute;
   top: 50%;
@@ -1782,7 +1815,7 @@ button {
 .vertex-key-field .key-visibility { top: 8px; transform: none; }
 
 /* Settings -> Connection -> Model: "Get more models" (browser download links) */
-.model-catalog summary { cursor: pointer; color: #c9d2df; font-size: 13px; }
+.model-catalog summary { cursor: pointer; }
 .model-catalog ul { display: grid; gap: 6px; margin: 10px 0; padding: 0; list-style: none; }
 .model-catalog li {
   display: flex;
@@ -2039,23 +2072,6 @@ button {
 }
 
 
-/* Relationship stats (trust, and any added later) in Settings */
-.stats-block {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.02);
-}
-.stats-intro {
-  color: #8b96a5;
-  font-size: 12px;
-  line-height: 1.5;
-  margin: 0 0 6px;
-}
-
 .stat-row {
   display: flex;
   flex-direction: column;
@@ -2069,19 +2085,9 @@ button {
   font-size: 14px;
 }
 
-.stat-label {
-  color: #8b96a5;
-}
-
 .stat-value {
   color: #d8dee7;
   font-weight: 600;
-}
-
-/* Settings -> Reasoning: two choosers + help (replaced Deep thinking). */
-.settings-reasoning {
-  display: grid;
-  gap: 10px;
 }
 
 /* On/off switches in Settings (Japanese line, voice early, ...) */
@@ -2089,34 +2095,22 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.02);
+  gap: var(--settings-field-gap);
+  padding-block: var(--settings-field-gap);
+  border-bottom: 1px solid var(--settings-border);
 }
 
 .settings-toggle-text {
   display: flex;
   flex-direction: column;
   gap: 3px;
-}
-
-.settings-toggle-title {
-  color: #d8dee7;
-  font-weight: 600;
-  font-size: 14px;
-}
-
-.settings-toggle-desc {
-  color: #99a5b7;
-  font-size: 12px;
-  line-height: 1.5;
+  min-width: 0;
 }
 
 .settings-toggle {
   display: inline-flex;
   align-items: center;
+  flex: none;
   gap: 9px;
   padding: 6px 14px 6px 10px;
   border-radius: 20px;
@@ -2179,19 +2173,17 @@ button {
    Scoped under .settings-modal on purpose: the generic ".modal input" and
    ".modal label" rules (width:100%, display:grid, 12px padding) have higher
    specificity than plain single-class selectors and would wreck these rows. */
-.settings-modal .sampling-row { margin-bottom: 24px; }
-.settings-modal .sampling-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.settings-modal .sampling-row { padding-block: var(--settings-field-gap); }
+.settings-modal .sampling-head { display: flex; align-items: center; gap: var(--settings-field-gap); margin-bottom: 8px; }
 .settings-modal label.sampling-name {
   display: flex;
   flex: 1;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  font-size: 14px;
-  color: #cdd7e4;
   cursor: pointer;
 }
-.settings-modal .sampling-value { flex: 0 0 auto; width: 96px; padding: 8px 10px; }
+.settings-modal .sampling-value { flex: 0 0 auto; width: 76px; }
 .settings-modal .sampling-slider {
   width: 100%;
   margin: 0;
@@ -2209,55 +2201,64 @@ button {
   cursor: pointer;
 }
 
-/* Tooltip: opens to the RIGHT of the "?" so it can never be clipped by the
-   modal's left edge or scrollbar (the previous below-centre position ran
-   outside the modal because the icons sit near the left edge). */
-.settings-modal .info-tip {
-  position: relative;
+/* Anchor the bubble horizontally to the section so it fits on phones.
+   The flex wrapper's static block position places it below its own icon. */
+.info-tip {
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  align-items: flex-start;
+  flex: none;
+}
+.info-tip-button {
+  display: inline-grid;
+  place-items: center;
+  width: var(--info-hit-size);
+  height: var(--info-hit-size);
+  padding: 0;
+  border: 0;
   border-radius: 50%;
-  color: #8fa0b8;
+  background: transparent;
+  color: #b3c7e1;
   font-size: 11px;
+  font-weight: 650;
   line-height: 1;
   cursor: help;
 }
-.settings-modal .info-tip-text {
-  visibility: hidden;
-  opacity: 0;
-  transition: opacity 0.12s ease;
+.info-tip-button > span {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border: 1px solid #6e86a5;
+  border-radius: 50%;
+}
+.info-tip-text {
   position: absolute;
-  left: 22px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: min(300px, 40vw);
-  background: #101826;
-  color: #d7dfeb;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  padding: 9px 11px;
-  font-size: 12px;
+  inset-inline: var(--settings-inset);
+  transform: translateY(calc(var(--info-hit-size) - 1px));
+  width: max-content;
+  max-width: calc(100% - 2 * var(--settings-inset));
+  margin-inline: auto;
+  display: grid;
+  gap: 4px;
+  visibility: hidden;
+  padding: 8px 10px;
+  border: 1px solid #506581;
+  border-radius: var(--settings-radius);
+  background: #202e40;
+  color: #edf1f7;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  font-size: var(--settings-help-size);
   font-weight: 400;
-  line-height: 1.5;
-  text-align: left;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-  z-index: 60;
-  pointer-events: none;
+  line-height: 1.4;
   white-space: normal;
+  z-index: 6;
 }
-.settings-modal .info-tip:hover .info-tip-text,
-.settings-modal .info-tip:focus .info-tip-text,
-.settings-modal .info-tip:focus-within .info-tip-text {
+.info-tip[data-dismissed="false"]:is([data-pinned="true"], :has(:focus-visible)) .info-tip-text {
   visibility: visible;
-  opacity: 1;
 }
-
-.settings-path { font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+@media (hover: hover) {
+  .info-tip[data-dismissed="false"]:hover .info-tip-text { visibility: visible; }
+}
 
 /* ---------- Pictures you show her (attachments Phase 2, 2026-10-26) ---------- */
 
@@ -2823,7 +2824,7 @@ button {
 
 @container (max-width: 640px) {
   .composer {
-    grid-template-columns: auto 1fr auto auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
   }
 
   .composer textarea {
@@ -2854,14 +2855,13 @@ button {
 /* A phone-narrow chat column: Poke shrinks to its icon so "Web off" and
    Send keep one line each. */
 @container (max-width: 420px) {
-  .composer-plan > span {
-    display: none;
+  .composer {
+    --composer-control-size: 40px;
+    --composer-gap: 4px;
   }
 
-  .composer > button,
-  .composer > .attach,
-  .composer .attach-button {
-    min-height: 40px;
+  .composer-plan > span {
+    display: none;
   }
 
   .composer .web-toggle {
@@ -2880,31 +2880,8 @@ button {
 }
 
 /* Settings -> Personality & mood (2026-10-30) */
-.mood-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-.mood-guide summary {
-  cursor: pointer;
-  color: #d8dee7;
-  font-size: 14px;
-}
-.mood-guide p {
-  color: #8b96a5;
-  font-size: 12px;
-  line-height: 1.5;
-  margin: 6px 0 0;
-}
-.mood-levels {
-  margin-top: 8px;
-}
-.mood-levels summary {
-  cursor: pointer;
-  color: #d8dee7;
-  font-size: 13px;
-}
+.mood-guide summary { cursor: pointer; }
+.mood-guide > :not(summary) { margin-block-start: var(--settings-field-gap); }
 .mood-levels ul {
   list-style: none;
   margin: 6px 0 0;
@@ -2945,11 +2922,6 @@ button {
   color: #d8dee7;
   font-size: 14px;
   line-height: 1.5;
-}
-.mood-calm {
-  margin: 0;
-  color: #d8dee7;
-  font-size: 14px;
 }
 .concern-row {
   display: flex;
@@ -3166,7 +3138,7 @@ button {
    direction of its own text, so Arabic reads right to left while her
    Japanese, names and links stay left to right. The layout is not mirrored. */
 html.rtl p, html.rtl label, html.rtl li, html.rtl button, html.rtl h1, html.rtl h2,
-html.rtl h3, html.rtl .settings-help, html.rtl .conn-section-title, html.rtl .bubble,
+html.rtl h3, html.rtl .settings-help, html.rtl .settings-section-title, html.rtl .info-tip-text, html.rtl .bubble,
 html.rtl .message-meta, html.rtl option {
   unicode-bidi: plaintext;
   text-align: start;

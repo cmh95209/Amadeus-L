@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { refreshLanguage } from "./i18n";
 import Live2DCharacter from "./components/Live2DCharacter";
 import SamplingSettings from "./components/SamplingSettings";
-import ChatGPTConnection, { useChatGPTConnection } from "./components/ChatGPTConnection";
+import ChatGPTConnection, { REASONING_HELP, useChatGPTConnection } from "./components/ChatGPTConnection";
 import MoodPanel from "./components/MoodPanel";
 import { SystemPanel } from "./components/SystemPanel";
 import MobileAccess from "./components/MobileAccess";
@@ -12,6 +12,7 @@ import { ModelPicker } from "./components/ModelPicker";
 import { NameListEditor, nameListProblem } from "./components/NameListEditor";
 import { SourcesBar } from "./components/SourcesBar";
 import { LinkedText } from "./components/LinkedText";
+import { InfoIcon, SettingsLabel } from "./components/InfoIcon";
 import { LanguagePicker } from "./components/LanguagePicker";
 import { VoiceLanguagePicker } from "./components/VoiceLanguagePicker";
 import { AttachMenu } from "./components/AttachMenu";
@@ -3402,7 +3403,7 @@ export default function App() {
       {/* Settings Modal */}
       {settingsOpen && (
         <div
-          className="modal-backdrop"
+          className="modal-backdrop settings-backdrop"
           onMouseDown={closeSettings}
         >
           <div
@@ -3510,8 +3511,11 @@ export default function App() {
 
             <div hidden={settingsSection !== "connection"}>
               {brain && settingsSection === "connection" && (
-                <div className="brain-choice" role="group" aria-label="How she thinks">
-                  <span className="brain-choice-label">How she thinks</span>
+                <div className="settings-section" role="group" aria-label="How she thinks">
+                  <div className="settings-label-line">
+                    <h4 className="settings-section-title">How she thinks</h4>
+                    <InfoIcon>Choose Built-in, your own provider, or your ChatGPT plan.</InfoIcon>
+                  </div>
                   <ChatGPTConnection active={chatgptMode} disabled={brainSwitching || settingsBusy || loading}
                     connection={chatGPTConnection}
                     onSelect={() => chooseBrain("chatgpt")}
@@ -3536,7 +3540,7 @@ export default function App() {
                       disabled={brainSwitching || settingsBusy}
                       onClick={() => void chooseBrain("custom")}
                     >
-                      Custom Model (your own local or Cloud model)
+                      Custom Model
                     </button>
                   </ChatGPTConnection>
                   {!brain.available && (
@@ -3571,26 +3575,25 @@ export default function App() {
 
               {!chatgptMode && <>
               {/* Server / Model / Status for Built-in and Custom Model. */}
-              <div className="conn-section">
-                <span className="conn-section-title">Server</span>
+              <div className="settings-section">
+                <div className="settings-label-line">
+                  <h4 className="settings-section-title">Server</h4>
+                  {builtinMode && <InfoIcon>Runs privately on this computer.</InfoIcon>}
+                </div>
                 {builtinMode ? (
-                  <p className="settings-help">
-                    {brain?.runner_missing
-                      ? "This PC - but llama.cpp (the program that runs her model) is not installed yet. Run the installer again (it continues where it stopped)."
-                      : brain?.model_missing
-                        ? "This PC - but there is no model file yet. Put a GGUF file in her models folder and press Refresh list below, or run the installer again and choose A to download hers."
-                        : "This PC. Her built-in model runs privately here - nothing to connect."}
-                  </p>
+                  (brain?.runner_missing || brain?.model_missing) && (
+                    <p className="settings-help">
+                      {brain.runner_missing
+                        ? "This PC - but llama.cpp (the program that runs her model) is not installed yet. Run the installer again (it continues where it stopped)."
+                        : "This PC - but there is no model file yet. Put a GGUF file in her models folder and press Refresh list below, or run the installer again and choose A to download hers."}
+                    </p>
+                  )
                 ) : (<>
-                  <p className="settings-intro">
-                    Pick your model provider. For a cloud provider, paste your
-                    API key. Press Save to connect - it replaces the
-                    connection she uses now.
-                  </p>
-                  <p className="settings-help">Have ChatGPT Plus? Use Sign in with ChatGPT above.</p>
-                  <label>
-                    Provider
+                  <p className="settings-help">Enter an API key for cloud providers. Press Save to connect.</p>
+                  <div className="settings-field">
+                    <SettingsLabel htmlFor="settings-provider" tip="Choose a local or cloud model provider.">Provider</SettingsLabel>
                     <select
+                      id="settings-provider"
                       value={providerId || (providerListing ? providerListing.active : "")}
                       disabled={settingsBusy || providerBusy || !providerListing}
                       onChange={(event) => pickProvider(event.target.value)}
@@ -3600,12 +3603,15 @@ export default function App() {
                         <option key={row.id} value={row.id}>{row.label}</option>
                       ))}
                     </select>
-                  </label>
+                  </div>
                   {providerId !== "vertex" ? (
                     <>
-                      <label>
-                        Model server address
+                      <div className="settings-field">
+                        <SettingsLabel htmlFor="model-server-address" tip={providerId === "auto"
+                          ? "Leave blank to find a local server automatically."
+                          : "Enter the server URL your provider shows."}>Model server address</SettingsLabel>
                         <input
+                          id="model-server-address"
                           value={serverAddress}
                           disabled={settingsBusy}
                           onChange={(event) => onAddressEdit(event.target.value)}
@@ -3624,20 +3630,13 @@ export default function App() {
                           }
                           spellCheck={false}
                           autoComplete="off"
-                          aria-describedby="server-address-help"
                         />
-                      </label>
-                      <p className="settings-help" id="server-address-help">
-                        {serverAddress
-                          ? "Requests go to this address."
-                          : providerId === "auto"
-                            ? "Leave it blank: Amadeus finds local servers on ports 8888 / 8000."
-                            : "Type the address your app shows (usually http://localhost:8000/v1)."}
-                      </p>
-                      <label>
-                        API key
+                      </div>
+                      <div className="settings-field">
+                        <SettingsLabel htmlFor="settings-api-key" tip="Local servers usually work without a key.">API key</SettingsLabel>
                         <span className="key-field">
                           <input
+                            id="settings-api-key"
                             type={keyShown ? "text" : "password"}
                             value={apiKey}
                             disabled={settingsBusy || providerBusy}
@@ -3656,7 +3655,7 @@ export default function App() {
                               : "Enter your API key"}
                             autoComplete="new-password"
                             spellCheck={false}
-                            aria-describedby="api-key-help"
+                            aria-describedby={keyHelpError ? "api-key-help" : undefined}
                           />
                           <button
                             type="button"
@@ -3671,7 +3670,7 @@ export default function App() {
                             {keyShown ? eyeIcon : eyeOffIcon}
                           </button>
                         </span>
-                      </label>
+                      </div>
                       <div className="conn-row">
                         <button
                           type="button"
@@ -3690,19 +3689,17 @@ export default function App() {
                           {providerTestBusy ? "Testing..." : "Test"}
                         </button>
                       </div>
-                      {(keyHelpError ||
-                        (selectedProvider != null && selectedProvider.kind !== "cloud")) && (
-                        <p className="settings-help" id="api-key-help">
-                          {keyHelpError || "No key needed unless your server asks for one."}
-                        </p>
+                      {keyHelpError && (
+                        <p className="settings-error" id="api-key-help" role="alert">{keyHelpError}</p>
                       )}
                     </>
                   ) : (
                     <>
-                      <label>
-                          JSON key
-                          <span className="key-field vertex-key-field">
+                      <div className="settings-field">
+                        <label htmlFor="vertex-json-key">JSON key</label>
+                        <span className="key-field vertex-key-field">
                           <textarea
+                            id="vertex-json-key"
                             className={`vertex-json${vertexShown ? "" : " masked"}`}
                             rows={6}
                             value={vertexJson}
@@ -3716,7 +3713,7 @@ export default function App() {
                               : "Paste the contents of your JSON key file"}
                             spellCheck={false}
                             autoComplete="off"
-                            aria-describedby="vertex-json-help"
+                            aria-describedby={providerListing?.vertex.configured ? undefined : "vertex-json-help"}
                           />
                           <button
                             type="button"
@@ -3729,14 +3726,14 @@ export default function App() {
                           >
                             {vertexShown ? eyeIcon : eyeOffIcon}
                           </button>
-                          </span>
-                      </label>
-                      <label>
-                        Endpoint
+                        </span>
+                      </div>
+                      <div className="settings-field">
+                        <SettingsLabel htmlFor="vertex-endpoint" tip="Global has newer models. Regional can be steadier.">Endpoint</SettingsLabel>
                         <select
+                          id="vertex-endpoint"
                           value={vertexRegion}
                           disabled={settingsBusy || providerBusy}
-                          aria-describedby="vertex-endpoint-help"
                           onChange={(event) => {
                             setVertexRegion(event.target.value);
                             setVertexError("");
@@ -3746,19 +3743,15 @@ export default function App() {
                             <option key={region} value={region}>{region}</option>
                           ))}
                         </select>
-                      </label>
-                      <p className="settings-help" id="vertex-endpoint-help">
-                        global has the newest models; a regional endpoint can
-                        answer more steadily but offers fewer models.
-                      </p>
+                      </div>
                       {vertexPriority !== null && (
                         <div className="settings-toggle-row" aria-label="Priority">
                           <div className="settings-toggle-text">
-                            <span className="settings-toggle-title">Priority</span>
-                            <span className="settings-toggle-desc">
-                              Fewer "busy" errors from Google. Google charges a
-                              higher rate for priority requests.
-                            </span>
+                            <div className="settings-label-line">
+                              <span className="settings-label">Priority</span>
+                              <InfoIcon>Fewer busy errors from Google.</InfoIcon>
+                            </div>
+                            <span className="settings-help">Google charges a higher rate for priority requests.</span>
                           </div>
                           <button
                             type="button"
@@ -3833,8 +3826,13 @@ export default function App() {
                 </>)}
               </div>
 
-              <div className="conn-section">
-                <span className="conn-section-title">Model</span>
+              <div className="settings-section">
+                <div className="settings-label-line">
+                  <h4 className="settings-section-title">Model</h4>
+                  <InfoIcon>{builtinMode
+                    ? "Unload frees memory. Load a model to resume chatting."
+                    : "Search the list or type a model name."}</InfoIcon>
+                </div>
                 {builtinMode ? (<>
                   <div className="conn-row">
                     <ModelPicker
@@ -3876,42 +3874,26 @@ export default function App() {
                       </button>
                     </div>
                   )}
-                  <div className="conn-row">
-                    <label>
-                      Vision file
-                      <select
-                        value={visionChoice}
-                        disabled={visionBusy || modelBusy || !builtinModel}
-                        onChange={(event) => void chooseVisionFile(event.target.value)}
-                      >
-                        <option value="">Automatic ({builtinModel?.visionAuto || "none found"})</option>
-                        <option value="none">None (no pictures)</option>
-                        {(builtinModel?.visionFiles ?? []).map((f) => (
-                          <option key={f.name} value={f.name}>
-                            {f.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                  <div className="settings-field">
+                    <SettingsLabel htmlFor="vision-file" tip="Automatic finds the matching file for pictures and video.">Vision file</SettingsLabel>
+                    <select
+                      id="vision-file"
+                      value={visionChoice}
+                      disabled={visionBusy || modelBusy || !builtinModel}
+                      onChange={(event) => void chooseVisionFile(event.target.value)}
+                    >
+                      <option value="">Automatic ({builtinModel?.visionAuto || "none found"})</option>
+                      <option value="none">None (no pictures)</option>
+                      {(builtinModel?.visionFiles ?? []).map((f) => (
+                        <option key={f.name} value={f.name}>
+                          {f.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                  <p className="settings-help">
-                    The model file that gives her vision (pictures and videos).
-                    It usually has 'mmproj' in its name - Automatic finds it
-                    for most models.
-                  </p>
-                  <p className="settings-help">
-                    Unload frees {onMac ? "the memory her model uses" : "her graphics memory"} (for a game, for example); she
-                    can't answer until you load her model again. To use your own GGUF
-                    model, put the file in{" "}
-                    <span className="settings-path">{builtinModel?.folder || "her models folder"}</span>{" "}
-                    and press Refresh list. Your own model runs with this {onMac ? "Mac" : "PC"}'s
-                    settings{brain?.context ? ` (${brain.context.toLocaleString("en-US")} context)` : ""};
-                    a model too big for your {onMac ? "Mac's memory" : "graphics card"}
-                    will work poorly (slow, or may fail to start).
-                  </p>
                   {builtinModel && builtinModel.catalog.length > 0 && (
                     <details className="model-catalog">
-                      <summary>Get more models</summary>
+                      <summary className="settings-label">Get more models</summary>
                       <ul>
                         {builtinModel.catalog.map((m) => (
                           <li key={m.key}>
@@ -3947,12 +3929,7 @@ export default function App() {
                           Refresh list
                         </button>
                       </div>
-                      <p className="settings-help">
-                        Download opens in your browser and saves the file to your
-                        Downloads folder. Move it into her models folder, then press
-                        Refresh list - it appears in the model list above. The files
-                        come from Unsloth's official Gemma 4 pages on Hugging Face.
-                      </p>
+                      <p className="settings-help">Move the GGUF file into her models folder, then press Refresh list.</p>
                     </details>
                   )}
                 </>) : (<>
@@ -3967,18 +3944,14 @@ export default function App() {
                       emptyText="Press Save above to load the model list"
                     />
                   </div>
-                  <p className="settings-help">
-                    Type to search the list, or type a model name it does not
-                    show. Save and test model above.
-                  </p>
                 </>)}
               </div>
 
               {/* Custom Model: its status line sits under the key area, so this
                   section only appears when it has something to say. */}
               {(builtinMode || builtinStillRunning) && (
-              <div className="conn-section">
-                <span className="conn-section-title">Status</span>
+              <div className="settings-section">
+                <h4 className="settings-section-title">Status</h4>
                 {builtinMode && builtinModel && !brain?.runner_missing ? (
                   <div className={`conn-status ${
                     builtinModel.state === "loaded" ? "ok" : builtinModel.state === "failed" ? "fail" : "warn"
@@ -4041,90 +4014,74 @@ export default function App() {
               )}
               </>}
 
-              <label>
-                Total prompt cap (tokens)
-                <input
-                  type="number"
-                  min={500}
-                  max={1000000}
-                  value={contextBudget ?? ""}
-                  placeholder="Automatic"
-                  disabled={settingsBusy}
-                  aria-describedby="context-budget-help"
-                  onChange={(event) => {
-                    const input = event.target;
-                    setContextBudgetState(input.value ? Math.floor(input.valueAsNumber) : null);
-                  }}
-                />
-              </label>
-              <p className="settings-help" id="context-budget-help">
-                The cap includes instructions, history, attachments, and room for her reply.
-                Clear the field to use the automatic cap.
-              </p>
-              <p className="settings-help">
-                {`Automatic cap: ${(contextBudgetInfo?.defaultBudget ?? DEFAULT_PROMPT_CAP).toLocaleString()} tokens.`}
-              </p>
-              {contextBudgetInfo?.modelLimit != null && (
-                <p className="settings-help">
-                  {contextBudgetInfo.usesPromptCap
-                    ? `Model context limit unknown. Using a prompt cap of ${contextBudgetInfo.modelLimit.toLocaleString()} tokens.`
-                    : contextBudgetInfo.estimated
-                      ? `Estimated model context limit: ${contextBudgetInfo.modelLimit.toLocaleString()} tokens.`
-                      : `Model context limit: ${contextBudgetInfo.modelLimit.toLocaleString()} tokens.`}
-                </p>
-              )}
-              {contextBudgetInfo?.modelInputLimit != null &&
-               contextBudgetInfo.modelInputLimit !== contextBudgetInfo.modelLimit && (
-                <p className="settings-help">
-                  {`Model input limit: ${contextBudgetInfo.modelInputLimit.toLocaleString()} tokens.`}
-                </p>
-              )}
-
-              {!chatgptMode && (
-                <div className="settings-reasoning" aria-label="Reasoning">
-                  <label>
-                    Reasoning: her replies ({builtinMode ? "built-in model" : "your model"})
-                    <select
-                      value={reasoning ? reasoning[builtinMode ? "replies_builtin" : "replies_custom"] : "off"}
-                      disabled={!reasoning || reasoningBusy}
-                      onChange={(event) => void changeReasoning(
-                        builtinMode ? "replies_builtin" : "replies_custom",
-                        event.target.value as ReasoningLevel)}
-                      aria-describedby="reasoning-help"
-                    >
-                      {REASONING_CHOICES.map(([value, label]) => (
-                        <option key={value} value={value}>{label}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Reasoning: translations
-                    <select
-                      value={reasoning ? reasoning.translations : "off"}
-                      disabled={!reasoning || reasoningBusy}
-                      onChange={(event) => void changeReasoning(
-                        "translations", event.target.value as ReasoningLevel)}
-                      aria-describedby="reasoning-help"
-                    >
-                      {REASONING_CHOICES.map(([value, label]) => (
-                        <option key={value} value={value}>{label}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <p className="settings-help" id="reasoning-help">
-                    Lets her think before she answers: better thought-through,
-                    but slower (on cloud models a few seconds more per level; on
-                    the built-in model much more on {onMac ? "Macs with less memory" : "smaller graphics cards"}), and
-                    cloud services charge for the thinking too. "Her replies"
-                    also covers greetings and deciding whether to search the
-                    web; "translations" covers the translation line and what her
-                    memory learns. Some cloud models can't turn reasoning off
-                    completely - they use their lowest level instead. If her
-                    replies look cut off or broken with reasoning on, raise Max
-                    output tokens in the Sampling tab.
-                  </p>
+              <div className="settings-section">
+                <div className="settings-field">
+                  <SettingsLabel htmlFor="prompt-cap" tip={<>
+                      <span>Clear the field to use the automatic cap.</span>
+                      <span>{`Automatic cap: ${(contextBudgetInfo?.defaultBudget ?? DEFAULT_PROMPT_CAP).toLocaleString()} tokens.`}</span>
+                      {contextBudgetInfo?.modelLimit != null && (
+                        <span>{contextBudgetInfo.usesPromptCap
+                          ? `Model context limit unknown. Using a prompt cap of ${contextBudgetInfo.modelLimit.toLocaleString()} tokens.`
+                          : contextBudgetInfo.estimated
+                            ? `Estimated model context limit: ${contextBudgetInfo.modelLimit.toLocaleString()} tokens.`
+                            : `Model context limit: ${contextBudgetInfo.modelLimit.toLocaleString()} tokens.`}</span>
+                      )}
+                      {contextBudgetInfo?.modelInputLimit != null &&
+                       contextBudgetInfo.modelInputLimit !== contextBudgetInfo.modelLimit && (
+                        <span>{`Model input limit: ${contextBudgetInfo.modelInputLimit.toLocaleString()} tokens.`}</span>
+                      )}
+                    </>}>Total prompt cap (tokens)</SettingsLabel>
+                  <input
+                    id="prompt-cap"
+                    type="number"
+                    min={500}
+                    max={1000000}
+                    value={contextBudget ?? ""}
+                    placeholder="Automatic"
+                    disabled={settingsBusy}
+                    onChange={(event) => {
+                      const input = event.target;
+                      setContextBudgetState(input.value ? Math.floor(input.valueAsNumber) : null);
+                    }}
+                  />
                 </div>
-              )}
+
+                {!chatgptMode && (
+                  <>
+                    <div className="settings-label-line">
+                      <h4 className="settings-section-title">Reasoning</h4>
+                      <InfoIcon>{REASONING_HELP}</InfoIcon>
+                    </div>
+                    <label>
+                      Reasoning: her replies ({builtinMode ? "built-in model" : "your model"})
+                      <select
+                        value={reasoning ? reasoning[builtinMode ? "replies_builtin" : "replies_custom"] : "off"}
+                        disabled={!reasoning || reasoningBusy}
+                        onChange={(event) => void changeReasoning(
+                          builtinMode ? "replies_builtin" : "replies_custom",
+                          event.target.value as ReasoningLevel)}
+                      >
+                        {REASONING_CHOICES.map(([value, label]) => (
+                          <option key={value} value={value}>{label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Reasoning: translations
+                      <select
+                        value={reasoning ? reasoning.translations : "off"}
+                        disabled={!reasoning || reasoningBusy}
+                        onChange={(event) => void changeReasoning(
+                          "translations", event.target.value as ReasoningLevel)}
+                      >
+                        {REASONING_CHOICES.map(([value, label]) => (
+                          <option key={value} value={value}>{label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                )}
+              </div>
 
               {!userName.trim() && (
                 <p className="settings-help">
@@ -4155,14 +4112,17 @@ export default function App() {
             </div>
 
             <div hidden={settingsSection !== "preferences"}>
-              <LanguagePicker />
-              <PickerSettings />
-              {/* Hidden on backends without the /voice_language route. */}
-              <VoiceLanguagePicker />
-              <div className="conn-section">
-                <span className="conn-section-title">About you</span>
+              <div className="settings-section">
+                <h4 className="settings-section-title">Main Languages</h4>
+                <div className="settings-language-fields">
+                  <LanguagePicker />
+                  <VoiceLanguagePicker />
+                </div>
+              </div>
+              <div className="settings-section">
+                <h4 className="settings-section-title">About you</h4>
                 <label>
-                  Your name
+                  Your name (required)
                   <input
                     value={userName}
                     disabled={settingsBusy}
@@ -4182,18 +4142,19 @@ export default function App() {
                     placeholder="what she should call you"
                     autoComplete="off"
                     spellCheck={false}
+                    aria-required="true"
                     aria-describedby="your-name-help"
                   />
                 </label>
                 <p className="settings-help" id="your-name-help">
-                  Required: she needs to know who she is talking to, and she
-                  calls you by this name. She waits for it on her first start.
+                  She needs your name before she can chat.
                 </p>
 
-                <label>
-                  How she says it
+                <div className="settings-field">
+                  <SettingsLabel htmlFor="name-reading" tip="Suggest or type katakana.">How she says it</SettingsLabel>
                   <div className="reading-row">
                     <input
+                      id="name-reading"
                       value={userNameReading}
                       disabled={settingsBusy || !userName.trim()}
                       onChange={(event) => {
@@ -4204,7 +4165,6 @@ export default function App() {
                       autoComplete="off"
                       spellCheck={false}
                       lang="ja"
-                      aria-describedby="name-reading-help"
                     />
                     <button
                       type="button"
@@ -4215,22 +4175,16 @@ export default function App() {
                       {readingSuggesting ? "Suggesting…" : "Suggest"}
                     </button>
                   </div>
-                </label>
+                </div>
                 {readingNote && <p className="settings-error" role="status">{readingNote}</p>}
-                <p className="settings-help" id="name-reading-help">
-                  Her voice speaks Japanese, so your name is said from this
-                  katakana (e.g. Alex → アレックス). Press Suggest to fill it in,
-                  or leave it empty and it's suggested when you save. Change it
-                  if it sounds wrong.
-                </p>
 
-                <label>
-                  Your pronouns
+                <div className="settings-field">
+                  <SettingsLabel htmlFor="your-pronouns" tip="How she refers to you.">Your pronouns</SettingsLabel>
                   <select
+                    id="your-pronouns"
                     value={pronounsChoice}
                     disabled={settingsBusy}
                     onChange={(event) => setPronounsChoice(event.target.value)}
-                    aria-describedby="pronouns-help"
                   >
                     <option value="">Not set</option>
                     {PRONOUN_PRESETS.map((p) => (
@@ -4238,7 +4192,7 @@ export default function App() {
                     ))}
                     <option value="custom">Custom…</option>
                   </select>
-                </label>
+                </div>
                 {pronounsChoice === "custom" && (
                   <label>
                     Custom pronouns
@@ -4253,24 +4207,20 @@ export default function App() {
                     />
                   </label>
                 )}
-                <p className="settings-help" id="pronouns-help">
-                  Optional. Used when she, her memory and the translation talk
-                  about you. Her spoken Japanese rarely needs them.
-                </p>
 
-                <label>
-                  What she calls you
+                <div className="settings-field">
+                  <SettingsLabel htmlFor="form-of-address" tip="Nickname or honorific.">What she calls you</SettingsLabel>
                   <select
+                    id="form-of-address"
                     value={addressChoice}
                     disabled={settingsBusy}
                     onChange={(event) => setAddressChoice(event.target.value)}
-                    aria-describedby="address-help"
                   >
                     {addressOptions(userName).map(([value, label]) => (
                       <option key={value} value={value}>{label}</option>
                     ))}
                   </select>
-                </label>
+                </div>
                 {addressChoice === "custom" && (
                   <label>
                     Custom form of address
@@ -4286,15 +4236,11 @@ export default function App() {
                     />
                   </label>
                 )}
-                <p className="settings-help" id="address-help">
-                  "Let her decide" starts polite (さん) and gets more familiar as
-                  trust grows, taking your pronouns into account. The ending also
-                  shows in the translation line (e.g. {(userName.trim() || "Alex") + "-kun"}).
-                </p>
 
-                <label>
-                  Your town
+                <div className="settings-field">
+                  <SettingsLabel htmlFor="your-town" tip="Location for local weather.">Your town</SettingsLabel>
                   <input
+                    id="your-town"
                     value={userTown}
                     disabled={settingsBusy}
                     onChange={(event) => setUserTown(event.target.value)}
@@ -4302,13 +4248,8 @@ export default function App() {
                     maxLength={60}
                     autoComplete="off"
                     spellCheck={false}
-                    aria-describedby="town-help"
                   />
-                </label>
-                <p className="settings-help" id="town-help">
-                  Optional. Where "here" is when you talk about the weather, so she
-                  can check it without asking. Leave it empty and she asks which town.
-                </p>
+                </div>
 
 
                 <NameListEditor
@@ -4317,26 +4258,17 @@ export default function App() {
                   disabled={settingsBusy}
                   suggest={suggestNameReading}
                 />
-                <p className="settings-help" id="names-help">
-                  Names she should write and say the same way every time - friends,
-                  family, pets, characters (e.g. Ineffa → イネファ). Her Japanese line,
-                  her voice and the translation line all follow this list. Press Suggest
-                  for a reading, or type it in katakana.
-                </p>
               </div>
 
-              <div className="conn-section">
-                <span className="conn-section-title">Chat & voice</span>
+              <div className="settings-section">
+                <h4 className="settings-section-title">Chat & voice</h4>
                 <div className="settings-toggle-row" aria-label="Show her Japanese line">
                   <div className="settings-toggle-text">
-                    <span className="settings-toggle-title">Show her Japanese line</span>
-                    <span className="settings-toggle-desc">
-                      Shows the Japanese she actually spoke under each of her
-                      messages - this is also what she remembers. Editing one of
-                      her messages rewrites it to match (her long-term memory may
-                      already have learned the old line). Saved in this browser.
-                      {voiceEarly && " Always on while her voice plays Early or Right away (below)."}
-                    </span>
+                    <div className="settings-label-line">
+                      <span className="settings-label">Show her Japanese line</span>
+                      <InfoIcon>Show her spoken Japanese.</InfoIcon>
+                    </div>
+                    {voiceEarly && <span className="settings-help">Always on with Early or Right away.</span>}
                   </div>
                   <button
                     type="button"
@@ -4350,77 +4282,55 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="settings-reasoning" aria-label="Voice playback">
-                  <label>
-                    Voice playback
-                    <select
-                      value={voicePlayback}
-                      onChange={(event) => setVoicePlayback(event.target.value as VoicePlayback)}
-                      aria-describedby="voice-playback-help"
-                    >
-                      {VOICE_PLAYBACK_CHOICES.map((choice) => (
-                        <option key={choice.value} value={choice.value}>
-                          {choice.title}{choice.value === "smooth" ? " (recommended)" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <p className="settings-help" id="voice-playback-help">
-                    {VOICE_PLAYBACK_CHOICES.find((choice) => choice.value === voicePlayback)?.desc}
-                    {" "}While she waits, the bar at the bottom shows her voice being
-                    prepared. Saved in this browser.
-                  </p>
+                <div className="settings-field">
+                  <SettingsLabel htmlFor="voice-playback" tip="When her voice starts.">Voice playback</SettingsLabel>
+                  <select
+                    id="voice-playback"
+                    value={voicePlayback}
+                    onChange={(event) => setVoicePlayback(event.target.value as VoicePlayback)}
+                  >
+                    {VOICE_PLAYBACK_CHOICES.map((choice) => (
+                      <option key={choice.value} value={choice.value}>
+                        {choice.title}{choice.value === "smooth" ? " (recommended)" : ""}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
-                <div className="settings-reasoning" aria-label="She reacts when you attach something">
-                  <label>
-                    She reacts when you attach something
-                    <select
-                      value={reactionChoice}
-                      onChange={(event) => void changeReactionChoice(event.target.value as ReactionChoice)}
-                      aria-describedby="reaction-help"
-                    >
-                      {REACTION_CHOICES.map((choice) => (
-                        <option key={choice.value} value={choice.value}>{choice.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <p className="settings-help" id="reaction-help">
-                    One short line from her when you attach a picture, before you
-                    send it (she hasn't seen it yet). Saved at once.
-                  </p>
+                <div className="settings-field">
+                  <SettingsLabel htmlFor="attachment-reaction" tip="React before you send.">She reacts when you attach something</SettingsLabel>
+                  <select
+                    id="attachment-reaction"
+                    value={reactionChoice}
+                    onChange={(event) => void changeReactionChoice(event.target.value as ReactionChoice)}
+                  >
+                    {REACTION_CHOICES.map((choice) => (
+                      <option key={choice.value} value={choice.value}>{choice.label}</option>
+                    ))}
+                  </select>
                 </div>
 
                 {greetingCooldown !== null && (
-                  <div className="settings-reasoning" aria-label="New greeting when you reopen the app">
-                    <label>
-                      New greeting when you reopen the app
-                      <select
-                        value={greetingCooldown}
-                        onChange={(event) => void changeGreetingCooldown(Number(event.target.value))}
-                        aria-describedby="greeting-cooldown-help"
-                      >
-                        {GREETING_COOLDOWN_CHOICES.map((choice) => (
-                          <option key={choice.value} value={choice.value}>{choice.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <p className="settings-help" id="greeting-cooldown-help">
-                      Opening, refreshing or reconnecting the app sooner than
-                      this keeps her last greeting instead of a new one.
-                      Saved at once.
-                    </p>
+                  <div className="settings-field">
+                    <SettingsLabel htmlFor="greeting-cooldown" tip="Wait before greeting again.">New greeting when you reopen the app</SettingsLabel>
+                    <select
+                      id="greeting-cooldown"
+                      value={greetingCooldown}
+                      onChange={(event) => void changeGreetingCooldown(Number(event.target.value))}
+                    >
+                      {GREETING_COOLDOWN_CHOICES.map((choice) => (
+                        <option key={choice.value} value={choice.value}>{choice.label}</option>
+                      ))}
+                    </select>
                   </div>
                 )}
 
                 <div className="settings-toggle-row" aria-label="Remember my other chats">
                   <div className="settings-toggle-text">
-                    <span className="settings-toggle-title">Remember my other chats</span>
-                    <span className="settings-toggle-desc">
-                      She keeps up with your other chat tabs: what each was about
-                      and how it ended, newest first. Off: she only knows this tab
-                      (plus her long-term memories and what she knows about you).
-                    </span>
+                    <div className="settings-label-line">
+                      <span className="settings-label">Remember my other chats</span>
+                      <InfoIcon>Catch up on other tabs.</InfoIcon>
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -4436,10 +4346,10 @@ export default function App() {
 
                 <div className="settings-toggle-row" aria-label="Search old chats">
                   <div className="settings-toggle-text">
-                    <span className="settings-toggle-title">Search old chats</span>
-                    <span className="settings-toggle-desc">
-                      Searches earlier messages in this chat and other chats for related topics as you write.
-                    </span>
+                    <div className="settings-label-line">
+                      <span className="settings-label">Search old chats</span>
+                      <InfoIcon>Find related past messages.</InfoIcon>
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -4455,14 +4365,11 @@ export default function App() {
 
                 <div className="settings-toggle-row" aria-label="Read pages thoroughly">
                   <div className="settings-toggle-text">
-                    <span className="settings-toggle-title">Read pages thoroughly</span>
-                    <span className="settings-toggle-desc">
-                      When web access is on and she searches, she opens the top
-                      pages and takes notes before answering - more accurate, a
-                      few seconds slower. Off: she only reads the best part of the
-                      top page (quicker).
-                      {webReading?.reason ? " Now: " + webReading.reason : ""}
-                    </span>
+                    <div className="settings-label-line">
+                      <span className="settings-label">Read pages thoroughly</span>
+                      <InfoIcon>Slower, more detailed web reading.</InfoIcon>
+                    </div>
+                    {webReading?.reason && <span className="settings-help">{webReading.reason}</span>}
                   </div>
                   <button
                     type="button"
@@ -4476,16 +4383,15 @@ export default function App() {
                   </button>
                 </div>
 
-
-                <label>
-                  Keep last voice recordings
+                <div className="settings-field">
+                  <SettingsLabel htmlFor="voice-retention" tip="0 keeps all recordings.">Keep last voice recordings</SettingsLabel>
                   <input
+                    id="voice-retention"
                     type="number"
                     min={0}
                     step={1}
                     value={voiceRetention}
                     disabled={settingsBusy}
-                    aria-describedby="voice-retention-help"
                     onChange={(event) => {
                       const value = Number(event.target.value);
                       setVoiceRetentionState(
@@ -4493,15 +4399,10 @@ export default function App() {
                       );
                     }}
                   />
-                </label>
-                <p className="settings-help" id="voice-retention-help">
-                  How many voice recordings to keep on disk. 0 keeps everything.
-                  Older ones are deleted automatically, but any reply can always be
-                  replayed — its line is re-synthesized on demand.
-                </p>
+                </div>
               </div>
 
-
+              <PickerSettings />
 
               {settingsError && <p className="settings-error" role="alert">{settingsError}</p>}
               {settingsNotice && <p className="settings-success" role="status">{settingsNotice}</p>}
@@ -4527,9 +4428,6 @@ export default function App() {
 
             <section hidden={settingsSection !== "personality"} aria-label="Personality and mood">
               <MoodPanel active={settingsOpen && settingsSection === "personality"} stats={statsInfo} />
-              <p className="personality-intro" id="personality-help">
-                Shape how Amadeus speaks and responds. Edit the current personality below.
-              </p>
               {defaultNotices.map((notice) => (
                 <div key={notice.name} className="settings-notice" role="status">
                   <p>
@@ -4548,8 +4446,11 @@ export default function App() {
               {defaultNoticeDone && <p className="settings-success" role="status">{defaultNoticeDone}</p>}
               {personalityLoading ? <p className="settings-help" role="status">Loading personality...</p> : (
                 <>
-                  {personalityLoaded && <>
-                    <label htmlFor="personality-text">Personality instructions</label>
+                  {personalityLoaded && <div className="settings-section">
+                    <h4 className="settings-section-title"><label htmlFor="personality-text">Personality instructions</label></h4>
+                    <p className="settings-help" id="personality-help">
+                      Scroll past the Japanese text in the editor to edit the English section.
+                    </p>
                     <textarea id="personality-text" className="personality-text"
                       value={personality} disabled={personalitySaving}
                       aria-describedby="personality-help personality-hint"
@@ -4567,7 +4468,7 @@ export default function App() {
                       Saved changes apply to your next message. Your conversation memory stays intact.
                     </p>
                     {personalityDirty && !personality.trim() && <p className="settings-help">Enter a personality before saving.</p>}
-                  </>}
+                  </div>}
                   {personalityError && <p className="settings-error" role="alert">{personalityError}</p>}
                   {personalityNotice && <p className="settings-success" role="status">{personalityNotice}</p>}
                   <div className="modal-actions personality-actions">
@@ -4593,7 +4494,8 @@ export default function App() {
               )}
             </section>
 
-            <section hidden={settingsSection !== "sampling"} aria-label="Model sampling">
+            <section className="settings-section" hidden={settingsSection !== "sampling"} aria-label="Model sampling">
+              <h4 className="settings-section-title">Model Sampling</h4>
               {chatgptMode && <p className="settings-help">These settings aren't used with ChatGPT.</p>}
               <SamplingSettings busy={settingsBusy || loading} />
             </section>

@@ -80,7 +80,7 @@ class SceneBudgetTests(unittest.TestCase):
                              fits, now=NOW)
 
     def test_outer_exchanges_trim_before_the_anchor_is_clipped(self):
-        rendered = self._render(lambda text: window.count_text(text) <= 3500)
+        rendered = self._render(lambda text: window.count_text(text) <= 3500 // window.ASCII_CHARS_PER_TOKEN)
         self.assertIn(self.phrase, rendered)
         self.assertIn("More detail.", rendered)
         self.assertIn("INNER OLDER", rendered)
@@ -138,7 +138,8 @@ class SceneBudgetTests(unittest.TestCase):
                 room = 55 if builtin else ceiling // 2
                 fixed = {"role": "system", "content": "Stable"}
                 tail = {"role": "system", "content": "Tail"}
-                current = {"role": "user", "content": "x" * (ceiling - room - 62), "_window_ids": (80,)}
+                current = {"role": "user", "content": "x" * (window.ASCII_CHARS_PER_TOKEN * (ceiling - room - 62)),
+                           "_window_ids": (80,)}
                 check = (role for role in ("system", "user", "system"))
 
                 def render(ids, wire, *, budget, fits, count):

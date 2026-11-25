@@ -34,6 +34,9 @@ INELIGIBLE = ("Your ChatGPT plan can't be used in other apps. This needs ChatGPT
               "You can use an API key in Custom Model instead.")
 BACKGROUND_DISABLED = "ChatGPT background use is off."
 NO_MODELS = "There are no ChatGPT models available for this account."
+# A dropped or refused connection is sent once more before the user sees an
+# error. A reply that timed out already waited the whole timeout: not repeated.
+NETWORK_RETRIES = 1
 _model_levels = {}
 _model_generation = None
 _limit_pause = None
@@ -404,7 +407,8 @@ class ChatGPTClient(ChatOpenAI):
         try:
             token = chatgpt_auth.access_token(generation=generation)
             timeout = min(self.plan_timeout, kwargs.get("timeout") or self.plan_timeout)
-            for attempt in range(2):
+            refreshed = network_retries = 0
+            while True:
                 _check_background()
                 try:
                     with requests.post(RESPONSES_URL, json=body, stream=True, allow_redirects=False,
@@ -412,11 +416,20 @@ class ChatGPTClient(ChatOpenAI):
                                        timeout=(min(5.0, timeout), timeout)) as response:
                         result = _chat_result(_read_response(response), token)
                 except (_RejectedToken, _WithdrawnScope) as exc:
-                    if attempt or isinstance(exc, _WithdrawnScope):
+                    if refreshed or isinstance(exc, _WithdrawnScope):
                         chatgpt_auth.discard_session(token, generation)
                         raise
+                    refreshed = 1
                     _check_background()
                     token = chatgpt_auth.access_token(token, generation=generation)
+                except requests.RequestException as exc:
+                    # Only the error's type is logged: never the request or the token.
+                    kind = type(exc).__name__
+                    if network_retries >= NETWORK_RETRIES or isinstance(exc, requests.ReadTimeout):
+                        print(f"[ChatGPT] Could not reach ChatGPT ({kind}).")
+                        raise
+                    network_retries += 1
+                    print(f"[ChatGPT] Connection problem ({kind}) - sending it once more.")
                 else:
                     if _task.get() == "user_message":
                         _update_pause(generation, limited=False)

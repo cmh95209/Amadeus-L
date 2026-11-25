@@ -266,3 +266,46 @@ def test_deferred_display_translation_is_part_of_normal_chat(plan_mode, monkeypa
     plan_mode.return_value = FakeResponse(body={"output": []})
     plan.deferred_translation(llm.get_llm("", "").invoke)("Translate")
     plan_mode.assert_called_once()
+
+
+class DroppedStream(FakeResponse):
+    def iter_lines(self, *, decode_unicode):
+        raise plan.requests.exceptions.ChunkedEncodingError("connection dropped")
+
+
+def _plan_client():
+    return llm.get_llm("saved-custom-key", "saved-custom-model", reasoning=llm.reasoning_for("replies"))
+
+
+_ANSWER = {"output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}]}
+
+
+@pytest.mark.parametrize("first", [
+    plan.requests.ConnectionError("refused"),
+    plan.requests.ConnectTimeout("slow connect"),
+    DroppedStream(body=_ANSWER),
+])
+def test_dropped_connection_is_sent_once_more(plan_mode, capsys, first):
+    plan_mode.side_effect = [first, FakeResponse(body=_ANSWER)]
+    reply = _plan_client().invoke([{"role": "user", "content": "hi"}])
+    assert reply.content == "ok"
+    assert plan_mode.call_count == 2
+    logged = capsys.readouterr().out
+    assert "sending it once more" in logged and "mock-token" not in logged and "hi" not in logged.split()
+
+
+def test_second_dropped_connection_shows_the_error_with_its_kind(plan_mode, capsys):
+    plan_mode.side_effect = [plan.requests.ConnectionError("a"), plan.requests.ConnectionError("b"),
+                             FakeResponse(body=_ANSWER)]
+    with pytest.raises(plan.ChatGPTError, match="Could not reach ChatGPT"):
+        _plan_client().invoke([{"role": "user", "content": "hi"}])
+    assert plan_mode.call_count == 2
+    assert "Could not reach ChatGPT (ConnectionError)" in capsys.readouterr().out
+
+
+def test_reply_timeout_is_not_repeated(plan_mode, capsys):
+    plan_mode.side_effect = [plan.requests.ReadTimeout("slow"), FakeResponse(body=_ANSWER)]
+    with pytest.raises(plan.ChatGPTError, match="Could not reach ChatGPT"):
+        _plan_client().invoke([{"role": "user", "content": "hi"}])
+    assert plan_mode.call_count == 1
+    assert "(ReadTimeout)" in capsys.readouterr().out

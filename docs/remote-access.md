@@ -2,14 +2,16 @@
 
 Amadeus runs on your PC. With **Tailscale** (free for personal use) you can open
 her page on your phone, tablet or another computer, at home or away, while she
-keeps running on the PC. Only devices signed in to **your own** Tailscale account
-can reach her.
+keeps running on the PC. Tailscale access rules determine who can reach her.
+For ChatGPT plan usage, the phone and the PC must use the **same Tailscale
+account**. You can sign out from your phone. Start a new ChatGPT sign-in from
+the browser on the computer running Amadeus.
 
 The same steps are in the app: **Settings → Mobile and remote access**.
 
 > **Use "serve", never "Funnel".** Tailscale has two ways to share a page:
-> **Serve** shares it only with your own Tailscale devices; **Funnel** puts it on
-> the public internet. Amadeus has no login, so with Funnel anyone who finds the
+> **Serve** shares it with devices allowed by your Tailscale rules. **Funnel**
+> puts it on the public internet, where anyone who finds the
 > address could talk to her and read your chats. These steps use Serve only. If
 > the settings tab ever shows a red "Funnel is ON" warning, turn it off with
 > `tailscale funnel reset` (then do step 3 again).

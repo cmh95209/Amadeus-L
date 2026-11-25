@@ -208,11 +208,23 @@ def test_message_audio_refuses_a_link_to_audio_outside_the_folder(env, monkeypat
     assert env.client.get("/message_audio/assets/escaped.wav").status_code == 404
 
 
-def test_private_tailnet_can_read_status_public_funnel_cannot(env):
+def test_only_tailnet_owner_can_use_chatgpt(env, monkeypatch):
+    monkeypatch.setattr(env.api.remote_access, "_read_owner",
+                        lambda: ("owner@example.invalid", "pc.tailnet.ts.net"))
+    monkeypatch.setattr(env.api.remote_access, "_owner_cache", {"at": 0.0, "value": None})
+    env.api.builtin_llm.save_mode("chatgpt")
     headers = {"Host": "pc.tailnet.ts.net:8443", "Origin": "https://pc.tailnet.ts.net"}
     assert env.client.get("/chatgpt/status", headers=headers).status_code == 403
-    headers["Tailscale-User-Login"] = "me@example.invalid"
+    headers["Tailscale-User-Login"] = "guest@example.invalid"
+    assert env.client.get("/chatgpt/status", headers=headers).status_code == 403
+    assert env.client.post("/", headers=headers, json={}).status_code == 403
+    assert env.client.post("/chatgpt/signout", headers=headers).status_code == 403
+    headers["Tailscale-User-Login"] = "owner@example.invalid"
     assert env.client.get("/chatgpt/status", headers=headers).status_code == 200
+    assert env.client.post("/chatgpt/signin", headers=headers).status_code == 403
+    assert env.client.get("/chatgpt/status", headers=headers,
+                          environ_overrides={"REMOTE_ADDR": "100.64.0.1"}).status_code == 403
+    assert env.client.post("/chatgpt/signout", headers=headers).json["revocation_confirmed"] is True
 
 
 def test_model_validation_default_and_persistence(env, monkeypatch):
@@ -277,11 +289,21 @@ def test_settings_and_signout(env, monkeypatch):
     assert env.client.post("/chatgpt/welcome-seen").json["welcome_seen"]
     status = env.client.post("/chatgpt/signout").json
     assert not status["signed_in"]
+    assert status["revocation_confirmed"] is True
     assert not status["background_use_allowed"]
     assert not status["welcome_seen"]
     sign_out.assert_called_once()
     assert env.client.post("/chatgpt/welcome-seen").status_code == 400
     assert not env.client.get("/chatgpt/status").json["welcome_seen"]
+
+
+def test_signout_reports_unconfirmed_remote_session(env, monkeypatch):
+    monkeypatch.setattr(env.auth, "status", Mock(return_value={"signed_in": False, "email": ""}))
+    monkeypatch.setattr(env.auth, "sign_out", Mock(return_value=False))
+    response = env.client.post("/chatgpt/signout")
+    assert response.status_code == 200
+    assert response.json["signed_in"] is False
+    assert response.json["revocation_confirmed"] is False
 
 
 def test_plan_errors_surface_in_chat_and_settings(env, monkeypatch):

@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "تم تسجيل الخروج على هذا الكمبيوتر. لم تؤكد OpenAI إنهاء الجلسة. افصل Amadeus في إعدادات ChatGPT.",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "تشمل التحيات والتفاعل مع المرفقات قبل إرسالها والتعلّم من المحادثات.",
+  "Signed out of ChatGPT.": "تم تسجيل الخروج من ChatGPT.",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "سجّل الدخول على هذا الكمبيوتر. تُرسل كلمة مرورك إلى OpenAI فقط. يشفّر Windows بيانات تسجيل الدخول المحفوظة. على Linux وmacOS، يمكن لحسابك وحده الوصول إلى الملف.",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "يرسل Amadeus الرسائل وسياق المحادثة ذا الصلة إلى OpenAI لتوليد الردود. إذا سمحت بالاستخدام في الخلفية، فقد تُرسل صور أو مقتطفات من المستندات أو لقطات من الفيديو قبل الضغط على إرسال.",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "هل تسمح بالتحيات والتعلّم من المحادثات والتفاعل مع المرفقات؟ قد يُرسل التفاعل صورًا أو مقتطفات من المستندات أو لقطات من الفيديو إلى OpenAI قبل الضغط على إرسال.",
+  "If you reject, you can still chat and memory learning stays paused.": "إذا رفضت، يمكنك مواصلة الدردشة وسيظل التعلّم متوقفًا مؤقتًا.",
   "0 keeps all recordings.": "القيمة 0 تُبقي كل التسجيلات.",
   "Always on with Early or Right away.": "يظل مفعّلًا مع «مبكر» أو «فورًا».",
   "Automatic finds the matching file for pictures and video.": "يعثر الخيار التلقائي على الملف المطابق للصور والفيديو.",

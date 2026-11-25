@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "이 컴퓨터에서 로그아웃했습니다. OpenAI에서 세션 종료를 확인하지 못했습니다. ChatGPT 설정에서 Amadeus 연결을 해제하세요.",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "인사, 전송 전 첨부 파일에 대한 반응, 대화 학습이 포함됩니다.",
+  "Signed out of ChatGPT.": "ChatGPT에서 로그아웃했습니다.",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "이 컴퓨터에서 로그인하세요. 비밀번호는 OpenAI에만 전송됩니다. Windows는 저장된 로그인 정보를 암호화합니다. Linux와 macOS에서는 사용자 계정만 해당 파일에 접근할 수 있습니다.",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "Amadeus는 답변을 받기 위해 메시지와 관련 대화 내용을 OpenAI로 보냅니다. 백그라운드 사용을 허용하면, 첨부 파일에 반응하기 위해 보내기를 누르기 전에 이미지, 문서 발췌문 또는 동영상 프레임을 보낼 수 있습니다.",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "인사, 대화 학습, 첨부 파일에 대한 반응을 허용할까요? 반응에 필요한 이미지, 문서 발췌문 또는 동영상 프레임이 보내기를 누르기 전에 OpenAI로 전송될 수 있습니다.",
+  "If you reject, you can still chat and memory learning stays paused.": "거부해도 채팅은 계속할 수 있으며, 대화 학습은 일시 중지됩니다.",
   "0 keeps all recordings.": "0이면 모든 녹음 보관.",
   "Always on with Early or Right away.": "‘빠르게’ 또는 ‘즉시’에서는 항상 켜집니다.",
   "Automatic finds the matching file for pictures and video.": "자동 설정은 이미지와 동영상에 맞는 파일을 찾습니다.",

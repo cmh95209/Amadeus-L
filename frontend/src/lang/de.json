@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "Auf diesem Computer abgemeldet. OpenAI hat das Sitzungsende nicht bestätigt. Trenne Amadeus in den ChatGPT-Einstellungen.",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "Umfasst Begrüßungen, Reaktionen auf Anhänge vor dem Senden und das Lernen aus Chats.",
+  "Signed out of ChatGPT.": "Von ChatGPT abgemeldet.",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "Melde dich auf diesem Computer an. Dein Passwort geht nur an OpenAI. Windows verschlüsselt gespeicherte Anmeldedaten. Unter Linux und macOS kann nur dein Benutzerkonto auf die Datei zugreifen.",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "Für Antworten sendet Amadeus Nachrichten und relevanten Chat-Kontext an OpenAI. Wenn du die Hintergrundnutzung erlaubst, können bei Reaktionen auf Anhänge Bilder, Dokumentauszüge oder Videobilder gesendet werden, bevor du auf Senden klickst.",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "Begrüßungen, Lernen aus Chats und Reaktionen auf Anhänge erlauben? Bei Reaktionen können Bilder, Dokumentauszüge oder Videobilder an OpenAI gehen, bevor du auf Senden klickst.",
+  "If you reject, you can still chat and memory learning stays paused.": "Wenn du ablehnst, kannst du weiter chatten. Das Lernen bleibt pausiert.",
   "0 keeps all recordings.": "0 behält alle Aufnahmen.",
   "Always on with Early or Right away.": "Bei „Früh“ oder „Sofort“ immer an.",
   "Automatic finds the matching file for pictures and video.": "Die Automatik findet die passende Datei für Bilder und Videos.",

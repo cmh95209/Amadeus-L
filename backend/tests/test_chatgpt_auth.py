@@ -569,9 +569,12 @@ class ChatGPTAuthTests(unittest.TestCase):
     def test_sign_out_removes_tokens_even_if_revocation_fails(self):
         self._sign_in()
         host = self.params["ext_agent_host_id"]
+        self.post.reset_mock()
         self.post.side_effect = auth.requests.ConnectionError(REFRESH)
-        with self.assertLogs(auth.__name__, "WARNING") as logs:
+        with patch.object(auth.time, "sleep", create=True) as sleep, \
+                self.assertLogs(auth.__name__, "WARNING") as logs:
             self.assertFalse(auth.sign_out())
+        sleep.assert_called_once_with(auth.REVOKE_RETRY_DELAY)
         self._assert_safe(" ".join(logs.output))
         self.assertEqual(self.post.call_args.args, (REVOKE,))
         self.assertLessEqual(self.post.call_args.kwargs["timeout"], 5)
@@ -580,6 +583,7 @@ class ChatGPTAuthTests(unittest.TestCase):
         })
         self.assertFalse(auth.status()["signed_in"])
         self.assertNotIn("session", auth._load_auth())
+        self.assertEqual(self.post.call_count, 2)
         self._assert_error("^signed out - sign in again$", auth.access_token)
         self._start()
         self.assertEqual(self.params["ext_agent_host_id"], host)
@@ -589,6 +593,16 @@ class ChatGPTAuthTests(unittest.TestCase):
         self._sign_in()
         self.assertTrue(auth.sign_out())
         self.assertEqual(self.post.call_args.args, (REVOKE,))
+        self.assertFalse(auth.status()["signed_in"])
+
+    def test_sign_out_retries_on_server_failure(self):
+        self._sign_in()
+        self.post.reset_mock()
+        self.post.side_effect = [_Reply(503, {}), _Reply(200, None)]
+        with patch.object(auth.time, "sleep", create=True) as sleep:
+            self.assertTrue(auth.sign_out())
+        sleep.assert_called_once_with(auth.REVOKE_RETRY_DELAY)
+        self.assertEqual(self.post.call_count, 2)
         self.assertFalse(auth.status()["signed_in"])
 
     def test_model_list_keeps_visible_models_in_server_order(self):

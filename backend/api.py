@@ -1772,7 +1772,7 @@ def set_brain_mode():
     if mode not in ("builtin", "custom", "chatgpt"):
         return jsonify({"message": "Choose Built-in, Custom Model, or ChatGPT."}), 400
     was_chatgpt = chatgpt_llm.active()
-    if mode == "chatgpt" and not _chatgpt_user_device():
+    if (mode == "chatgpt" or was_chatgpt) and not _chatgpt_user_device():
         return jsonify({"message": _CHATGPT_PRIVATE}), 403
     if mode == "chatgpt" and not chatgpt_auth.status()["signed_in"]:
         return jsonify({"message": chatgpt_llm.SIGNED_OUT}), 400
@@ -1807,25 +1807,30 @@ _chatgpt_launch = None
 _chatgpt_sign_in_error = ""
 _chatgpt_launch_lock = threading.Lock()
 _SIGN_IN_HERE = "Sign in on the PC running Amadeus"
-_CHATGPT_PRIVATE = "Use ChatGPT from this PC or a signed-in Tailscale device."
+_CHATGPT_PRIVATE = "Use ChatGPT from this PC or a device signed in to the PC owner's Tailscale account."
 
 
 def _chatgpt_loopback():
     local = origin_guard.is_local_name
     return (_from_this_pc() and local(origin_guard._split_host(request.host))
-            and (not request.headers.get("X-Forwarded-Host") or
-                 local(origin_guard._split_host(request.headers["X-Forwarded-Host"]))))
+            and not any(name.lower().startswith(("x-forwarded-", "tailscale-"))
+                        or name.lower() == "forwarded" for name, _ in request.headers))
 
 
 memory_plan_bridge.register(application, _chatgpt_loopback)
 
 
 def _chatgpt_user_device():
-    # Serve forwards a signed-in tailnet identity from loopback. Public
-    # Funnel requests arrive without this identity.
-    return (_chatgpt_loopback() or
-            (request.remote_addr in ("127.0.0.1", "::1") and
-             bool(request.headers.get("Tailscale-User-Login"))))
+    if _chatgpt_loopback():
+        return True
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        return False
+    # Serve removes incoming identity headers and adds the actual caller.
+    # Use the direct Host and the daemon's local device owner, not the
+    # caller's name alone. Funnel supplies no identity.
+    host = origin_guard._split_host(request.host)
+    return host.endswith(origin_guard.TAILNET_SUFFIX) and remote_access.is_owner(
+        request.headers.get("Tailscale-User-Login", ""), host)
 
 
 @application.before_request
@@ -1833,7 +1838,7 @@ def _chatgpt_check_device():
     if request.path == memory_plan_bridge.PATH or request.method == "OPTIONS" or request.endpoint in (
             "chatgpt_signin", "chatgpt_authorize", "chatgpt_callback"):
         return None
-    if not _chatgpt_user_device() and (request.path.startswith("/chatgpt/") or chatgpt_llm.active()):
+    if (request.path.startswith("/chatgpt/") or chatgpt_llm.active()) and not _chatgpt_user_device():
         return jsonify({"message": _CHATGPT_PRIVATE}), 403
     return None
 
@@ -1853,10 +1858,7 @@ def _chatgpt_error(exc):
 
 @application.route("/chatgpt/signin", methods=["POST"])
 def chatgpt_signin():
-    if (not _chatgpt_loopback() or not origin_guard.is_local_page_origin(request.headers.get("Origin", ""))
-            or any(name.lower().startswith("x-forwarded-")
-                   or name.lower() in ("forwarded", "tailscale-user-login")
-                   for name, _ in request.headers)):
+    if not _chatgpt_loopback() or not origin_guard.is_local_page_origin(request.headers.get("Origin", "")):
         return jsonify({"message": _SIGN_IN_HERE}), 403
     global _chatgpt_launch, _chatgpt_sign_in_error
     port = application.config["BACKEND_PORT"]
@@ -1943,8 +1945,9 @@ def chatgpt_signout():
     with _chatgpt_launch_lock:
         _chatgpt_launch = None
         _chatgpt_sign_in_error = ""
-        chatgpt_auth.sign_out()
-    return chatgpt_status()
+        revocation_confirmed = chatgpt_auth.sign_out()
+        response = chatgpt_status().get_json()
+    return jsonify({**response, "revocation_confirmed": revocation_confirmed})
 
 
 @application.route("/chatgpt/background", methods=["POST"])

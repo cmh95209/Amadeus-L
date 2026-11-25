@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "ออกจากระบบบนคอมพิวเตอร์เครื่องนี้แล้ว OpenAI ยังไม่ยืนยันว่าเซสชันสิ้นสุดแล้ว ให้ยกเลิกการเชื่อมต่อ Amadeus ในการตั้งค่า ChatGPT",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "รวมถึงการทักทาย การตอบสนองต่อไฟล์แนบก่อนส่ง และการเรียนรู้จากบทสนทนา",
+  "Signed out of ChatGPT.": "ออกจากระบบ ChatGPT แล้ว",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "ลงชื่อเข้าใช้บนคอมพิวเตอร์เครื่องนี้ รหัสผ่านของคุณจะส่งให้ OpenAI เท่านั้น Windows เข้ารหัสข้อมูลการลงชื่อเข้าใช้ที่บันทึกไว้ บน Linux และ macOS มีเพียงบัญชีผู้ใช้ของคุณที่เข้าถึงไฟล์ได้",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "Amadeus ส่งข้อความและบริบทที่เกี่ยวข้องให้ OpenAI เพื่อสร้างคำตอบ หากคุณอนุญาตให้ทำงานเบื้องหลัง การตอบสนองต่อไฟล์แนบอาจส่งรูปภาพ ข้อความบางส่วนจากเอกสาร หรือเฟรมวิดีโอก่อนที่คุณจะกดส่ง",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "อนุญาตให้ทักทาย เรียนรู้จากบทสนทนา และตอบสนองต่อไฟล์แนบไหม การตอบสนองอาจส่งรูปภาพ ข้อความบางส่วนจากเอกสาร หรือเฟรมวิดีโอไปยัง OpenAI ก่อนที่คุณจะกดส่ง",
+  "If you reject, you can still chat and memory learning stays paused.": "หากปฏิเสธ คุณยังแชทได้ตามปกติและการเรียนรู้จะยังหยุดชั่วคราว",
   "0 keeps all recordings.": "0 คือเก็บเสียงที่บันทึกไว้ทั้งหมด",
   "Always on with Early or Right away.": "เปิดตลอดเมื่อเลือก “เร็ว” หรือ “ทันที”",
   "Automatic finds the matching file for pictures and video.": "โหมดอัตโนมัติจะหาไฟล์ที่ตรงกันสำหรับรูปภาพและวิดีโอ",

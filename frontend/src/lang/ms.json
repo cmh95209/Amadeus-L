@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "Anda telah log keluar pada komputer ini. OpenAI tidak mengesahkan sesi telah tamat. Putuskan sambungan Amadeus dalam Tetapan ChatGPT.",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "Termasuk sapaan, reaksi terhadap lampiran sebelum dihantar dan pembelajaran daripada perbualan.",
+  "Signed out of ChatGPT.": "Anda telah log keluar daripada ChatGPT.",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "Log masuk pada komputer ini. Kata laluan anda hanya dihantar kepada OpenAI. Windows menyulitkan bukti kelayakan log masuk yang disimpan. Pada Linux dan macOS, hanya akaun pengguna anda boleh mengakses fail itu.",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "Amadeus menghantar mesej dan konteks perbualan yang berkaitan kepada OpenAI untuk mendapatkan balasan. Jika anda membenarkan penggunaan di latar belakang, reaksi terhadap lampiran boleh menghantar imej, petikan dokumen atau bingkai video sebelum anda menekan Hantar.",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "Benarkan sapaan, pembelajaran dan reaksi terhadap lampiran? Reaksi boleh menghantar imej, petikan dokumen atau bingkai video kepada OpenAI sebelum anda menekan Hantar.",
+  "If you reject, you can still chat and memory learning stays paused.": "Jika anda menolak, anda masih boleh bersembang dan pembelajaran kekal dijeda.",
   "0 keeps all recordings.": "0 menyimpan semua rakaman.",
   "Always on with Early or Right away.": "Sentiasa hidup dengan “Awal” atau “Serta-merta”.",
   "Automatic finds the matching file for pictures and video.": "Pilihan automatik mencari fail yang sepadan untuk gambar dan video.",

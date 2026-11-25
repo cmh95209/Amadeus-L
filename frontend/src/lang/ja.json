@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "このPCではログアウトしました。OpenAIでセッションが終了したことを確認できませんでした。ChatGPTの設定からAmadeusの連携を解除してください。",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "あいさつ、送信前の添付ファイルへのリアクション、会話からの学習が含まれます。",
+  "Signed out of ChatGPT.": "ChatGPTからログアウトしました。",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "このPCでログインしてください。パスワードはOpenAIにのみ送信されます。Windowsでは保存した認証情報が暗号化されます。LinuxとmacOSでは、お使いのユーザーアカウントだけがファイルにアクセスできます。",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "Amadeusは返信のため、メッセージと関連する会話の内容をOpenAIに送信します。バックグラウンドでの利用を許可すると、添付ファイルへのリアクションのために、送信を押す前に画像、文書の抜粋、動画のフレームが送られることがあります。",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "あいさつ、会話からの学習、添付ファイルへのリアクションを許可しますか？リアクションのために、送信を押す前に画像、文書の抜粋、動画のフレームがOpenAIに送られることがあります。",
+  "If you reject, you can still chat and memory learning stays paused.": "許可しなくてもチャットはできます。会話からの学習は一時停止したままです。",
   "0 keeps all recordings.": "0 ですべての録音を保持。",
   "Always on with Early or Right away.": "「早め」または「すぐに」では常に表示されます。",
   "Automatic finds the matching file for pictures and video.": "「自動」は画像や動画に対応するファイルを探します。",

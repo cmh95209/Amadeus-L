@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "Déconnexion effectuée sur cet ordinateur. OpenAI n’a pas confirmé la fin de la session. Déconnectez Amadeus dans les paramètres de ChatGPT.",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "Inclut les salutations, les réactions aux pièces jointes avant l’envoi et l’apprentissage à partir des conversations.",
+  "Signed out of ChatGPT.": "Déconnecté de ChatGPT.",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "Connectez-vous sur cet ordinateur. Votre mot de passe va uniquement à OpenAI. Windows chiffre les identifiants enregistrés. Sous Linux et macOS, seul votre compte utilisateur peut accéder au fichier.",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "Amadeus envoie vos messages et le contexte utile à OpenAI pour obtenir des réponses. Si vous autorisez l’utilisation en arrière-plan, les réactions aux pièces jointes peuvent envoyer des images, des extraits de documents ou des images vidéo avant que vous cliquiez sur Envoyer.",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "Autoriser les salutations, l’apprentissage et les réactions aux pièces jointes ? Les réactions peuvent envoyer des images, des extraits de documents ou des images vidéo à OpenAI avant que vous cliquiez sur Envoyer.",
+  "If you reject, you can still chat and memory learning stays paused.": "Si vous refusez, vous pouvez continuer à discuter et l’apprentissage reste en pause.",
   "0 keeps all recordings.": "0 conserve tous les enregistrements.",
   "Always on with Early or Right away.": "Toujours activé avec « Tôt » ou « Tout de suite ».",
   "Automatic finds the matching file for pictures and video.": "Le mode automatique trouve le fichier adapté aux images et aux vidéos.",

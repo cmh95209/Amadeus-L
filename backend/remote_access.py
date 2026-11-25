@@ -2,8 +2,8 @@
 
 Her page reaches the user's other devices through Tailscale: `tailscale serve`
 passes https://<pc>.<tailnet>.ts.net to the page (:5173) and
-https://<pc>.<tailnet>.ts.net:8443 to the backend (:5050). Only devices signed
-in to the same Tailscale account can open it.
+https://<pc>.<tailnet>.ts.net:8443 to the backend (:5050). Tailscale access
+rules govern who can connect. ChatGPT requires the serving device's owner.
 
 access() READS that set-up for the settings page (the address to open on a
 phone, and whether Funnel is on - Funnel would put her on the public internet,
@@ -11,6 +11,7 @@ and the app has no login). turn_on() / turn_off() run the two fixed `serve`
 commands below and nothing else; the settings page asks first, and only a
 request from this PC itself may ask for them (api.py).
 """
+from email.header import decode_header, make_header
 import json
 import os
 import re
@@ -23,6 +24,8 @@ PAGE_PORT = 5173
 BACKEND_PORT = 5050
 _CACHE_SECONDS = 30
 _cache = {"at": 0.0, "value": None}
+_owner_cache = {"at": 0.0, "value": None}
+_OWNER_CACHE_SECONDS = 5
 _lock = threading.Lock()
 
 # The two commands, exactly as the settings page and the guide show them.
@@ -66,9 +69,43 @@ def _run(*args) -> dict | None:
     try:
         done = subprocess.run([exe, *args], capture_output=True, timeout=4,
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return json.loads(done.stdout.decode("utf-8", "replace") or "null")
+        if done.returncode != 0:
+            return None
+        value = json.loads(done.stdout.decode("utf-8", "replace") or "null")
+        return value if isinstance(value, dict) else None
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
+
+
+def _read_owner():
+    status = _run("status", "--json", "--peers=false") or {}
+    if status.get("BackendState") != "Running":
+        return None
+    node = status.get("Self") or {}
+    if not isinstance(node, dict) or node.get("Tags"):
+        return None
+    users = status.get("User") or {}
+    profile = users.get(str(node.get("UserID"))) if isinstance(users, dict) else None
+    login = profile.get("LoginName") if isinstance(profile, dict) else None
+    host = node.get("DNSName")
+    if isinstance(login, str) and login and isinstance(host, str) and host:
+        return (login, host.rstrip(".").lower())
+    return None
+
+
+def is_owner(login: str, host: str) -> bool:
+    """Compare Serve's caller with the local Tailscale daemon's device owner."""
+    if not login or not host:
+        return False
+    try:
+        login = str(make_header(decode_header(login)))
+    except (LookupError, ValueError):
+        return False
+    with _lock:
+        now = time.monotonic()
+        if not _owner_cache["at"] or now - _owner_cache["at"] >= _OWNER_CACHE_SECONDS:
+            _owner_cache.update(at=now, value=_read_owner())
+        return _owner_cache["value"] == (login, host)
 
 
 def _proxies(serve: dict | None, host: str) -> dict:

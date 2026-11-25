@@ -1118,7 +1118,7 @@ export function startChatGPTSignIn(signal: AbortSignal): Promise<{ url: string }
   return postChatGPT("signin", undefined, signal);
 }
 
-export function signOutChatGPT(): Promise<ChatGPTStatus> {
+export function signOutChatGPT(): Promise<ChatGPTStatus & { revocation_confirmed: boolean }> {
   return postChatGPT("signout");
 }
 

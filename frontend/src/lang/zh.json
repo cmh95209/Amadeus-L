@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "已在这台电脑上退出登录。OpenAI 尚未确认会话已结束。请在 ChatGPT 设置中断开 Amadeus 的连接。",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "包括问候、发送前对附件作出反应，以及从对话中学习。",
+  "Signed out of ChatGPT.": "已退出 ChatGPT。",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "请在这台电脑上登录。你的密码只会发送给 OpenAI。Windows 会加密保存的登录凭据。在 Linux 和 macOS 上，只有你的用户账户可以访问该文件。",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "Amadeus 会将消息及相关聊天内容发送给 OpenAI 以获得回复。如果你允许后台使用，附件反应可能会在你点击发送前上传图片、文档片段或视频画面。",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "允许问候、记忆学习和附件反应吗？附件反应可能会在你点击发送前将图片、文档片段或视频画面发送给 OpenAI。",
+  "If you reject, you can still chat and memory learning stays paused.": "如果拒绝，你仍然可以聊天，记忆学习会继续暂停。",
   "0 keeps all recordings.": "0 表示保留所有语音录音。",
   "Always on with Early or Right away.": "选择“提前”或“立即”时始终开启。",
   "Automatic finds the matching file for pictures and video.": "自动查找适用于图片和视频的文件。",

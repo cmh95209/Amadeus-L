@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "A sessão foi terminada neste computador. A OpenAI não confirmou o fim da sessão. Desligue o Amadeus nas definições do ChatGPT.",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "Inclui saudações, reações a anexos antes do envio e aprendizagem a partir das conversas.",
+  "Signed out of ChatGPT.": "Sessão do ChatGPT terminada.",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "Inicie sessão neste computador. A sua palavra-passe só é enviada à OpenAI. O Windows encripta as credenciais guardadas. No Linux e no macOS, só a sua conta de utilizador pode aceder ao ficheiro.",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "O Amadeus envia mensagens e o contexto relevante da conversa à OpenAI para obter respostas. Se permitir a utilização em segundo plano, as reações a anexos podem enviar imagens, excertos de documentos ou fotogramas de vídeo antes de carregar em Enviar.",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "Permitir saudações, aprendizagem e reações a anexos? As reações podem enviar imagens, excertos de documentos ou fotogramas de vídeo à OpenAI antes de carregar em Enviar.",
+  "If you reject, you can still chat and memory learning stays paused.": "Se recusar, pode continuar a conversar e a aprendizagem fica em pausa.",
   "0 keeps all recordings.": "0 mantém todas as gravações.",
   "Always on with Early or Right away.": "Sempre ativo com «Cedo» ou «Na hora».",
   "Automatic finds the matching file for pictures and video.": "A opção automática encontra o ficheiro adequado para imagens e vídeos.",

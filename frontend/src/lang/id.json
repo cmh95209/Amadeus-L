@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "Anda sudah keluar di komputer ini. OpenAI belum mengonfirmasi bahwa sesi berakhir. Putuskan sambungan Amadeus di Pengaturan ChatGPT.",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "Mencakup sapaan, reaksi terhadap lampiran sebelum dikirim, dan pembelajaran dari percakapan.",
+  "Signed out of ChatGPT.": "Anda sudah keluar dari ChatGPT.",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "Masuk di komputer ini. Kata sandi Anda hanya dikirim ke OpenAI. Windows mengenkripsi kredensial masuk yang tersimpan. Di Linux dan macOS, hanya akun pengguna Anda yang dapat mengakses berkasnya.",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "Amadeus mengirim pesan dan konteks percakapan yang relevan ke OpenAI untuk mendapatkan balasan. Jika Anda mengizinkan penggunaan di latar belakang, reaksi terhadap lampiran dapat mengirim gambar, cuplikan dokumen, atau bingkai video sebelum Anda menekan Kirim.",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "Izinkan sapaan, pembelajaran, dan reaksi terhadap lampiran? Reaksi dapat mengirim gambar, cuplikan dokumen, atau bingkai video ke OpenAI sebelum Anda menekan Kirim.",
+  "If you reject, you can still chat and memory learning stays paused.": "Jika Anda menolak, Anda masih bisa mengobrol dan pembelajaran tetap dijeda.",
   "0 keeps all recordings.": "0 menyimpan semua rekaman.",
   "Always on with Early or Right away.": "Selalu aktif dengan “Awal” atau “Langsung”.",
   "Automatic finds the matching file for pictures and video.": "Opsi Otomatis mencari berkas yang sesuai untuk gambar dan video.",

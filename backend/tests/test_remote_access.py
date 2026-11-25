@@ -46,6 +46,26 @@ class DescribeTests(unittest.TestCase):
         self.assertNotIn("funnel", remote_access.describe(self.STATUS, closed))
 
 
+class OwnerTests(unittest.TestCase):
+    def test_uses_the_local_devices_owner(self):
+        status = {"BackendState": "Running", "Self": {"DNSName": "pc.net.ts.net.", "UserID": 42},
+                  "User": {"42": {"LoginName": "owner@example.invalid"},
+                           "84": {"LoginName": "guest@example.invalid"}}}
+        with patch.object(remote_access, "_run", return_value=status) as run, \
+             patch.object(remote_access, "_owner_cache", {"at": 0, "value": None}):
+            self.assertTrue(remote_access.is_owner("owner@example.invalid", "pc.net.ts.net"))
+            self.assertFalse(remote_access.is_owner("guest@example.invalid", "pc.net.ts.net"))
+            self.assertFalse(remote_access.is_owner("owner@example.invalid", "other.net.ts.net"))
+        run.assert_called_once_with("status", "--json", "--peers=false")
+
+    def test_tagged_devices_and_unavailable_status_have_no_owner(self):
+        tagged = {"BackendState": "Running", "Self": {"DNSName": "pc.net.ts.net.", "UserID": 42,
+                                                       "Tags": ["tag:server"]}}
+        with patch.object(remote_access, "_run", side_effect=[tagged, None]):
+            self.assertIsNone(remote_access._read_owner())
+            self.assertIsNone(remote_access._read_owner())
+
+
 class CommandTests(unittest.TestCase):
     def setUp(self):
         self.ran = []

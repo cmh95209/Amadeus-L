@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "Se cerró la sesión en este equipo. OpenAI no confirmó el cierre. Desconecta Amadeus en la configuración de ChatGPT.",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "Incluye saludos, reacciones a los archivos adjuntos antes de enviarlos y aprendizaje a partir de los chats.",
+  "Signed out of ChatGPT.": "Sesión de ChatGPT cerrada.",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "Inicia sesión en este equipo. Tu contraseña solo se envía a OpenAI. Windows cifra las credenciales guardadas. En Linux y macOS, solo tu cuenta de usuario tiene acceso al archivo.",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "Amadeus envía mensajes y el contexto relevante del chat a OpenAI para obtener respuestas. Si permites el uso en segundo plano, las reacciones a archivos adjuntos pueden enviar imágenes, extractos de documentos o fotogramas de vídeos antes de que pulses Enviar.",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "¿Permitir saludos, aprendizaje y reacciones a los archivos adjuntos? Las reacciones pueden enviar imágenes, extractos de documentos o fotogramas de vídeos a OpenAI antes de que pulses Enviar.",
+  "If you reject, you can still chat and memory learning stays paused.": "Si rechazas, podrás seguir chateando y el aprendizaje seguirá en pausa.",
   "0 keeps all recordings.": "0 conserva todas las grabaciones.",
   "Always on with Early or Right away.": "Siempre activo con «Pronto» o «Al instante».",
   "Automatic finds the matching file for pictures and video.": "La opción automática encuentra el archivo adecuado para imágenes y vídeos.",

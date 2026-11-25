@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "Вы вышли из аккаунта на этом компьютере. OpenAI не подтвердила завершение сеанса. Отключите Amadeus в настройках ChatGPT.",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "Включает приветствия, реакции на вложения до отправки и обучение на основе бесед.",
+  "Signed out of ChatGPT.": "Вы вышли из аккаунта ChatGPT.",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "Войдите на этом компьютере. Ваш пароль передаётся только OpenAI. Windows шифрует сохранённые данные для входа. В Linux и macOS файл доступен только вашей учётной записи.",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "Для получения ответов Amadeus отправляет сообщения и относящийся к ним контекст беседы в OpenAI. Если разрешить работу в фоновом режиме, при реакции на вложения изображения, выдержки из документов или кадры из видео могут быть отправлены ещё до нажатия «Отправить».",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "Разрешить приветствия, обучение и реакции на вложения? Для реакции изображения, выдержки из документов или кадры из видео могут быть отправлены в OpenAI ещё до нажатия «Отправить».",
+  "If you reject, you can still chat and memory learning stays paused.": "Если отказаться, можно продолжать общаться. Обучение останется на паузе.",
   "0 keeps all recordings.": "0 сохраняет все записи.",
   "Always on with Early or Right away.": "Всегда включено в режимах «Рано» и «Сразу».",
   "Automatic finds the matching file for pictures and video.": "Автоматический режим находит подходящий файл для изображений и видео.",

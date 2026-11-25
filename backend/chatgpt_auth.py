@@ -50,6 +50,7 @@ PENDING_TTL = 10 * 60
 REFRESH_MARGIN = 10 * 60
 HTTP_TIMEOUT = 15.0
 REVOKE_TIMEOUT = 3.0
+REVOKE_RETRY_DELAY = 0.25
 RANDOM_BYTES = 32
 
 # Protocol constants.
@@ -559,17 +560,25 @@ def sign_out() -> bool:
         if not session:
             _reset_session_preferences()
             return True
-        _end_session(record)
         try:
-            endpoint = _discovered_endpoint("revocation_endpoint", REVOKE_TIMEOUT)
-            _request(requests.post, endpoint, timeout=REVOKE_TIMEOUT, data={
+            data = {
                 "token": session["refresh_token"], "token_type_hint": "refresh_token",
                 "client_id": record["client_id"],
-            })
-        except ChatGPTSignInError as exc:
-            _log.warning("Could not confirm ChatGPT revocation. %s", exc)
-            return False
-        return True
+            }
+            endpoint = None
+            for attempt in range(2):
+                try:
+                    if endpoint is None:
+                        endpoint = _discovered_endpoint("revocation_endpoint", REVOKE_TIMEOUT)
+                    _request(requests.post, endpoint, timeout=REVOKE_TIMEOUT, data=data)
+                    return True
+                except ChatGPTSignInError as exc:
+                    if attempt or (isinstance(exc, _OpenAIError) and exc.status_code < 500):
+                        _log.warning("Could not confirm ChatGPT revocation. %s", exc)
+                        return False
+                    time.sleep(REVOKE_RETRY_DELAY)
+        finally:
+            _end_session(record)
 
 
 def _status(session) -> dict:

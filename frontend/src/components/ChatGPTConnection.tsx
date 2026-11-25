@@ -22,7 +22,7 @@ import { InfoIcon, SettingsLabel } from "./InfoIcon";
 const onThisPC = isLocalPage ||
   (typeof window !== "undefined" && window.location.hostname.toLowerCase().endsWith(".localhost"));
 
-const PRIVACY_KEY = "amadeus.chatgptPrivacySeen";
+const PRIVACY_KEY = "amadeus.chatgptPrivacySeen.v2";
 const POLL_MS = 2_000;
 const SIGN_IN_TIMEOUT_MS = 10 * 60_000;
 
@@ -157,6 +157,7 @@ function ChatGPTModelSelect({ connection, disabled }: {
 export default function ChatGPTConnection({ active, disabled, connection, onSelect, onConnectionChanged, children }: Props) {
   const { status, setStatus, busy, error, setError, report, update } = connection;
   const [privacy, setPrivacy] = useState(false);
+  const [signedOutNotice, setSignedOutNotice] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const welcomeTitleRef = useRef<HTMLHeadingElement>(null);
@@ -178,6 +179,7 @@ export default function ChatGPTConnection({ active, disabled, connection, onSele
 
   async function openSignIn() {
     setPrivacy(false);
+    setSignedOutNotice(false);
     setError("");
     if (!onThisPC) {
       setWaiting(true);
@@ -269,6 +271,17 @@ export default function ChatGPTConnection({ active, disabled, connection, onSele
     });
   }
 
+  function signOut() {
+    void update(async () => {
+      const { revocation_confirmed, ...info } = await signOutChatGPT();
+      setSignedOutNotice(revocation_confirmed);
+      if (!revocation_confirmed) {
+        setError("Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.");
+      }
+      return info;
+    }, onConnectionChanged);
+  }
+
   return (
     <>
       <div className="brain-choice-buttons">
@@ -293,7 +306,7 @@ export default function ChatGPTConnection({ active, disabled, connection, onSele
               <div className="chatgpt-account">
                 <span>{`Signed in as ${status.email}`}</span>
                 <button type="button" className="ghost-button" disabled={busy || disabled}
-                  onClick={() => void update(signOutChatGPT, onConnectionChanged)}>Sign out</button>
+                  onClick={signOut}>Sign out</button>
               </div>
               <label>
                 Model
@@ -315,7 +328,7 @@ export default function ChatGPTConnection({ active, disabled, connection, onSele
               <div className="chatgpt-background">
                 <div className="settings-label-line">
                   <span className="settings-label">{status.background_use_allowed ? "All features are on." : "Some features are off."}</span>
-                  <InfoIcon>Includes greetings, picture reactions, and memory learning.</InfoIcon>
+                  <InfoIcon>Includes greetings, reactions to attachments before you send them, and memory learning.</InfoIcon>
                 </div>
                 <button type="button" className={status.background_use_allowed ? "chatgpt-turn-off" : "ghost-button"}
                   disabled={busy || disabled}
@@ -329,6 +342,7 @@ export default function ChatGPTConnection({ active, disabled, connection, onSele
         </div>
       )}
       {error && <p className="settings-error" role="alert">{error}</p>}
+      {signedOutNotice && !signedIn && <p className="settings-help" role="status">Signed out of ChatGPT.</p>}
       {hasDialog && (
         <dialog className="modal native-modal" ref={dialogRef} aria-labelledby="chatgpt-dialog-title"
           onKeyDown={(event) => event.stopPropagation()}
@@ -343,17 +357,14 @@ export default function ChatGPTConnection({ active, disabled, connection, onSele
           </div>
           {privacy ? (
             <>
-              <p>Amadeus signs in with your ChatGPT account so her replies use your ChatGPT plan.</p>
-              <p>Your password goes only to OpenAI.</p>
-              <p>Your chats, her memory and the sign-in stay on this PC. The sign-in is locked to your Windows account.</p>
-              <p>Your messages to her are sent to OpenAI to get her replies, under OpenAI's terms. Nothing is sent to the Amadeus developers.</p>
-              <p>You can sign out at any time.</p>
+              <p>Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.</p>
+              <p>Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.</p>
             </>
           ) : (
             <>
               <p>Eligible usage in this app uses your ChatGPT plan.</p>
-              <p>Amadeus needs your consent to allow all features to work on ChatGPT, such as picture reactions, greetings and memory learning.</p>
-              <p>If you reject, she can only chat and text normally, with some features missing.</p>
+              <p>Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.</p>
+              <p>If you reject, you can still chat and memory learning stays paused.</p>
             </>
           )}
           {!privacy && error && <p className="settings-error" role="alert">{error}</p>}

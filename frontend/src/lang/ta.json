@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "இந்தக் கணினியில் வெளியேறிவிட்டீர்கள். அமர்வு முடிந்ததை OpenAI உறுதிப்படுத்தவில்லை. ChatGPT அமைப்புகளில் Amadeus இணைப்பைத் துண்டிக்கவும்.",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "வாழ்த்துகள், இணைப்புகளை அனுப்புமுன் அவற்றுக்கான எதிர்வினைகள் மற்றும் உரையாடல்களிலிருந்து கற்றல் ஆகியவை இதில் அடங்கும்.",
+  "Signed out of ChatGPT.": "ChatGPT இலிருந்து வெளியேறிவிட்டீர்கள்.",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "இந்தக் கணினியில் உள்நுழையவும். உங்கள் கடவுச்சொல் OpenAIக்கு மட்டுமே செல்கிறது. சேமித்த உள்நுழைவுத் தகவலை Windows மறைகுறியாக்குகிறது. Linux மற்றும் macOS இல் உங்கள் பயனர் கணக்கிற்கு மட்டுமே அந்தக் கோப்பை அணுக முடியும்.",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "பதில்களைப் பெற Amadeus செய்திகளையும் தொடர்புடைய உரையாடல் சூழலையும் OpenAIக்கு அனுப்புகிறது. பின்னணி பயன்பாட்டை அனுமதித்தால், அனுப்பு என்பதை அழுத்துமுன் இணைப்புகளுக்கு எதிர்வினை அளிக்க படங்கள், ஆவணப் பகுதிகள் அல்லது காணொளிச் சட்டகங்கள் அனுப்பப்படலாம்.",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "வாழ்த்துகள், உரையாடல்களிலிருந்து கற்றல் மற்றும் இணைப்புகளுக்கான எதிர்வினைகளை அனுமதிக்கவா? அனுப்பு என்பதை அழுத்துமுன் படங்கள், ஆவணப் பகுதிகள் அல்லது காணொளிச் சட்டகங்கள் OpenAIக்கு அனுப்பப்படலாம்.",
+  "If you reject, you can still chat and memory learning stays paused.": "மறுத்தாலும் தொடர்ந்து அரட்டையடிக்கலாம். உரையாடல்களிலிருந்து கற்றல் இடைநிறுத்தப்பட்டிருக்கும்.",
   "0 keeps all recordings.": "0 எனில் அனைத்துப் பதிவுகளும் சேமிக்கப்படும்.",
   "Always on with Early or Right away.": "«முன்னதாக» அல்லது «உடனே» தேர்வில் எப்போதும் இயக்கத்தில் இருக்கும்.",
   "Automatic finds the matching file for pictures and video.": "தானியங்கி விருப்பம் படங்களுக்கும் காணொளிக்கும் பொருத்தமான கோப்பைக் கண்டறியும்.",

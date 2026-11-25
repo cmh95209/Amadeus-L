@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "Você saiu neste computador. A OpenAI não confirmou o encerramento da sessão. Desconecte o Amadeus nas configurações do ChatGPT.",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "Inclui saudações, reações a anexos antes do envio e aprendizado com as conversas.",
+  "Signed out of ChatGPT.": "Você saiu do ChatGPT.",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "Entre neste computador. Sua senha vai apenas para a OpenAI. O Windows criptografa as credenciais salvas. No Linux e no macOS, só sua conta de usuário pode acessar o arquivo.",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "O Amadeus envia mensagens e o contexto relevante da conversa à OpenAI para obter respostas. Se você permitir o uso em segundo plano, as reações a anexos poderão enviar imagens, trechos de documentos ou quadros de vídeo antes de você clicar em Enviar.",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "Permitir saudações, aprendizado e reações a anexos? As reações podem enviar imagens, trechos de documentos ou quadros de vídeo à OpenAI antes de você clicar em Enviar.",
+  "If you reject, you can still chat and memory learning stays paused.": "Se você recusar, ainda poderá conversar e o aprendizado continuará pausado.",
   "0 keeps all recordings.": "0 mantém todas as gravações.",
   "Always on with Early or Right away.": "Sempre ativo com “Cedo” ou “Na hora”.",
   "Automatic finds the matching file for pictures and video.": "A opção automática encontra o arquivo adequado para imagens e vídeos.",

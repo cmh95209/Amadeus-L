@@ -1,5 +1,12 @@
 {
  "page": {
+  "Signed out on this PC. OpenAI didn’t confirm the session ended. Disconnect Amadeus in ChatGPT Settings.": "Đã đăng xuất trên máy tính này. OpenAI chưa xác nhận phiên đã kết thúc. Hãy ngắt kết nối Amadeus trong phần Cài đặt ChatGPT.",
+  "Includes greetings, reactions to attachments before you send them, and memory learning.": "Bao gồm lời chào, phản ứng với tệp đính kèm trước khi gửi và học từ cuộc trò chuyện.",
+  "Signed out of ChatGPT.": "Đã đăng xuất khỏi ChatGPT.",
+  "Sign in on this computer. Your password goes only to OpenAI. Windows encrypts saved sign-in credentials. On Linux and macOS, only your user account has file access.": "Hãy đăng nhập trên máy tính này. Mật khẩu của bạn chỉ được gửi tới OpenAI. Windows mã hóa thông tin đăng nhập đã lưu. Trên Linux và macOS, chỉ tài khoản người dùng của bạn mới có thể truy cập tệp.",
+  "Amadeus sends messages and relevant chat context to OpenAI for replies. If you allow background use, attachment reactions can send images, document excerpts or video frames before you press Send.": "Amadeus gửi tin nhắn và ngữ cảnh trò chuyện có liên quan đến OpenAI để nhận câu trả lời. Nếu bạn cho phép hoạt động nền, phản ứng với tệp đính kèm có thể gửi hình ảnh, đoạn trích tài liệu hoặc khung hình video trước khi bạn bấm Gửi.",
+  "Allow greetings, memory learning and attachment reactions? Reactions can send images, document excerpts or video frames to OpenAI before you press Send.": "Cho phép chào hỏi, học từ cuộc trò chuyện và phản ứng với tệp đính kèm? Phản ứng có thể gửi hình ảnh, đoạn trích tài liệu hoặc khung hình video đến OpenAI trước khi bạn bấm Gửi.",
+  "If you reject, you can still chat and memory learning stays paused.": "Nếu từ chối, bạn vẫn có thể trò chuyện và tính năng học sẽ tiếp tục tạm dừng.",
   "0 keeps all recordings.": "0 giữ mọi bản ghi âm.",
   "Always on with Early or Right away.": "Luôn bật ở chế độ “Sớm” hoặc “Ngay lập tức”.",
   "Automatic finds the matching file for pictures and video.": "Chế độ tự động tìm tệp phù hợp cho ảnh và video.",

@@ -1,9 +1,15 @@
-# Latest features (v3.2)
+# Latest features (v3.3)
 
 Everything Amadeus can do today.
 
 
-The current version (v3.2) includes:
+The current version (v3.3) includes:
+
+- **Sign in with ChatGPT** (v3.3): use your ChatGPT Plus or Pro plan for her replies,
+  from Settings or the installer (option C)
+- **Emoji, GIF and sticker picker** (v3.3): next to Send; she sees what you send
+- **Better recall in long chats** (v3.3): her history is sized to the model's real
+  context, and she can look back at earlier messages of the current chat
 
 - **Your language** (v3.2): the page, Settings and her translation line in one of 17
   languages (English, Chinese, Japanese, Korean, Spanish, French, German, Brazilian

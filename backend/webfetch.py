@@ -95,7 +95,7 @@ RETRY_ACCEPTED_BODY_CHARS = 200
 RETRY_MIN_TEXT_CHARS = 200
 RETRY_MIN_SECONDS = 1.0
 RETRY_GATEWAY_ERRORS = False
-APP_VERSION = "3.2.1"  # matches the release version in the install scripts and README
+APP_VERSION = "3.3.0"  # matches the release version in the install scripts and README
 PRIMARY = ("primary", f"AmadeusReader/{APP_VERSION} (+https://github.com/cmh95209/Amadeus-L)")
 FALLBACK = (
     "fallback",

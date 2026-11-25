@@ -304,9 +304,9 @@ class DownloadTests(unittest.TestCase):
              patch.object(webfetch._OPENER, "open", side_effect=open_page):
             page = webfetch.fetch_page(PUBLIC_URL, timeout=5, retry_identity=True)
             self.assertEqual(len(seen), 2)
-            self.assertEqual(seen[0], ("AmadeusReader/3.2.1 (+https://github.com/cmh95209/Amadeus-L)", 5))
+            self.assertEqual(seen[0], ("AmadeusReader/3.3.0 (+https://github.com/cmh95209/Amadeus-L)", 5))
             self.assertIn("Chrome/", seen[1][0])
-            self.assertTrue(seen[1][0].endswith(" AmadeusReader/3.2.1"))
+            self.assertTrue(seen[1][0].endswith(" AmadeusReader/3.3.0"))
             self.assertEqual(seen[1][1], 3)
             self.assertEqual((page["status_code"], page["identity"], page["status"]),
                              (202, "fallback", "empty"))

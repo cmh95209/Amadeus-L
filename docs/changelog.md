@@ -8,6 +8,7 @@
 - **NEW: Emoji, GIF and sticker picker.** Open it next to Send and drag its handle to make it taller or shorter. You can still type while it’s open.
 - **Fixes:** Settings are easier to scan, with shorter help and display and voice languages grouped together. Choose Google or device emoji under Preferences and see how they look before sending.
 - **Fixes:** More reliable recall within a long chat and improved reading of web pages.
+- **Fixes:** Her built-in model on the 16K setting no longer fails with "request too large". Cloud models keep more of a long chat (default now 64K). A picture stays with her for follow-up questions, also when sent without words. She understands short looping GIFs.
 
 ## v3.2.1 — Brazilian and European Portuguese — November 2026
 

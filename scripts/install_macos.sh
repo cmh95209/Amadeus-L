@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  AMADEUS - ONE-SHOT INSTALLER FOR MAC OS   v3.2.1  (resumable / safe to re-run)
+#  AMADEUS - ONE-SHOT INSTALLER FOR MAC OS   v3.3.0  (resumable / safe to re-run)
 #  This is the official macOS installer, served from the fork to new Mac
 #  installs. (Any local test copy made outside the repo during development
 #  is never committed.)
@@ -49,10 +49,12 @@
 #     (plus what the downloaded archive contains) instead of a generic line.
 #   - Step 1 now prints the actual chip name (the first version had a typo).
 #
+#  WHAT'S NEW IN v3.3.0 (November 2026):
+#   - Option C sets up Amadeus for in-app sign-in with a ChatGPT Plus or Pro plan.
+#
 #  WHAT'S NEW IN v3.2.1 (November 2026):
 #   - The language question lists Brazilian Portuguese and European
 #     Portuguese as two choices (17 languages).
-#   - Option C sets up Amadeus for in-app sign-in with a ChatGPT Plus or Pro plan.
 #
 #  WHAT'S NEW IN v3.2.0 (November 2026):
 #   - The first question asks which language Amadeus shows (her page and
@@ -262,7 +264,7 @@ REPO_URL="https://github.com/cmh95209/Amadeus-L"
 # on the old feature branch and are moved to main in step 3 (when they hold
 # nothing of the user's own).
 BRANCH="main"
-INSTALLER_VERSION="v3.2.1"
+INSTALLER_VERSION="v3.3.0"
 LEGACY_BRANCH="feature/character-memory-spike"
 GPT_REPO_URL="https://github.com/RVC-Boss/GPT-SoVITS.git"
 # Her voice's model files: only the 8 she loads (about 1.2 GB), pinned to

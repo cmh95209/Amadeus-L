@@ -23,13 +23,14 @@ import video
 from picker_store import PickerError
 
 
-def image(fmt="PNG", frames=1):
+def image(fmt="PNG", frames=1, *, colors=("red", "blue"), delays=(400, 600)):
     out = io.BytesIO()
-    first = Image.new("RGB", (32, 24), "red")
+    first = Image.new("RGB", (32, 24), colors[0])
     opts = {}
     if frames > 1:
-        opts = {"save_all": True, "append_images": [Image.new("RGB", first.size, "blue")],
-                "duration": [400, 600], "loop": 0}
+        opts = {"save_all": True, "append_images": [Image.new("RGB", first.size, color)
+                                                    for color in colors[1:]],
+                "duration": list(delays), "loop": 0}
     first.save(out, fmt, **opts)
     return out.getvalue()
 
@@ -167,12 +168,12 @@ class StickerPickerTests(unittest.TestCase):
         static = attachments.save_upload("still.gif", image("GIF"), 1)
         self.assertEqual(static["kind"], "picture")
         self.assertNotIn("gif", attachments.card(static))
-        raw = image("GIF", frames=2)
+        raw = image("GIF", frames=2, delays=(100, 100))
         with patch.object(video, "tools_ready", return_value=True), patch.object(video, "start") as start:
             row = attachments.save_upload("moving sheep.gif", raw, 1)
         start.assert_called_once_with(row)
         self.assertEqual((row["kind"], row["name"]), ("video", "moving sheep"))
-        self.assertIn('GIF "moving sheep"', memory.attachment_label(row))
+        self.assertIn('GIF "moving sheep", 0.2 s loop', memory.attachment_label(row))
         self.assertTrue(attachments.card(row)["gif"])
         with (patch.object(video, "encode", return_value="libx264") as encode,
               patch.object(video, "ffmpeg") as ffmpeg,
@@ -183,16 +184,73 @@ class StickerPickerTests(unittest.TestCase):
             video.prepare_job(row["id"])
         self.assertTrue(encode.call_args.kwargs["animation"])
         speech.assert_not_called()
-        cloud.assert_called_once()
-        self.assertEqual(ffmpeg.call_count, len(video.frame_times(1, animation=True)))
+        cloud.assert_not_called()
+        ffmpeg.assert_not_called()
         meta = video.load_meta(row)
         self.assertEqual((meta["state"], meta["speech"]["state"]), (video.READY, "none"))
+        self.assertEqual(meta["distinct_frames"], 2)
+        self.assertEqual([f["t"] for f in meta["frames"]], [0, 0.1])
         self.assertEqual(Path(attachments.file_path(row["id"], original=True)).read_bytes(), raw)
-        self.assertEqual(len(video.frame_times(10, animation=True)), video.FRAME_COUNT)
-        with patch.object(video, "_file_url", return_value="data:image/jpeg;base64,test"):
-            parts = video.video_block(row, video.FRAMES)
-        stamps = {part["text"] for part in parts if part.get("text", "").startswith("[0:00.")}
-        self.assertEqual(len(stamps), len(meta["frames"]))
+        # A previously stored cloud copy also goes out as stills.
+        cloud_file = "1/test-cloud.mp4"
+        Path(memory.attachments_dir(), cloud_file).write_bytes(b"cloud copy")
+        meta["cloud"] = {"file": cloud_file}
+        video._save_meta(row, meta)
+        self.assertEqual(video.mode_for(row, True, True, True), video.FRAMES)
+        parts = video.video_block(row, video.WATCH)
+        self.assertEqual([p["type"] for p in parts].count("image_url"), 2)
+        self.assertEqual([p["type"] for p in parts].count("video_url"), 0)
+        self.assertIn("looping animation with 2 distinct frames that repeats every 0.2 s",
+                      " ".join(p.get("text", "") for p in parts))
+        self.assertIn(video.ANIMATION_STILLS_NOTE, [p.get("text") for p in parts])
+        llm = Mock()
+        llm.invoke.return_value.content = "A red square turns blue"
+        video.write_caption(llm, row)
+        caption_parts = llm.invoke.call_args.args[0][0]["content"]
+        self.assertIn("2 distinct frames that repeats every 0.2 s", caption_parts[0]["text"])
+        self.assertEqual([p["type"] for p in caption_parts].count("image_url"), 2)
+
+    def test_near_duplicate_loop_refreshes_to_one_still(self):
+        raw = image("GIF", frames=3, colors=("red", (253, 0, 0), "red"),
+                    delays=(100, 100, 100))
+        with patch.object(video, "tools_ready", return_value=True), patch.object(video, "start"):
+            row = attachments.save_upload("steady.gif", raw, 1)
+        meta = video.load_meta(row)
+        self.assertEqual(meta["distinct_frames"], 1)
+        meta.pop("distinct_frames")
+        meta.pop("frame_samples")
+        meta.update(state=video.READY, frames=[{"t": 0.15, "file": "1/old.jpg"}])
+        video._save_meta(row, meta)
+        with patch.object(video, "start") as start:
+            video.resume()
+            start.assert_called_once()
+        video.prepare_job(row["id"])
+        parts = video.video_block(row, video.FRAMES)
+        self.assertEqual([p["type"] for p in parts].count("image_url"), 1)
+        self.assertIn("repeats every 0.3 s and doesn't change", " ".join(
+            p.get("text", "") for p in parts))
+        self.assertEqual(video.load_meta(row)["frames"][0]["t"], 0)
+
+    def test_many_distinct_frames_use_time_sampling_with_sixteen_stills(self):
+        count = 20
+        colors = [(i * 12, 0, 0) for i in range(count)]
+        for delay, duration in ((250, 5), (50, 1)):
+            with self.subTest(duration=duration), patch.object(video, "ffmpeg"):
+                meta = video.inspect_animation(image("GIF", frames=count, colors=colors,
+                                                     delays=(delay,) * count))
+                self.assertEqual(meta["distinct_frames"], count)
+                meta["watch"] = "1/1_watch.mp4"
+                row = {"id": 1, "thumb": "1/1_thumb.jpg"}
+                frames = video._write_frames(row, meta, lambda _pct: None)
+                self.assertEqual(len(frames), video.FRAME_COUNT)
+                if duration == 5:
+                    self.assertEqual([f["t"] for f in frames], video.frame_times(5, animation=True))
+                    meta["cloud"] = {"file": "1/1_cloud.mp4"}
+                    cloud_path = Path(memory.attachments_dir(), meta["cloud"]["file"])
+                    cloud_path.parent.mkdir(exist_ok=True, parents=True)
+                    cloud_path.write_bytes(b"cloud copy")
+                    with patch.object(video, "load_meta", return_value=meta):
+                        self.assertEqual(video.mode_for(row, True, True, True), video.WATCH)
 
     @unittest.skipUnless(features.check("webp"), "Pillow WebP is unavailable")
     def test_animated_webp_preserves_frame_delays_in_conversion(self):

@@ -1682,16 +1682,20 @@ def referenced(text: str, conv: int, newest_id: int, now=None) -> list:
     return sorted(picked[:SHOW_AGAIN_MAX], key=lambda r: r["id"])
 
 
-def _picture_plan(conv: int, newest_text=None):
+def _picture_plan(conv: int, newest_text=None, *, revisit_desk=False):
     """(own, desk, again, newest_id): the newest message's pictures, the desk
-    ones, and earlier ones it asks about (not already in the first two)."""
+    ones, and earlier ones it asks to see on the current turn."""
     base = store.prompt_attachments(conv)
     newest_id, db_text = _newest_user(conv)
     own = [a for a in base if a["message_id"] == newest_id]
-    desk = [a for a in base if a["message_id"] != newest_id]
-    seen = {a["id"] for a in base}
-    again = [r for r in referenced(db_text if newest_text is None else newest_text, conv, newest_id)
-             if r["id"] not in seen]
+    text = db_text if newest_text is None else newest_text
+    picks = referenced(text, conv, newest_id)
+    desk_ids = {a["id"] for a in base if a["message_id"] != newest_id}
+    revisit = (revisit_desk and any(a["id"] in desk_ids for a in picks)
+               and meaning.asks_to_look_again(text) is True)
+    again = [a for a in picks if revisit or a["id"] not in desk_ids]
+    again_ids = {a["id"] for a in again}
+    desk = [a for a in base if a["message_id"] != newest_id and a["id"] not in again_ids]
     return own, desk, again, newest_id
 
 
@@ -2192,11 +2196,10 @@ def with_pictures(messages, conversation_id=None, see=None):
     """Her prompt with the real pictures added: the newest message's own
     pictures and earlier ones it clearly asks about go into that message;
     desk pictures stay in the message they came with (the history stays
-    byte-for-byte the same, so her built-in model can reuse it), or - when
-    that message has left the window - go into the first user message of the
-    window, marked "on your desk". When any picture is shown the newest
-    message also gets the picture rule. A message that talks as if it shows
-    a picture but has none gets an honest note instead. A model that can't
+    byte-for-byte the same, so her built-in model can reuse it), or go into a
+    surviving user message when their original turn is missing. When any
+    picture is shown the newest message also gets the picture rule. A message
+    that talks as if it shows a picture but has none gets an honest note. A model that can't
     see pictures gets text labels + a note. Nothing to add -> the very same
     list."""
     _turn.reads = ""
@@ -2208,7 +2211,7 @@ def with_pictures(messages, conversation_id=None, see=None):
     text_of_newest = _text(messages[last].get("content"))
     try:
         conv = store.load_active_conversation() if conversation_id is None else int(conversation_id)
-        own, desk, again, newest = _picture_plan(conv, text_of_newest)
+        own, desk, again, newest = _picture_plan(conv, text_of_newest, revisit_desk=True)
         d_own, d_desk, d_again = _document_plan(conv, newest, text_of_newest)
         v_own, v_desk, v_again = _video_plan(conv, newest, text_of_newest)
     except Exception as exc:
@@ -2363,46 +2366,53 @@ def with_pictures(messages, conversation_id=None, see=None):
     # byte-for-byte the same and her built-in model reuses it (F4, 2026-10-26).
     placed = {}   # message index -> [(row, label)]
     words = {}    # message index -> its words without those labels
+    planned = bool(out and out[0].get("_window_owner"))
+    user_homes = {mid: i for i in users[:-1] for mid in out[i].get("_window_ids", ())}
     for a in own:
         placed.setdefault(last, []).append((a, _sent_label(a)))
     for a in desk:
         label = _sent_label(a)
-        home = next((i for i in users[:-1] if label in _text(out[i].get("content"))), None)
+        home = user_homes.get(a["message_id"])
+        if home is None:
+            home = next((i for i in users[:-1] if not out[i].get("_window_ids")
+                         and label in _text(out[i].get("content"))), None)
         if home is not None:
             placed.setdefault(home, []).append((a, label))
             words[home] = words.get(home, _text(out[home].get("content"))).replace(" " + label, "") \
                 .replace(label, "")
         else:
-            placed.setdefault(users[0], []).append(
+            target = last if planned else users[0]
+            print(f"[Amadeus] Desk picture #{a['id']} moved to another user message (home missing).")
+            placed.setdefault(target, []).append(
                 (a, store.picture_label(a, source_tags.DESK_NOTE)))
     for a in again:
         # Not "shown again": a picture brought back by a wrong guess made her
         # say "why did you send this?" (2026-11-06).
         placed.setdefault(last, []).append((a, store.picture_label(a, a.get("_note", PICTURE_AGAIN_NOTE))))
     shown = 0
-    planned = bool(out and out[0].get("_window_owner"))
     desk_ids = {row["id"] for row in desk}
     for i, entries in placed.items():
         text = words.get(i, _text(out[i].get("content"))).strip()
         parts = [{"type": "text", "text": text}] if text else []
-        required = list(parts)
         desk_parts = []
         for row, label in entries:
-            url = _data_url(row)
+            try:
+                url = _data_url(row)
+            except OSError:
+                url = None
             if not url:
+                print(f"[Amadeus] Picture #{row['id']} could not be read for the prompt.")
                 continue
             rendered = ([{"type": "text", "text": label}] if label else []) + [
                 {"type": "image_url", "image_url": {"url": url}}]
             parts.extend(rendered)
-            (desk_parts if row["id"] in desk_ids else required).extend(rendered)
+            if row["id"] in desk_ids:
+                desk_parts.extend(rendered)
             shown += 1
         if any(p["type"] == "image_url" for p in parts):
             out[i]["content"] = parts
-        if planned and desk_parts:
-            out[i]["_window_required_content"] = (required if any(
-                p["type"] == "image_url" for p in required) else text)
-            if "_window_exchange" in out[i]:
-                out[i]["_window_desk_parts"] = desk_parts
+        if planned and desk_parts and "_window_exchange" in out[i]:
+            out[i]["_window_desk_parts"] = desk_parts
     if not shown:
         if docs or x_text:
             add_turn_text(doc_text)

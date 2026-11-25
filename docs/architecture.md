@@ -226,7 +226,7 @@ Restarting or re-enabling search resumes indexing. Reply queries and memory
 learning have priority at embedder admission. Query and indexing backoffs
 are independent, and a reply waits for semantic evidence at most 250 ms.
 
-The custom cap defaults to 32,768 tokens for cloud models and 16,384 for local
+The custom cap defaults to 65,536 tokens for cloud models and 16,384 for local
 servers. A legacy custom value of 40,000
 selects automatic mode, and other custom values are carried over as total
 caps. Built-in tier defaults and legacy history overrides gain the old

@@ -48,10 +48,11 @@ import memory as store
 import transcribe
 
 try:
-    from PIL import Image, ImageStat
+    from PIL import Image, ImageChops, ImageStat
 except ImportError:  # pragma: no cover - the card picture is then the first frame
     Image = None
 
+# ---- TUNABLES ----
 VIDEO_EXT = (".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".3gp", ".3g2")
 VIDEO_FORMAT_NAMES = "MP4, MOV, WebM, M4V, MKV, AVI or 3GP"
 MAX_VIDEO_BYTES = 500 * 1024 * 1024    # V6a
@@ -73,6 +74,10 @@ ANIMATION_PIXEL_BUDGET = 80_000_000
 ANIMATION_DECODE_SIDE = 1440
 ANIMATION_DEFAULT_DELAY_MS = 100
 ANIMATION_MIN_DELAY_MS = 20            # FFmpeg's GIF demuxer default
+ANIMATION_WATCH_MIN_SECONDS = 2
+ANIMATION_MATCH_SIDE = 48
+ANIMATION_MATCH_DELTA = 6              # maximum channel difference in the reduced frame
+ANIMATION_STILL_QUALITY = 85
 UPLOADS = "_uploads"
 
 READY, PREPARING, FAILED = "ready", "preparing", "failed"
@@ -287,11 +292,11 @@ def probe(path: str) -> dict:
             "codec": str(video.get("codec_name") or "")}
 
 
-def frame_times(duration: float, animation=False) -> list:
+def frame_times(duration: float, animation=False, *, minimum=1) -> list:
     """When the frames are taken: the middle of FRAME_COUNT equal stretches
     (short clips use per-second sampling, with denser sampling for loops)."""
     rate = ANIMATION_STILLS_PER_SECOND if animation else 1
-    n = min(FRAME_COUNT, max(1, math.ceil(duration * rate)))
+    n = min(FRAME_COUNT, max(minimum, math.ceil(duration * rate)))
     return [round((i + 0.5) * duration / n, 2) for i in range(n)]
 
 
@@ -300,6 +305,14 @@ def length_text(seconds) -> str:
     h, rest = divmod(total, 3600)
     m, s = divmod(rest, 60)
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def animation_seconds(meta):
+    return float(meta.get("duration") or 0)
+
+
+def _short_animation(meta):
+    return meta.get("gif") and animation_seconds(meta) < ANIMATION_WATCH_MIN_SECONDS
 
 
 def estimate_tokens(duration: float, has_audio: bool, speech=None, animation=False) -> int:
@@ -495,6 +508,14 @@ def _animation_delay(value):
     return value if value >= ANIMATION_MIN_DELAY_MS else ANIMATION_DEFAULT_DELAY_MS
 
 
+def _animation_rgb(img, side):
+    frame = img.convert("RGBA")
+    frame.thumbnail((side, side), Image.Resampling.LANCZOS)
+    rgb = Image.new("RGB", frame.size, "white")
+    rgb.paste(frame, mask=frame.getchannel("A"))
+    return rgb
+
+
 def inspect_animation(data):
     """Return video properties for a multi-frame GIF/WebP. Static files stay pictures."""
     if len(data) > attachments.MAX_FILE_BYTES:
@@ -511,6 +532,7 @@ def inspect_animation(data):
             except EOFError:
                 return None
             duration = 0
+            distinct, exact, samples = [], set(), []
             for index in range(ANIMATION_MAX_FRAMES + 1):
                 try:
                     img.seek(index)
@@ -519,11 +541,22 @@ def inspect_animation(data):
                 if index >= ANIMATION_MAX_FRAMES or width * height * (index + 1) > ANIMATION_PIXEL_BUDGET:
                     raise attachments.AttachmentError("too_many_pixels")
                 img.load()
+                frame = _animation_rgb(img, ANIMATION_MATCH_SIDE)
+                pixels = frame.tobytes()
+                if pixels not in exact:
+                    exact.add(pixels)
+                    if not any(all(high <= ANIMATION_MATCH_DELTA for _, high in
+                                   ImageChops.difference(frame, prior).getextrema())
+                               for prior in distinct):
+                        distinct.append(frame)
+                        samples.append({"index": index, "t": duration / 1000})
                 duration += _animation_delay(img.info.get("duration") or 0)
             if duration > MAX_SECONDS * 1000:
                 raise attachments.AttachmentError("video_too_long")
             return {"duration": duration / 1000, "width": width, "height": height,
-                    "has_audio": False, "codec": img.format.lower(), "gif": True}
+                    "has_audio": False, "codec": img.format.lower(), "gif": True,
+                    "distinct_frames": len(distinct),
+                    "frame_samples": samples if len(distinct) <= FRAME_COUNT else []}
     except attachments.AttachmentError:
         raise
     except (OSError, ValueError, SyntaxError, EOFError, Image.DecompressionBombError):
@@ -544,7 +577,7 @@ def save_animation(name, data, conv, found, *, media_type, title=None, pack_name
                   "height, tokens, created_at, media_type, media_pack) "
                   "VALUES (?, 'video', ?, 'video/mp4', ?, ?, ?, ?, ?, ?, ?)",
                   (conv, title, len(data), found["width"], found["height"],
-                   estimate_tokens(found["duration"], False, animation=True),
+                   _tokens(found),
                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"), media_type, pack_name))
         new_id = c.lastrowid
         base = f"{conv}/{new_id}_"
@@ -580,12 +613,9 @@ def _webp_to_apng(source, dest):
     with Image.open(source) as img:
         for index in range(img.n_frames):
             img.seek(index)
-            frame = img.convert("RGBA")
+            frame = _animation_rgb(img, ANIMATION_DECODE_SIDE)
             delays.append(_animation_delay(img.info.get("duration") or 0))
-            frame.thumbnail((ANIMATION_DECODE_SIDE, ANIMATION_DECODE_SIDE), Image.Resampling.LANCZOS)
-            rgb = Image.new("RGB", frame.size, "white")
-            rgb.paste(frame, mask=frame.getchannel("A"))
-            frames.append(rgb)
+            frames.append(frame)
     frames[0].save(dest, format="PNG", save_all=True, append_images=frames[1:],
                    duration=delays, loop=1)
 
@@ -685,6 +715,37 @@ def _wants_cloud_copy() -> bool:
 STEPS = {"watch": (0, 55), "frames": (55, 70), "cloud": (70, 80), "speech": (80, 100)}
 
 
+def _write_frames(row, meta, on_pct, prefix="f"):
+    base = _rel_base(row)
+    samples = meta.get("frame_samples") or []
+    if samples:
+        with Image.open(_full(row["original"])) as img:
+            frames = []
+            for i, sample in enumerate(samples, start=1):
+                img.seek(sample["index"])
+                rel = f"{base}{prefix}{i:02d}.jpg"
+                _animation_rgb(img, FRAME_SIDE).save(
+                    _full(rel), "JPEG", quality=ANIMATION_STILL_QUALITY)
+                frames.append({"t": sample["t"], "file": rel})
+                on_pct(100 * i // len(samples))
+            return frames
+    duration = float(meta["duration"])
+    minimum = FRAME_COUNT if meta.get("distinct_frames", 0) > FRAME_COUNT else 1
+    times = frame_times(duration, bool(meta.get("gif")), minimum=minimum)
+    frames = []
+    for i, t in enumerate(times, start=1):
+        rel = f"{base}{prefix}{i:02d}.jpg"
+        ffmpeg(["-ss", f"{t:.2f}", "-i", _full(meta["watch"]), "-map", "0:v:0", "-frames:v", "1",
+                "-vf", _scale_long(FRAME_SIDE), "-q:v", "4", _full(rel)], timeout=60)
+        frames.append({"t": t, "file": rel})
+        on_pct(100 * i // len(times))
+    return frames
+
+
+def _needs_animation_samples(row, meta):
+    return meta.get("gif") and "distinct_frames" not in meta and bool(row.get("original"))
+
+
 def prepare_job(attachment_id) -> None:
     """Make everything a video needs (steps already done are kept, so a
     restart goes on where the last run stopped)."""
@@ -693,7 +754,9 @@ def prepare_job(attachment_id) -> None:
     except Gone:
         return
     meta = load_meta(row)
-    if meta.get("state") != PREPARING:
+    ready = meta.get("state") == READY
+    refresh = _needs_animation_samples(row, meta)
+    if meta.get("state") != PREPARING and not (ready and refresh):
         return
     base = _rel_base(row)
     duration, has_audio = float(meta["duration"]), bool(meta.get("has_audio"))
@@ -709,6 +772,22 @@ def prepare_job(attachment_id) -> None:
             _save_meta(row, meta)
 
     try:
+        if refresh:
+            with open(_full(row["original"]), "rb") as original:
+                found = inspect_animation(original.read(attachments.MAX_FILE_BYTES + 1))
+            if found:
+                meta.update(found)
+                # Publish the replacement as one set, keeping old ready stills
+                # readable while these are being written.
+                if ready:
+                    meta["frames"] = _write_frames(row, meta, lambda pct: None, prefix="af")
+                    _live(attachment_id)
+                    _update_row(attachment_id, tokens=_tokens(meta))
+                    _save_meta(row, meta)
+                    return
+                meta["frames"] = []
+        if ready:
+            return
         if not meta.get("watch"):
             step("watch")
             src = _full(row["original"]) if row.get("original") else None
@@ -734,17 +813,11 @@ def prepare_job(attachment_id) -> None:
         watch = _full(meta["watch"])
         if not meta.get("frames"):
             step("frames")
-            times = frame_times(duration, bool(meta.get("gif")))
-            frames = []
-            for i, t in enumerate(times, start=1):
-                rel = f"{base}f{i:02d}.jpg"
-                ffmpeg(["-ss", f"{t:.2f}", "-i", watch, "-map", "0:v:0", "-frames:v", "1",
-                        "-vf", _scale_long(FRAME_SIDE), "-q:v", "4", _full(rel)], timeout=60)
-                frames.append({"t": t, "file": rel})
-                step("frames", 100 * i // len(times))
-            meta["frames"] = frames
+            meta["frames"] = _write_frames(row, meta, lambda pct: step("frames", pct))
+            if meta.get("gif"):
+                _update_row(attachment_id, tokens=_tokens(meta))
             _save_meta(row, meta)
-        if meta.get("cloud") is None and _wants_cloud_copy():
+        if meta.get("cloud") is None and not _short_animation(meta) and _wants_cloud_copy():
             step("cloud")
             meta["cloud"] = make_cloud_copy(row, meta, on_pct=lambda p: step("cloud", p))
             _save_meta(row, meta)
@@ -762,13 +835,19 @@ def prepare_job(attachment_id) -> None:
     except Gone:
         return
     except attachments.AttachmentError as exc:
-        _fail(attachment_id, str(exc))
+        if ready:
+            print(f"[Amadeus] Video #{attachment_id}: animation stills could not be refreshed.")
+        else:
+            _fail(attachment_id, str(exc))
     except Exception as exc:
         print(f"[Amadeus] Video #{attachment_id} could not be prepared:", repr(exc))
-        _fail(attachment_id, "This video could not be prepared (FFmpeg could not read it).")
+        if not ready:
+            _fail(attachment_id, "This video could not be prepared (FFmpeg could not read it).")
 
 
 def _tokens(meta) -> int:
+    if meta.get("gif") and meta.get("distinct_frames"):
+        return min(FRAME_COUNT, meta["distinct_frames"]) * FRAME_TOKENS
     speech = meta.get("speech") or {}
     text = speech_text(speech.get("segments") or []) if speech.get("state") == "done" else None
     return estimate_tokens(float(meta["duration"]), bool(meta.get("has_audio")), text,
@@ -907,7 +986,8 @@ def resume() -> int:
     count = 0
     for row in store.attachments_where("kind = 'video'", ()):
         meta = load_meta(row)
-        if meta.get("state") == PREPARING:
+        if meta.get("state") == PREPARING or (meta.get("state") == READY
+                                              and _needs_animation_samples(row, meta)):
             start(row)
             count += 1
         elif meta.get("state") == READY and (meta.get("speech") or {}).get("state") in ("writing",
@@ -969,8 +1049,9 @@ def mode_for(row, fresh: bool, see, watch: bool) -> str:
     can't see pictures."""
     if see is False:
         return SPEECH_ONLY
-    cloud = (load_meta(row).get("cloud") or {}).get("file")
-    if fresh and watch and cloud and os.path.isfile(_full(cloud)):
+    meta = load_meta(row)
+    cloud = (meta.get("cloud") or {}).get("file")
+    if fresh and watch and not _short_animation(meta) and cloud and os.path.isfile(_full(cloud)):
         return WATCH
     return FRAMES
 
@@ -991,11 +1072,28 @@ def speech_part(meta) -> str:
     return "(What is said in it could not be written down.)"
 
 
+def _animation_note(meta):
+    seconds = f"{animation_seconds(meta):g} s"
+    count = meta.get("distinct_frames")
+    if count == 1:
+        return ("This is a looping animation with 1 distinct frame. "
+                f"It repeats every {seconds} and doesn't change.")
+    frames = f" with {count} distinct frames" if count else ""
+    return f"This is a looping animation{frames} that repeats every {seconds}."
+
+
+ANIMATION_STILLS_NOTE = "The stills are frames from the loop in order, marked with their times."
+
+
 def video_block(row, mode: str, note: str = "") -> list:
     """The video as her reply call gets it (message parts)."""
     meta = load_meta(row)
     number = row.get("chat_no") or row["id"]
     parts = [{"type": "text", "text": store.video_label({**row, "caption": None}, note)}]
+    if meta.get("gif"):
+        parts.append({"type": "text", "text": _animation_note(meta)})
+        if mode == WATCH and _short_animation(meta):
+            mode = FRAMES
     if mode == WATCH:
         url = _file_url(meta["cloud"]["file"], "video/mp4", keep=False)
         if url:
@@ -1008,8 +1106,9 @@ def video_block(row, mode: str, note: str = "") -> list:
                 stills += [{"type": "text", "text": f"[{stamp(f['t'], meta.get('gif'))}]"},
                            RenderedVideoFrame(url)]
         if stills:
-            parts.append({"type": "text", "text": "STILLS FROM IT, each marked with its time "
-                                                  "from the start of the video:"})
+            stills_note = (ANIMATION_STILLS_NOTE if meta.get("gif") else
+                           "STILLS FROM IT, each marked with its time from the start of the video:")
+            parts.append({"type": "text", "text": stills_note})
             parts += stills
     else:
         parts.append({"type": "text", "text": "(Your current model can't see pictures: you "
@@ -1056,8 +1155,12 @@ def write_caption(llm, row, see=True) -> str:
     meta = load_meta(row)
     media = store.picker_media_label(row)
     prompt = CAPTION_PROMPT + (f"\nAttachment label: {media}" if media else "")
-    parts = [{"type": "text", "text": prompt}]
     frames = (meta.get("frames") or []) if see is not False else []
+    if meta.get("gif"):
+        prompt += "\n" + _animation_note(meta)
+        if frames:
+            prompt += " " + ANIMATION_STILLS_NOTE
+    parts = [{"type": "text", "text": prompt}]
     count = min(CAPTION_STILLS, len(frames))
     divisor = count if meta.get("gif") else CAPTION_STILLS
     picked = [frames[(2 * i + 1) * len(frames) // (2 * divisor)] for i in range(count)]

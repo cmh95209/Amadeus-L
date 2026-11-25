@@ -373,7 +373,7 @@ class RetryHistoryTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(target, name, value))
             stack.enter_context(mock.patch.object(chat, "_reply_llm", side_effect=[first, final]))
             stack.enter_context(mock.patch.object(store._SummarySnapshot, "_schedule"))
-            store.append_message("user", "Old memory " + "x" * 4200, conversation_id=1)
+            store.append_message("user", "Old memory " + "x" * 16000, conversation_id=1)
             store.append_message("assistant", "Old answer", conversation_id=1)
             user = store.append_message("user", "Recent memory", conversation_id=1)
             aside = store.append_message("assistant", "待って。", conversation_id=1, aside=True)

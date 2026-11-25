@@ -3349,7 +3349,9 @@ def video_label(row, note: str = "") -> str:
     turn = f" (turn {int(row['turn'])})" if row.get("turn") else ""
     name = re.sub(r"[\[\]\"\s]+", " ", str(row.get("name") or "video")).strip()[:120]
     text = re.sub(r"[\[\]\s]+", " ", str(row.get("caption") or "")).strip()[:_LABEL_CAPTION_MAX]
-    length = video.length_text(video.load_meta(row).get("duration"))
+    meta = video.load_meta(row)
+    length = (f"{video.animation_seconds(meta):g} s loop" if meta.get("gif")
+              else video.length_text(meta.get("duration")))
     description = picker_media_label(row) or f'"{name}"'
     head = f"[Video {int(number)}{turn} from the user{note}: {description}, {length}"
     return head + (f": {text}]" if text else "]")

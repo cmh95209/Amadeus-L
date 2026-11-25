@@ -656,7 +656,7 @@ class PromptRecallTests(_Base):
         birthday = store.append_message("user", "My birthday celebration is on November 14.",
                                         conversation_id=self.current)
         store.append_message("assistant", "I'll remember that.", conversation_id=self.current)
-        store.append_message("user", "A new subject. " * 500, conversation_id=self.current)
+        store.append_message("user", "A new subject. " * 1000, conversation_id=self.current)
         query = "When is my birthday celebration?"
         current = store.append_message("user", query, conversation_id=self.current)
         draft = store.build_prompt_messages(conversation_id=self.current, answering_id=current)

@@ -28,9 +28,12 @@ import api
 import attachments
 import source_tags
 import chat
+import chatgpt_llm
 import cm_bridge
+import context_window as window
 import memory as store
 from chat import AmadeusPack, AmadeusReply
+from llm import _ThoughtFreeChatOpenAI, _right_now_note_as_user
 
 
 def picture(fmt="JPEG", size=(64, 48), color=(200, 30, 30), mode="RGB", **save):
@@ -463,6 +466,92 @@ class WithPicturesTests(TempStore):
         parts = out[1]["content"]
         self.assertEqual(parts[0]["text"], "[Picture 1 (turn 1) from the user]")
         self.assertEqual(len(images(out[1])), 1)
+
+    def test_picture_only_message_reaches_both_wire_formats_on_followups(self):
+        a = self.upload()
+        attachments.claim([a["id"]], self.user_msg(""), 1)
+        client = _ThoughtFreeChatOpenAI(api_key="test", model="test",
+                                       base_url="https://example.test/v1")
+        empty = {"role": "system", "content": ""}
+
+        def check_request(with_optional):
+            draft = store.build_prompt_messages(conversation_id=1)
+            changing = [{"role": "system", "content": "Extra context. " * 600,
+                         "_window_optional": True}] if with_optional else []
+            messages = chat._ordered_prompt(empty, empty, changing, draft, right_now=True,
+                                            conversation_id=1)
+            attached = attachments.with_pictures(messages, 1, see=True)
+            self.assertTrue(attachments.has_pictures(attached))
+            final = window.plan_history(attached, draft, 3500).messages
+            payload = client._get_request_payload(client._convert_input(final).to_messages())
+            compatible = client._get_request_payload(_right_now_note_as_user(
+                client._convert_input(final).to_messages()))
+            body = chatgpt_llm._response_body(payload, "test", "low")
+            expected = attachments._data_url(a)
+            self.assertEqual([p["image_url"]["url"] for m in compatible["messages"]
+                              for p in images(m)], [expected])
+            self.assertEqual([p["image_url"] for m in body["input"]
+                              if isinstance(m.get("content"), list) for p in m["content"]
+                              if p["type"] == "input_image"], [expected])
+
+        with patch.object(store, "load_default_personality_messages", return_value=[empty]), \
+                patch.object(chat.cross_tab, "catch_up_block", return_value=None), \
+                patch.object(chat.ja_voice, "build_voice_rules", return_value=empty), \
+                patch.object(chat.ja_voice, "build_closeness_context", return_value=empty), \
+                patch.object(chat.stats, "load_stat", return_value=0), \
+                patch.object(chat.feelings, "feelings_line", return_value=""), \
+                patch.object(chat.concerns, "prompt_line", return_value=""), \
+                patch.object(attachments.meaning, "RECALL_ADD", False), \
+                patch.object(attachments, "_recalled_last", {}), \
+                patch("cross_files.pick", return_value=(None, None)):
+            check_request(False)
+            self.her_msg()
+            self.user_msg("look at the phone on her desk!")
+            check_request(True)
+            self.her_msg()
+            self.user_msg("look at the pic again!")
+            check_request(True)
+
+    def test_desk_picture_home_uses_message_id_and_falls_back_to_newest(self):
+        a = self.upload()
+        home = self.user_msg("")
+        attachments.claim([a["id"]], home, 1)
+        later = self.user_msg("later")
+        newest = self.user_msg("now")
+        draft = store.build_prompt_messages(conversation_id=1)
+        messages = prompt({"role": "user", "content": "", "_window_ids": (home,),
+                           "_window_exchange": home},
+                          {"role": "user", "content": "later", "_window_ids": (later,),
+                           "_window_exchange": later},
+                          {"role": "user", "content": "now", "_window_ids": (newest,)})
+        messages[0]["_window_owner"] = draft
+        with patch.object(attachments, "referenced", return_value=[]), \
+                patch.object(attachments, "_recalled_last", {}), \
+                patch("cross_files.pick", return_value=(None, None)):
+            with_home = attachments.with_pictures(messages, 1, see=True)
+            with patch("builtins.print") as log:
+                without_home = attachments.with_pictures([messages[0], *messages[2:]], 1, see=True)
+            log.assert_called_once()
+        self.assertEqual(len(images(with_home[1])), 1)
+        self.assertEqual(len(images(without_home[2])), 1)
+        self.assertEqual(images(without_home[1]), [])
+
+    def test_look_again_places_referenced_desk_picture_in_newest_turn_once(self):
+        a = self.upload()
+        attachments.claim([a["id"]], self.user_msg(""), 1)
+        self.her_msg()
+        self.user_msg("look at picture 1 again")
+        draft = store.build_prompt_messages(conversation_id=1)
+        messages = prompt(*draft)
+        messages[0]["_window_owner"] = draft
+        with patch.object(attachments.meaning, "other_media", return_value=False), \
+                patch.object(attachments.meaning, "asks_to_look_again", return_value=True), \
+                patch.object(attachments, "_recalled_last", {}):
+            attached = attachments.with_pictures(messages, 1, see=True)
+        final = window.plan_history(attached, draft, 4500).messages
+        self.assertEqual(images(final[1]), [])
+        self.assertEqual(len(images(final[-2])), 1)
+        self.assertIn(attachments.PICTURE_RULE, final[-1]["content"])
 
     def test_desk_picture_stays_in_its_message(self):
         a = self.upload()

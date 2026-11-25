@@ -1,11 +1,13 @@
 """Provider limits and per-call budgeting for conversational prompts."""
 
 import functools
+import hashlib
 import json
 import math
 import os
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from decimal import Decimal
 from urllib.parse import quote, urlsplit
@@ -17,7 +19,7 @@ import requests
 VERBATIM_SHARE = 0.85
 SUMMARY_SHARE = 0.15
 SUMMARY_MAX_TOKENS = 4096
-DEFAULT_TOTAL_CAP_CLOUD = 32768
+DEFAULT_TOTAL_CAP_CLOUD = 65536
 DEFAULT_TOTAL_CAP_LOCAL = 16384
 LOCAL_WINDOW_FALLBACK = 8192
 MIN_MARGIN = 256
@@ -25,6 +27,15 @@ MARGIN_SHARE = 0.05
 VERBATIM_HEADROOM = 0.10
 METADATA_TTL = 3600
 METADATA_TIMEOUT = (1, 2)
+TOKENIZE_TIMEOUT = 0.2
+TOKENIZE_BUDGET_SECONDS = 1.0
+TOKEN_COUNT_CACHE_SIZE = 1024
+# Budget one token per two ASCII characters, including punctuation (ordinary
+# English and Malay prose pack more per token). Allow two per non-ASCII code
+# point for split CJK characters, accents and Indic letters/combining marks.
+# These are estimates for typical prose, with input_ceiling's margin on top.
+ASCII_CHARS_PER_TOKEN = 2
+NON_ASCII_TOKENS_PER_CHAR = 2
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 SUMMARY_CHUNK_TOKENS = 2048
 MESSAGE_FRAMING = 12
@@ -263,10 +274,14 @@ def _catalog_metadata(model, wait):
                        completion_limit=completion or None)
 
 
+def _server_root(base_url):
+    return base_url.rstrip("/").removesuffix("/v1")
+
+
 def _local_metadata(base_url, model, wait):
     def fetch():
         # /props reports the per-request n_ctx, including when slots share KV.
-        response = requests.get(base_url.rstrip("/").removesuffix("/v1") + "/props",
+        response = requests.get(_server_root(base_url) + "/props",
                                 timeout=METADATA_TIMEOUT, allow_redirects=False)
         response.raise_for_status()
         settings = response.json().get("default_generation_settings") or {}
@@ -363,12 +378,63 @@ def warm_tokenizer(model):
 
 
 def byte_tokens(text):
-    """An upper estimate for byte-fallback tokenizers, including JA and ZH."""
+    """UTF-8 size for provider-independent byte limits."""
     return len(text.encode("utf-8", errors="replace"))
 
 
+def _estimate_text(text):
+    ascii_chars = len(text) if text.isascii() else sum(ch.isascii() for ch in text)
+    return (math.ceil(ascii_chars / ASCII_CHARS_PER_TOKEN)
+            + (len(text) - ascii_chars) * NON_ASCII_TOKENS_PER_CHAR)
+
+
+_token_counts = OrderedDict()
+_token_counts_lock = threading.Lock()
+
+
+class _LocalTokenizer:
+    """Exact llama-server counts, with bounded HTTP time for one prompt plan."""
+
+    def __init__(self, server, model):
+        self.url = server + "/tokenize"
+        self.model = model
+        self.deadline = time.monotonic() + TOKENIZE_BUDGET_SECONDS
+        self.failed = False
+
+    def count(self, text):
+        if not text:
+            return 0
+        key = self.url, self.model, hashlib.sha256(text.encode("utf-8", errors="replace")).digest()
+        with _token_counts_lock:
+            if key in _token_counts:
+                _token_counts.move_to_end(key)
+                return _token_counts[key]
+        remaining = self.deadline - time.monotonic()
+        if not self.failed and remaining > 0:
+            try:
+                response = requests.post(self.url, json={"content": text},
+                                         timeout=min(TOKENIZE_TIMEOUT, remaining),
+                                         allow_redirects=False)
+                response.raise_for_status()
+                tokens = response.json()["tokens"]
+                if not isinstance(tokens, list):
+                    raise ValueError("Expected a token list")
+            except (requests.RequestException, ValueError, KeyError, TypeError):
+                self.failed = True
+            else:
+                with _token_counts_lock:
+                    _token_counts[key] = len(tokens)
+                    _token_counts.move_to_end(key)
+                    if len(_token_counts) > TOKEN_COUNT_CACHE_SIZE:
+                        _token_counts.popitem(last=False)
+                return len(tokens)
+        return _estimate_text(text)
+
+
 def count_text(text, encoding=None):
-    return len(encoding.encode_ordinary(text)) if encoding is not None else byte_tokens(text)
+    if isinstance(encoding, _LocalTokenizer):
+        return encoding.count(text)
+    return len(encoding.encode_ordinary(text)) if encoding is not None else _estimate_text(text)
 
 
 def _part_cost(part, encoding):
@@ -377,7 +443,8 @@ def _part_cost(part, encoding):
     if part.get("type") == "image_url":
         frame = getattr(part, "is_video_frame", False)
         if frame:
-            return OPENAI_VIDEO_FRAME_TOKENS if encoding is not None else VIDEO_FRAME_TOKENS
+            return (OPENAI_VIDEO_FRAME_TOKENS if encoding is not None
+                    and not isinstance(encoding, _LocalTokenizer) else VIDEO_FRAME_TOKENS)
         return IMAGE_TOKENS
     if part.get("type") == "video_url":
         return _positive(getattr(part, "context_tokens", None)) or UNKNOWN_VIDEO_TOKENS
@@ -454,10 +521,8 @@ def provider_messages(messages):
 def _without_optional(message):
     if message.get("_window_optional"):
         return None
-    if "_window_required_content" in message:
-        reduced = {**message, "content": message["_window_required_content"]}
-        reduced.pop("_window_desk_parts", None)
-        return reduced
+    if "_window_required_content" in message and not message.get("_window_desk_parts"):
+        return {**message, "content": message["_window_required_content"]}
     bases = message.get("_window_bases")
     if bases and isinstance(message["content"], str) and message["content"].startswith(bases[0]):
         reduced = {**message, "content": bases[1] + message["content"][len(bases[0]):]}
@@ -473,7 +538,7 @@ def _shorten_results(messages, excess, encoding):
     if not results:
         return messages
     available = sum(count_text(m["content"], encoding) for m in results) - excess
-    notice_cost = byte_tokens(RESULT_TRUNCATED)
+    notice_cost = count_text(RESULT_TRUNCATED, encoding)
     per_result = available // len(results)
     if per_result < notice_cost:
         return messages
@@ -482,9 +547,16 @@ def _shorten_results(messages, excess, encoding):
         content = message.get("content")
         if (message.get("_window_result") and isinstance(content, str)
                 and count_text(content, encoding) > per_result):
-            prefix = content.encode("utf-8")[:per_result - notice_cost].decode(
-                "utf-8", errors="ignore")
-            message = {**message, "content": prefix.rstrip() + RESULT_TRUNCATED,
+            result = RESULT_TRUNCATED
+            low, high = 0, len(content)
+            while low < high:
+                cut = (low + high + 1) // 2
+                candidate = content[:cut].rstrip() + RESULT_TRUNCATED
+                if count_text(candidate, encoding) <= per_result:
+                    low, result = cut, candidate
+                else:
+                    high = cut - 1
+            message = {**message, "content": result,
                        "_window_result": False}
         shortened.append(message)
     return shortened
@@ -547,7 +619,7 @@ def plan_history(messages, owner, ceiling, *, schema=None, encoding=None, builti
                 has_desk_parts = True
     if has_desk_parts:
         # When a desk picture's home leaves the window, its parts move
-        # to the first surviving user message. Reserve its text framing.
+        # to the newest surviving user message. Reserve its text framing.
         fixed += MESSAGE_FRAMING
 
     if fixed > ceiling:
@@ -595,13 +667,18 @@ def plan_history(messages, owner, ceiling, *, schema=None, encoding=None, builti
     moved = [part for m in messages if (exchange := m.get("_window_exchange")) is not None
              and exchange not in kept for part in m.get("_window_desk_parts", ())]
     if moved:
-        first_user = next((m for m in wire if m["role"] == "user"), None)
-        if first_user is None:
+        newest_user = next((wire[i] for i in reversed(range(len(selected)))
+                            if selected[i]["role"] == "user" and selected[i].get("_window_ids")), None)
+        if newest_user is None:
+            newest_user = next((m for m in reversed(wire) if m["role"] == "user"), None)
+        print("[Amadeus] Desk pictures moved to the latest user turn after history trimming.")
+        if newest_user is None:
             wire.append({"role": "user", "content": moved})
         else:
-            content = first_user["content"]
-            parts = content if isinstance(content, list) else [{"type": "text", "text": content}]
-            first_user["content"] = parts + moved
+            content = newest_user["content"]
+            parts = content if isinstance(content, list) else (
+                [{"type": "text", "text": content}] if content else [])
+            newest_user["content"] = parts + moved
     if summary:
         wire[0]["content"] += "\n\n" + summary
     _add_recall(wire, selected, ids, ceiling, schema, encoding, builtin)
@@ -610,8 +687,22 @@ def plan_history(messages, owner, ceiling, *, schema=None, encoding=None, builti
 
 def encoding_for(client):
     base = str(getattr(client, "openai_api_base", None) or "")
-    if (urlsplit(base).hostname or "").lower() != "api.openai.com":
-        return None
     model = str(getattr(client, "model_name", "") or "")
-    warm_tokenizer(model)
-    return _encodings.get(model)
+    host = (urlsplit(base).hostname or "").lower()
+    if host == "api.openai.com":
+        warm_tokenizer(model)
+        return _encodings.get(model)
+    if not host:
+        return None
+    model = model.strip().lower()
+    if getattr(client, "_amadeus_builtin", False):
+        import builtin_server
+        # The built-in alias stays constant when Settings loads another GGUF.
+        state = builtin_server.status()
+        return _LocalTokenizer(_server_root(base), (model, state.get("file"), state.get("since")))
+    # Only configured llama-server instances get raw prompt text at /tokenize.
+    with _metadata_lock:
+        expiry, props, _ = _metadata.get(("local", base, model), (0, None, None))
+    if props and expiry > time.monotonic():
+        return _LocalTokenizer(_server_root(base), (model, expiry))
+    return None

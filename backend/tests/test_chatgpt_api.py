@@ -38,7 +38,7 @@ def env(monkeypatch, tmp_path):
                            data=tmp_path / "data", status=status)
 
 
-@pytest.mark.parametrize(("configured", "effective"), [(120000, 120000), (None, 32768)])
+@pytest.mark.parametrize(("configured", "effective"), [(120000, 120000), (None, 65536)])
 def test_context_budget_reports_active_cap_for_unknown_cloud_model(env, monkeypatch, configured, effective):
     window = env.api.context_window
     reply_client = SimpleNamespace(openai_api_base="https://aiplatform.googleapis.com/v1/openapi",
@@ -52,7 +52,7 @@ def test_context_budget_reports_active_cap_for_unknown_cloud_model(env, monkeypa
 
     result = env.client.get("/getContextBudget")
     assert result.status_code == 200
-    assert result.json == {"budget": configured, "default": 32768, "model_limit": effective,
+    assert result.json == {"budget": configured, "default": 65536, "model_limit": effective,
                            "model_input_limit": None, "estimated": True,
                            "uses_prompt_cap": True, "mode": "custom"}
 

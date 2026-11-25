@@ -71,9 +71,9 @@ class RollingSummaryTests(unittest.TestCase):
             return "Earlier detail."
 
         store.set_summary_merger(merge)
-        older = self._exchange("older fact " + "x" * 1600, "Older answer.")
+        older = self._exchange("older fact " + "x" * 3200, "Older answer.")
         birthday = self._exchange("My birthday is October 14.", "I will remember.")
-        recent = self._exchange("newer note " + "z" * 1250, "Newer answer.")
+        recent = self._exchange("newer note " + "z" * 2500, "Newer answer.")
         current = self._append("user", "What did I tell you?")
         low = self._plan(1520, current=current)
         self.assertEqual(low.verbatim_message_ids, (current,))
@@ -106,8 +106,8 @@ class RollingSummaryTests(unittest.TestCase):
         self.assertTrue(all(set(m) == {"role", "content"} for m in history.messages))
 
     def test_newer_cutoff_and_edits_invalidate_running_rebuild(self):
-        first = self._exchange("Birthday September " + "old " * 500, "First answer.")
-        second = self._exchange("Second fact " + "next " * 255, "Second answer.")
+        first = self._exchange("Birthday September " + "old " * 1000, "First answer.")
+        second = self._exchange("Second fact " + "next " * 510, "Second answer.")
         current = self._append("user", "Question.")
         started = threading.Event()
         inputs = []
@@ -123,7 +123,7 @@ class RollingSummaryTests(unittest.TestCase):
         initial = self._plan(1520, current=current)
         self.assertEqual(initial.verbatim_message_ids, (current,))
         self.assertTrue(started.wait(2))
-        store.update_message_content(first[0], "Corrected detail " + "new " * 500)
+        store.update_message_content(first[0], "Corrected detail " + "new " * 1000)
         newer = self._plan(1900, current=current)
         self.assertEqual(newer.verbatim_message_ids, (*second, current))
         self.release.set()

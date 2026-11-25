@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -21,10 +22,12 @@ class _NoSummary:
 
 
 class AccountingTests(unittest.TestCase):
-    def test_utf8_fallback_and_available_tokenizer(self):
-        for text in ("I remember your birthday.", "誕生日は十月十四日です。", "我的生日是十月十四日。"):
+    def test_conservative_fallback_and_available_tokenizer(self):
+        self.assertEqual(window.ASCII_CHARS_PER_TOKEN, 2)
+        self.assertEqual(window.NON_ASCII_TOKENS_PER_CHAR, 2)
+        for text, expected in (("birthday!", 5), ("誕生日", 6), ("生日 OK", 6),
+                               ("café", 4), ("नमस्ते", 12), ("தமிழ்", 10)):
             with self.subTest(text=text):
-                expected = len(text.encode("utf-8"))
                 self.assertEqual(window.count_text(text), expected)
                 self.assertEqual(window.message_cost({"content": text}),
                                  expected + window.MESSAGE_FRAMING)
@@ -47,7 +50,7 @@ class AccountingTests(unittest.TestCase):
         return window.plan_history(messages, owner, ceiling, schema=schema)
 
     def test_media_and_tool_growth_reduce_whole_exchange_suffix(self):
-        prior = [{"role": "user", "content": "A" * 2200, "_window_exchange": 2, "_window_ids": (1,)},
+        prior = [{"role": "user", "content": "A" * 5300, "_window_exchange": 2, "_window_ids": (1,)},
                  {"role": "assistant", "content": "Earlier reply", "_window_exchange": 2,
                   "_window_ids": (2,)}]
         current = {"role": "user", "content": "What did I say?", "_window_ids": (3,)}
@@ -137,10 +140,10 @@ class ProviderTests(unittest.TestCase):
             limits = window.resolve_limits("https://proxy.example/v1", "vendor/model", wait=True)
         self.assertEqual(limits, window.UNKNOWN_LIMITS)
         self.assertEqual(limits.total_or(120000), 120000)
-        self.assertEqual(limits.total_or(window.DEFAULT_TOTAL_CAP_CLOUD), 32768)
+        self.assertEqual(limits.total_or(window.DEFAULT_TOTAL_CAP_CLOUD), 65536)
         ceiling = window.input_ceiling(limits, 120000, 4000)
         self.assertEqual(ceiling, 110200)
-        self.assertEqual(window.input_ceiling(limits, window.DEFAULT_TOTAL_CAP_CLOUD, 4000), 27329)
+        self.assertEqual(window.input_ceiling(limits, window.DEFAULT_TOTAL_CAP_CLOUD, 4000), 58459)
         owner = window.HistoryDraft(1, [], None)
         messages = [{"role": "system", "content": "x" * 20000, "_window_owner": owner}]
         self.assertEqual(window.plan_history(messages, owner, ceiling).messages,
@@ -224,6 +227,61 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(window.input_ceiling(limits, 120000, 4000), 3936)
             get.assert_called_once_with("http://127.0.0.1:1234/props",
                                         timeout=window.METADATA_TIMEOUT, allow_redirects=False)
+
+
+class LocalTokenizerTests(unittest.TestCase):
+    def setUp(self):
+        counts = patch.object(window, "_token_counts", window.OrderedDict())
+        counts.start()
+        self.addCleanup(counts.stop)
+        self.client = SimpleNamespace(openai_api_base="http://127.0.0.1:8091/v1",
+                                      model_name="test", _amadeus_builtin=True)
+
+    def test_16k_builtin_window_fits_japanese_welcome_and_caches_counts(self):
+        fixed = "こんにちは" * 920
+        owner = window.HistoryDraft(1, [], None)
+        messages = [{"role": "system", "content": fixed, "_window_owner": owner}]
+        ceiling = window.input_ceiling(window.ModelLimits(16384), 16384, 4096)
+        self.assertGreater(window.byte_tokens(fixed), ceiling)
+        response = Mock()
+        response.json.return_value = {"tokens": [1] * 4600}
+        with patch.object(window.requests, "post", return_value=response) as post:
+            history = window.plan_history(messages, owner, ceiling,
+                                          encoding=window.encoding_for(self.client), builtin=True)
+            self.assertEqual(history.messages, [{"role": "system", "content": fixed}])
+            self.assertEqual(window.count_text(fixed, window.encoding_for(self.client)), 4600)
+        post.assert_called_once_with("http://127.0.0.1:8091/tokenize", json={"content": fixed},
+                                    timeout=window.TOKENIZE_TIMEOUT, allow_redirects=False)
+
+    def test_failure_falls_back_without_more_posts_for_this_plan(self):
+        for failure in (window.requests.Timeout(), window.requests.HTTPError(), ValueError()):
+            with self.subTest(failure=type(failure)), patch.object(
+                    window.requests, "post", side_effect=failure) as post:
+                encoding = window.encoding_for(self.client)
+                self.assertEqual(window.count_text("誕生日", encoding), 6)
+                self.assertEqual(window.count_text("hello", encoding), 3)
+                post.assert_called_once()
+
+    def test_only_verified_custom_server_gets_token_requests_and_media_cost_is_fixed(self):
+        client = SimpleNamespace(openai_api_base="http://127.0.0.1:3000/path/v1/",
+                                 model_name="Gemma")
+        response = Mock()
+        response.json.return_value = {"default_generation_settings": {"n_ctx": 16384}}
+        tokens = Mock()
+        tokens.json.return_value = {"tokens": [1, 2]}
+        with patch.object(window, "_metadata", {}), patch.object(
+                window.requests, "get", return_value=response), patch.object(
+                window.requests, "post", return_value=tokens) as post:
+            self.assertIsNone(window.encoding_for(client))
+            window._local_metadata(client.openai_api_base, "gemma", wait=True)
+            encoding = window.encoding_for(client)
+            frame = window.RenderedVideoFrame("data:image/jpeg;base64,AA")
+            message = {"content": [{"type": "text", "text": "frame"}, frame]}
+            self.assertEqual(window.message_cost(message, encoding),
+                             2 + 2 * window.MESSAGE_FRAMING + window.VIDEO_FRAME_TOKENS)
+            post.assert_called_once_with("http://127.0.0.1:3000/path/tokenize",
+                                         json={"content": "frame"}, timeout=window.TOKENIZE_TIMEOUT,
+                                         allow_redirects=False)
 
 
 class MigrationTests(unittest.TestCase):

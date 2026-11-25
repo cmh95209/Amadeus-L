@@ -152,7 +152,7 @@ memory data in an issue, log paste or test fixture.
 | `display_lang.py` | the "Your language" setting |
 | `start_gptsovits.py` | starts the voice engine with Windows audio fixes |
 | `restart_control.py` | restart from Settings and the parts' live status (via the launcher) |
-| `remote_access.py` | phone access through Tailscale (`docs/remote-access.md`) |
+| `remote_access.py` | phone access through Tailscale and ChatGPT's device-owner check (`docs/remote-access.md`) |
 | `defaults_refresh.py` | updates untouched old default files after an update |
 | `console_encoding.py` | forces a UTF-8 console |
 | `patches.py` | small compatibility patches applied at startup |
@@ -181,7 +181,7 @@ memory data in an issue, log paste or test fixture.
 
 | File | Owns |
 |---|---|
-| `memory_sidecar/cm_sidecar.py` | the service on :9870: `/health`, `/save`, `/context`, `/extract` (learning), `/embed` (Qwen3-Embedding-0.6B), `/memories` |
+| `memory_sidecar/cm_sidecar.py` | the service on :9870: `/health`, `/save`, `/context`, `/extract` (learning via the selected provider), `/embed` (Qwen3-Embedding-0.6B), `/memories` |
 | `memory_sidecar/transcript_embed_jobs.py` | the single background job slot for transcript embeddings |
 
 `lib/` is the vendored CharacterMemory engine (GPL-3.0, kept in its own
@@ -238,6 +238,10 @@ Root start files: `start_windows.bat`, `start_linux.sh`, `start_macos.command`
   path; `tests/test_cm_bridge.py` checks it).
 - **Memory is optional.** `cm_bridge` and `meaning.py` must degrade to "no memory"
   or "old rule" when the sidecar is down, slow or still loading, and never raise.
+- **ChatGPT memory learning queues while paused.** With ChatGPT selected, an
+  unavailable bridge, signed-out session or disabled permission keeps the batch
+  queued. Choosing the built-in or custom model explicitly resumes learning via
+  that provider.
 - **Prompt cache.** Anything that changes every turn belongs in the changing
   part, or it makes every prompt new for the provider.
 - **Label sync.** `llm.RIGHT_NOW_LABEL` must equal `chat._RIGHT_NOW_LABEL`

@@ -41,8 +41,8 @@ def check(response, status):
 @pytest.mark.parametrize("mode,signed_in,allowed,route", [
     ("chatgpt", True, True, "chatgpt"),
     ("custom", True, True, "app"),
-    ("chatgpt", False, True, "app"),
-    ("chatgpt", True, False, "app"),
+    ("chatgpt", False, True, "paused"),
+    ("chatgpt", True, False, "paused"),
 ])
 def test_route_checks_local_state_only(bridge, mode, signed_in, allowed, route):
     bridge.api.builtin_llm.save_mode(mode)

@@ -366,11 +366,6 @@ def load_builtin_config() -> dict | None:
 BUILTIN_ALIAS = "amadeus-builtin"
 
 
-def builtin_model_name(cfg: dict) -> str:
-    """The name the model is served under (--alias)."""
-    return BUILTIN_ALIAS
-
-
 def selected_model_file(cfg: dict) -> str:
     """The GGUF she loads: the one picked in Settings (while it exists),
     else the installer's, else the first chat model in the models folder
@@ -564,18 +559,6 @@ def apply_simulated_vram(cfg: dict, vram_gb: int) -> dict | None:
         "simulated": True,
     })
     return out
-
-
-def sidecar_builtin_env(cfg: dict) -> dict:
-    """Point the memory sidecar at the built-in server WITHOUT touching the
-    user's own settings files: it reads its server + model from files whose
-    paths these variables override."""
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    server_file = RUNTIME_DIR / "builtin_llm_server.txt"
-    model_file = RUNTIME_DIR / "builtin_llm_model.txt"
-    server_file.write_text(f"http://127.0.0.1:{cfg.get('port') or LLM_PORT}/v1", encoding="utf-8")
-    model_file.write_text(builtin_model_name(cfg), encoding="utf-8")
-    return {"CM_SERVER_FILE": str(server_file), "CM_MODEL_FILE": str(model_file)}
 
 
 def voice_env(cfg: dict | None) -> dict:
@@ -2327,7 +2310,7 @@ def run(no_browser: bool = False, simulate_vram_gb: int | None = None,
 
     def start_memory() -> subprocess.Popen:
         return start_process("cm-sidecar", [str(_cm_python()), str(CM_DIR / "cm_sidecar.py")],
-                             CM_DIR, cm_env)
+                             CM_DIR)
 
     def start_brain() -> subprocess.Popen:
         return start_process("backend", [sys.executable, "main.py"], BACKEND_DIR, backend_env)
@@ -2366,7 +2349,6 @@ def run(no_browser: bool = False, simulate_vram_gb: int | None = None,
     # ensure_cm_sidecar() only repairs a missing or unfinished install.
     cm = None
     cm_available = False
-    cm_env = sidecar_builtin_env(builtin) if builtin else None
     if not (_cm_python().exists() and _cm_marker().exists()) and \
             (CM_DIR / "cm_sidecar.py").exists():
         say("  Her memory needs a one-time setup first (a few minutes).")

@@ -407,7 +407,7 @@ class LauncherTests(unittest.TestCase):
             sys.path.insert(0, str(BACKEND))
         import builtin_llm
         cfg = _config(self.tmp)
-        self.assertEqual(self.launcher.builtin_model_name(cfg), builtin_llm.model_name(cfg))
+        self.assertEqual(self.launcher.BUILTIN_ALIAS, builtin_llm.model_name(cfg))
 
     def test_pretend_vram_uses_that_tiers_settings(self):
         cfg = _config(self.tmp, model="12B", tier="24-plus", context=49152,
@@ -424,14 +424,6 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(self.launcher.apply_simulated_vram(cfg, 6)["tier"], "6-7")
         self.assertIsNone(self.launcher.apply_simulated_vram(cfg, 5))
         self.assertIsNone(self.launcher.apply_simulated_vram(cfg, 0))
-
-    def test_sidecar_follows_builtin_without_touching_user_files(self):
-        env = self.launcher.sidecar_builtin_env(_config(self.tmp))
-        self.assertEqual(Path(env["CM_SERVER_FILE"]).read_text(encoding="utf-8"),
-                         "http://127.0.0.1:8091/v1")
-        self.assertEqual(Path(env["CM_MODEL_FILE"]).read_text(encoding="utf-8"),
-                         "amadeus-builtin")
-        self.assertTrue(env["CM_SERVER_FILE"].startswith(str(self.tmp / ".runtime")))
 
     def test_voice_on_processor_only_when_asked(self):
         self.assertEqual(self.launcher.voice_env(_config(self.tmp)), {"AMADEUS_VOICE_DEVICE": "cpu"})

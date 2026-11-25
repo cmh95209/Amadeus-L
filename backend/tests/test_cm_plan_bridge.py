@@ -37,7 +37,8 @@ def sidecar(monkeypatch, tmp_path):
     monkeypatch.delenv("CM_BRIDGE_SECRET_FILE", raising=False)
     root = Path(__file__).resolve().parents[2]
     path = root / "memory_sidecar" / "cm_sidecar.py"
-    names = {"BACKEND_URL", "BRIDGE_SECRET_FILE", "_NoBridgeRedirect", "_bridge_http", "PlanBridgeError",
+    names = {"BACKEND_URL", "BRIDGE_SECRET_FILE", "LLM_MODE_FILE", "_learning_mode", "_learning_provider",
+             "_NoBridgeRedirect", "_bridge_http", "PlanBridgeError",
              "_bridge_request", "_plan_route", "PlanBridgeLLM", "_extract_for_learning_job",
              "_extracting_chats", "health"}
     nodes = []
@@ -61,6 +62,7 @@ def sidecar(monkeypatch, tmp_path):
     secret_file = tmp_path / "memory_bridge.secret"
     assert scope["BRIDGE_SECRET_FILE"] == str(secret_file)
     secret_file.write_text("test-secret", encoding="ascii")
+    scope["_read_app_llm"] = Mock(return_value=("custom-server", "custom-model", "custom-key"))
     return scope
 
 
@@ -128,6 +130,7 @@ def test_plan_limit_is_not_retried(sidecar):
 
 @pytest.mark.parametrize("failed", [False, True])
 def test_plan_job_uses_bridge_once_and_skips_custom_client(sidecar, failed):
+    Path(sidecar["LLM_MODE_FILE"]).write_text('{"mode": "chatgpt"}', encoding="utf-8")
     http = sidecar["_bridge_http"].open
     http.side_effect = _limit_response() if failed else lambda *args, **kwargs: Reply({"text": "{}"})
     custom = Mock(side_effect=AssertionError("custom client used"))
@@ -158,9 +161,36 @@ def test_non_plan_job_uses_current_provider(sidecar):
     sidecar["_bridge_http"].open.assert_not_called()
 
 
+@pytest.mark.parametrize("result", [Reply({"route": "paused"}), Reply({"route": "app"}), URLError("offline")])
+def test_chatgpt_pause_never_uses_previous_provider(sidecar, result):
+    config = Path(sidecar["LLM_MODE_FILE"])
+    config.write_text('{"mode": "chatgpt"}', encoding="utf-8")
+    http = sidecar["_bridge_http"].open
+    http.side_effect = [result]
+    extract = Mock(return_value={})
+    collect = Mock()
+    sidecar["_extract_with_current_llm"] = extract
+    with pytest.raises(LearningUnavailable):
+        sidecar["_extract_for_learning_job"](collect)
+    extract.assert_not_called()
+    collect.assert_not_called()
+    sidecar["_read_app_llm"].assert_not_called()
+
+    config.write_text('{"mode": "custom"}', encoding="utf-8")
+    assert sidecar["_extract_for_learning_job"](collect) == {}
+    extract.assert_called_once_with(collect)
+    assert sidecar["_learning_provider"]() == ("custom-server", "custom-model", "custom-key")
+
+    config.write_text('{"mode": "builtin", "port": 8093}', encoding="utf-8")
+    assert sidecar["_learning_provider"]() == ("http://127.0.0.1:8093/v1", "amadeus-builtin", "")
+    http.assert_called_once()
+
+
 @pytest.mark.parametrize("via_plan", [False, True])
 def test_health_llm_text(sidecar, via_plan):
     probe = Mock(return_value=(False, ""))
+    if via_plan:
+        Path(sidecar["LLM_MODE_FILE"]).write_text('{"mode": "chatgpt"}', encoding="utf-8")
     sidecar.update(_plan_route=Mock(return_value=via_plan), llm_ready=probe,
                    _read_app_llm=Mock(return_value=("custom-server", "custom-model", "custom-key")))
     llm = sidecar["health"]()["llm"]

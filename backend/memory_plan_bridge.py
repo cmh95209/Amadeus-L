@@ -97,7 +97,9 @@ def _error(kind, message, status):
 
 def _route():
     if request.method in ("GET", "HEAD"):
-        return jsonify({"route": "chatgpt" if _on_plan() else "app"})
+        if not chatgpt_llm.active():
+            return jsonify({"route": "app"})
+        return jsonify({"route": "chatgpt" if _on_plan() else "paused"})
 
     started = time.monotonic()
     try:

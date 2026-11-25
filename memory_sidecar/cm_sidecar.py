@@ -138,6 +138,7 @@ KEY_FILE = os.environ.get("CM_KEY_FILE") or os.path.join(PROJECT_ROOT, "backend"
 BACKEND_URL = os.environ.get("CM_BACKEND_URL") or "http://127.0.0.1:5050"
 BRIDGE_SECRET_FILE = os.environ.get("CM_BRIDGE_SECRET_FILE") or os.path.join(
     os.path.dirname(KEY_FILE), "memory_bridge.secret")
+LLM_MODE_FILE = os.path.join(os.path.dirname(KEY_FILE), "local_llm.json")
 # The user's pronouns, set in the app's Settings (2026-10-16; '' = not set).
 # Read once when the engine is built, so a change applies after a sidecar
 # restart; memories already stored are not rewritten.
@@ -178,6 +179,32 @@ def _read_app_llm():
     return (_read(SERVER_FILE, "http://127.0.0.1:8080/v1"),
             _read(MODEL_FILE, ""),
             _read(KEY_FILE, ""))
+
+
+def _learning_mode():
+    # The selection is saved atomically by the app and remains readable even
+    # if the ChatGPT bridge is offline. Only a missing legacy file means custom.
+    try:
+        with open(LLM_MODE_FILE, encoding="utf-8-sig") as f:
+            config = json.load(f)
+    except FileNotFoundError:
+        return "custom", {}
+    except (OSError, ValueError, RecursionError):
+        return "paused", {}
+    if not isinstance(config, dict):
+        return "paused", {}
+    return config.get("mode", "custom"), config
+
+
+def _learning_provider():
+    mode, config = _learning_mode()
+    if mode == "custom":
+        return _read_app_llm()
+    if mode == "builtin":
+        port = config.get("port", 8091)
+        if type(port) is int and 0 < port <= 65535:
+            return f"http://127.0.0.1:{port}/v1", "amadeus-builtin", ""
+    raise LearningUnavailable()
 
 
 def _is_local_host(server: str) -> bool:
@@ -520,13 +547,22 @@ class NonThinkingLLM(OpenAICompatibleLLM):
         if headers:
             kw["extra_headers"] = headers
 
+        def ensure_current_provider():
+            # Recheck before sending, including retries after a model switch.
+            current_server, current_model, current_key = _learning_provider()
+            if (current_server, current_model, current_key or "unsloth") != (
+                    server, self.config.model, self.config.api_key):
+                raise LearningUnavailable()
+
         def attempt():
+            ensure_current_provider()
             try:
                 return self._client.chat.completions.create(
                     extra_body=body, **kw)
             except Exception as e:
                 if getattr(e, "status_code", None) not in (400, 422):
                     raise
+                ensure_current_provider()
                 return self._client.chat.completions.create(**kw)
 
         if _is_local_host(server):
@@ -626,7 +662,7 @@ class PlanBridgeLLM(NonThinkingLLM):
             return result
         except (ValueError, RecursionError):
             self._record_failure("invalid reply")
-            raise PlanBridgeError(None, "Memory bridge sent an invalid structured reply.") from None
+            raise PlanBridgeError(422, "Memory bridge sent an invalid structured reply.") from None
 
 
 _llm = None
@@ -656,7 +692,7 @@ def _is_auth_rejection(exc):
 
 
 def _extract_with_current_llm(collect):
-    settings = _read_app_llm()
+    settings = _learning_provider()
     server, model, key = settings
     local = _is_local_host(server)
     if not model or (not local and not key):
@@ -668,15 +704,18 @@ def _extract_with_current_llm(collect):
     except Exception as exc:
         if not _is_auth_rejection(exc):
             raise
-        updated = _read_app_llm()
+        updated = _learning_provider()
         if updated[2] == key:
             raise
         return collect(get_llm(updated))
 
 
 def _extract_for_learning_job(collect):
-    if not _plan_route():
+    mode, _ = _learning_mode()
+    if mode in ("custom", "builtin"):
         return _extract_with_current_llm(collect)
+    if mode != "chatgpt" or not _plan_route():
+        raise LearningUnavailable()
 
     bridge = PlanBridgeLLM()
     log("learning via ChatGPT plan (through the app)")
@@ -684,7 +723,7 @@ def _extract_for_learning_job(collect):
         return collect(bridge)
     except PlanBridgeError as exc:
         log(f"ChatGPT memory extraction failed ({bridge.failure or 'unavailable'})")
-        if exc.status_code in (403, 429):
+        if exc.status_code in (None, 403, 429, 502):
             # Leave the batch pending without using up its failure attempts
             # while consent, mode, or plan availability is changing.
             raise LearningUnavailable() from None
@@ -982,11 +1021,16 @@ def health():
         chats = 0
     with _queue_lock:
         queued = len(_pending_saves)
-    if _plan_route():
-        server, model, ok = "chatgpt-plan (via app)", "", True
+    mode, _ = _learning_mode()
+    if mode == "chatgpt":
+        server, model, ok = "chatgpt-plan (via app)", "", _plan_route()
     else:
-        server, model, key = _read_app_llm()
-        ok, _loaded = llm_ready(server, model, key, timeout=3.0)
+        try:
+            server, model, key = _learning_provider()
+        except LearningUnavailable:
+            server, model, ok = "", "", False
+        else:
+            ok, _loaded = llm_ready(server, model, key, timeout=3.0)
     return {"ok": True, "service": "amadeus-cm-sidecar", "character": "Amadeus",
             "port": PORT, "engine": _engine_state["status"],
             "engine_seconds": _engine_state["seconds"],

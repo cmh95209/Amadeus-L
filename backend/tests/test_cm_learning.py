@@ -158,6 +158,7 @@ def test_live_client_and_rotated_credential_reach_the_extractor(db):
     scope = sidecar_functions(
         ("get_llm", "_is_auth_rejection", "_extract_with_current_llm"),
         _llm=None, _llm_sig=None, _read_app_llm=lambda: next(settings),
+        _learning_provider=lambda: next(settings),
         _is_local_host=lambda _server: False, LLMConfig=SimpleNamespace,
         NonThinkingLLM=lambda cfg: clients[(cfg.base_url, cfg.model, cfg.api_key)],
     )
@@ -195,7 +196,7 @@ def test_auth_rejection_with_unchanged_credentials_uses_backoff(db):
     settings = ("https://example.invalid/v1", "test-model", "test-credential")
     scope = sidecar_functions(
         ("_is_auth_rejection", "_extract_with_current_llm"),
-        _read_app_llm=lambda: settings, _is_local_host=lambda _server: False,
+        _learning_provider=lambda: settings, _is_local_host=lambda _server: False,
         get_llm=lambda _settings: client,
     )
     job = db.run_due(extract=scope["_extract_with_current_llm"])
